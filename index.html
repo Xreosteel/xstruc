@@ -1,0 +1,976 @@
+<title>X Struc Viewer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: CAD workspace. Left = build sequence (fixing order), centre = 3D stage, right = inspector + bar schedule. Deliberately single dark theme, like a site-office viewer. */
+:root {
+  --bg: #11151a;
+  --panel: #171d24;
+  --panel-2: #1e262f;
+  --line: #2b3540;
+  --fg: #e3e9ee;
+  --muted: #8f9cab;
+  --hi: #ffffff;
+  --warn: #e8a33d;
+  --ui: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--ui); font-size: 15px; line-height: 1.4; }
+* { box-sizing: border-box; }
+button { font: inherit; color: inherit; }
+button:focus-visible { outline: 2px solid var(--hi); outline-offset: 2px; }
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr) 380px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px;
+}
+
+.top { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand b { font-weight: 700; font-size: 22px; letter-spacing: 0.06em; }
+.brand span { color: var(--muted); font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; }
+.slabline { font-family: var(--mono); font-size: 12.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.slabline em { font-style: normal; color: var(--fg); }
+.example { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); padding: 1px 7px; border-radius: 3px; }
+.stats { margin-left: auto; display: flex; gap: 18px; font-variant-numeric: tabular-nums; }
+.stats div { display: flex; flex-direction: column; align-items: flex-end; }
+.stats b { font-family: var(--mono); font-weight: 500; font-size: 16px; }
+.stats small { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+.side, .inspect { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: auto; min-height: 0; min-width: 0; }
+.sec { padding: 14px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.sec:last-child { border-bottom: 0; }
+.sec h2 { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.step { width: 100%; display: grid; grid-template-columns: 26px minmax(0,1fr); gap: 10px; align-items: center; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 6px 8px; cursor: pointer; }
+.step:hover { background: var(--panel-2); }
+.step[aria-pressed="true"] { background: var(--panel-2); border-color: var(--line); }
+.step .n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 12px; border: 1.5px solid var(--c, var(--muted)); color: var(--c, var(--muted)); }
+.step.done .n { background: color-mix(in srgb, var(--c, var(--muted)) 22%, transparent); }
+.step[aria-pressed="true"] .n { background: var(--c, var(--muted)); color: var(--bg); }
+.step .t { display: grid; min-width: 0; }
+.step .t b { font-weight: 600; font-size: 15px; }
+.step .t small { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stepnav { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.btn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 7px 8px; cursor: pointer; font-weight: 500; }
+.btn:hover { border-color: var(--muted); }
+.btn[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.caption { font-size: 13px; color: var(--muted); margin: 0; }
+.caption b { color: var(--fg); font-weight: 600; }
+
+.stage { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; min-height: 0; min-width: 0; background: #0e1216; }
+#view { position: absolute; inset: 0; }
+#view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#tags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.lbl { position: absolute; left: 0; top: 0; }
+.tag { pointer-events: auto; cursor: pointer; font-family: var(--mono); font-size: 11.5px; line-height: 1.25; white-space: nowrap; background: rgba(14, 18, 22, 0.9); border: 1px solid rgba(255,255,255,0.08); border-left: 3px solid var(--c); color: var(--fg); padding: 3px 7px 3px 6px; border-radius: 3px; }
+.tag small { display: block; color: var(--muted); font-size: 10px; }
+.tag.cur { border-color: var(--c); box-shadow: 0 0 0 1px var(--c); }
+.tag.bar { border-left-color: var(--hi); background: rgba(14,18,22,0.96); pointer-events: none; }
+.tag:hover { border-color: var(--c); }
+.bub { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid #9aa7b4; display: grid; place-items: center; font-weight: 600; font-size: 13px; background: #11151a; color: var(--fg); pointer-events: none; }
+.anno { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.05em; color: #b9c4cf; background: rgba(14,18,22,0.72); padding: 1px 5px; border-radius: 2px; white-space: nowrap; pointer-events: none; }
+.dimt { font-family: var(--mono); font-size: 10.5px; color: #9aa7b4; white-space: nowrap; pointer-events: none; }
+#tip { position: absolute; pointer-events: none; font-family: var(--mono); font-size: 12px; background: var(--fg); color: var(--bg); padding: 3px 7px; border-radius: 3px; white-space: nowrap; transform: translate(12px, 12px); }
+.hud { position: absolute; left: 12px; bottom: 10px; font-size: 12.5px; color: var(--muted); pointer-events: none; right: 12px; }
+.steplabel { position: absolute; left: 12px; top: 10px; font-size: 13px; background: rgba(14,18,22,0.85); border: 1px solid var(--line); border-radius: 4px; padding: 4px 9px; pointer-events: none; }
+.steplabel b { font-weight: 600; }
+.legend { position: absolute; right: 12px; top: 10px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; font-family: var(--mono); font-size: 11.5px; color: var(--muted); pointer-events: none; max-width: 60%; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); margin-right: 4px; vertical-align: -1px; }
+
+.kv { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 5px 14px; margin: 0; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.insp-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.insp-title .chip { font-family: var(--mono); font-size: 13px; padding: 2px 8px; border-radius: 3px; background: color-mix(in srgb, var(--c) 22%, transparent); border: 1px solid var(--c); }
+.insp-title b { font-size: 17px; font-weight: 600; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+.tablewrap { overflow-x: auto; margin: 0 -16px; padding: 0 16px; max-height: 46vh; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th { position: sticky; top: 0; background: var(--panel); text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 6px 5px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 5px 5px; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); font-family: var(--mono); white-space: nowrap; }
+td.num, th.num { text-align: right; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--panel-2); }
+tbody tr.on { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: sticky; bottom: 0; background: var(--panel); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; }
+
+@media (max-width: 1150px) {
+  .app { grid-template-columns: 240px minmax(0,1fr); grid-template-rows: auto minmax(460px, 1fr) auto; height: auto; min-height: 100%; }
+  .inspect { grid-column: 1 / -1; overflow: visible; }
+  html, body { height: auto; }
+}
+@media (max-width: 760px) {
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+  .stage { height: 60vh; min-height: 360px; order: 1; }
+  .top { order: 0; }
+  .side { order: 2; overflow: visible; }
+  .inspect { order: 3; }
+  .stats { margin-left: 0; }
+  .legend, .hud { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><b>X STRUC</b><span>3D reo viewer</span></div>
+    <div class="slabline">
+      <span class="example">Example floor</span>
+      <span><em>LEVEL 1</em> suspended slab</span>
+      <span><em>200 THK</em> · f'c <em>32 MPa</em></span>
+      <span>cover <em>30 T / 30 B</em> · laps <em>600</em></span>
+      <span>bot <em>@200</em> · top <em>@150</em></span>
+      <span>grids <em>1–4 / A–C</em></span>
+      <span><em>12</em> cols 400 × 400</span>
+    </div>
+    <div class="stats">
+      <div><b id="stBars">0</b><small>Bars</small></div>
+      <div><b id="stMarks">0</b><small>Bar marks</small></div>
+      <div><b id="stMass">0</b><small>Steel kg</small></div>
+    </div>
+  </header>
+
+  <aside class="side" aria-label="Build sequence and view controls">
+    <div class="sec">
+      <h2>Build sequence</h2>
+      <ol class="steps" id="steps"></ol>
+      <div class="stepnav">
+        <button class="btn" id="prev" type="button">◀ Prev</button>
+        <button class="btn" id="all" type="button" aria-pressed="true">All</button>
+        <button class="btn" id="next" type="button">Next ▶</button>
+      </div>
+      <p class="caption" id="stepcap"></p>
+    </div>
+    <div class="sec">
+      <h2>View</h2>
+      <div class="seg">
+        <button class="btn" type="button" data-cam="iso">3D</button>
+        <button class="btn" type="button" data-cam="plan">Plan</button>
+        <button class="btn" type="button" data-cam="side">Side</button>
+        <button class="btn" type="button" data-cam="fit">Fit</button>
+      </div>
+      <div class="toggles">
+        <button class="btn" type="button" id="tgConc" aria-pressed="true">Concrete</button>
+        <button class="btn" type="button" id="tgTags" aria-pressed="true">Tags &amp; notes</button>
+        <button class="btn" type="button" id="tgGhost" aria-pressed="true">Ghost below</button>
+        <button class="btn" type="button" id="tgExplode" aria-pressed="false">Explode</button>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>How to read it</h2>
+      <p class="caption">Each tag is one run of bars, written like the placing drawing: <b>count, size, spacing, layer</b>. The tick-ended line under it shows which bars it covers.</p>
+      <p class="caption"><b>Plan</b> gives a true top-down floor plan with grids and dimensions. Step through the layers in fixing order: the layer being placed is solid, the ones below are ghosted.</p>
+    </div>
+  </aside>
+
+  <main class="stage" aria-label="3D floor model">
+    <div id="view"></div>
+    <div id="tags"></div>
+    <div id="tip" hidden></div>
+    <div class="steplabel" id="steplabel"></div>
+    <div class="legend" id="legend"></div>
+    <div class="hud" id="hud"></div>
+  </main>
+
+  <section class="inspect" aria-label="Inspector and bar schedule">
+    <div class="sec" id="inspector"></div>
+    <div class="sec">
+      <h2>Bar schedule · this pour</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Mark</th><th>Bar</th><th>Shape</th><th class="num">Length</th><th class="num">Qty</th><th class="num">kg</th></tr></thead>
+          <tbody id="sched"></tbody>
+          <tfoot><tr><td colspan="4">Total</td><td class="num" id="totQty"></td><td class="num" id="totKg"></td></tr></tfoot>
+        </table>
+      </div>
+      <p class="note">Click a row to highlight every bar with that mark. Excludes the columns below (already poured) and bar chairs. Laps 600 on all bars (project requirement), 12 m stock lengths.</p>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  "use strict";
+  // === MODEL START === (scripts/check.js runs everything between these markers headlessly)
+  // =============== FLOOR MODEL (example data, mm; z = 0 at main slab soffit) ===============
+  const T = 200, C = 30;
+  const SL = { x0: -250, x1: 14250, y0: -250, y1: 9250 };            // main slab edge
+  const GX = [["1", 0], ["2", 5000], ["3", 9500], ["4", 14000]];
+  const GY = [["A", 0], ["B", 4500], ["C", 9000]];
+  const HOLES = [
+    { id: "STAIR VOID", x0: 10800, x1: 13400, y0: 900, y1: 3100 },
+    { id: "RISER 600 × 600", x0: 3000, x1: 3600, y0: 2000, y1: 2600 }
+  ];
+  const DROP = { x0: 600, x1: 3800, y0: 5300, y1: 8200, d: 70 };    // wet-area set-down (Z-bar detail)
+  const STEP = { x0: 9500, x1: 14250, y0: 4500, y1: 9250, rise: 200, nib: 300 };  // slab step up (L-bar detail)
+  const BALC = { x0: 4200, x1: 9200, y0: 9250, y1: 11050, top: 150, bot: -30 };
+  const BEAMS = [
+    { id: "IB1", dir: "Y", at: 5000, a: SL.y0, b: SL.y1, w: 400, D: 600, bot: [20, 3], top: [16, 3], lig: [12, 200, "N"], tagS: 0.22 },
+    { id: "EB1", dir: "X", at: -50, a: SL.x0, b: SL.x1, w: 400, D: 500, bot: [16, 2], top: [16, 2], lig: [10, 300, "R"], tagS: 0.55 },
+    { id: "EB1", dir: "Y", at: -50, a: SL.y0, b: SL.y1, w: 400, D: 500, bot: [16, 2], top: [16, 2], lig: [10, 300, "R"], tagS: 0.62 }
+  ];
+  const BEAM = BEAMS[0];
+  const COLB = -1500, COL = 400, PROJ = 950;
+  const STOCK = 12000;
+  const LAPLEN = 600;                                                   // project requirement: 600 laps on all bars
+  const LAP = { 10: LAPLEN, 12: LAPLEN, 16: LAPLEN, 20: LAPLEN, 24: LAPLEN };
+  const KGM = { N12: 0.888, N16: 1.58, N20: 2.47, N24: 3.55, R10: 0.617 };
+  const COGZ = 62;                                                      // top-bar cogs turn down to just above the bottom mat
+
+  const LAYERS = [
+    { id: "CL", name: "Columns below (poured)", css: "#7d8fa3" },
+    { id: "BM", name: "Beam cages", css: "#b48cf0" },
+    { id: "A", name: "Layer A · bottom 1st", css: "#4f8fe8" },
+    { id: "B", name: "Layer B · bottom 2nd", css: "#3fc1c9" },
+    { id: "CH", name: "Bar chairs", css: "#9aa7b4" },
+    { id: "C", name: "Layer C · top 3rd", css: "#e8a33d" },
+    { id: "D", name: "Layer D · top 4th", css: "#e5534b" },
+    { id: "ST", name: "Column starters", css: "#f0d24a" }
+  ];
+  const LBY = {}; LAYERS.forEach((l, i) => { l.idx = i; LBY[l.id] = l; });
+  const EXPLODE = { CL: 0, BM: 0, A: 0, B: 0.3, CH: 0, C: 0.65, D: 0.95, ST: 1.35 };
+
+  const fmt = n => Math.round(n).toLocaleString("en-AU");
+  const esc = s => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  const lvl = (x, y) => (x > STEP.x0 && y > STEP.y0) ? STEP.rise : (x > DROP.x0 && x < DROP.x1 && y > DROP.y0 && y < DROP.y1) ? -DROP.d : 0;
+  const inBeam = (x, y) => BEAMS.filter(bm => bm.dir === "X" ? (Math.abs(y - bm.at) <= bm.w / 2 && x >= bm.a && x <= bm.b) : (Math.abs(x - bm.at) <= bm.w / 2 && y >= bm.a && y <= bm.b));
+
+  const bars = [], runs = [], chairs = [];
+  const polyLen = pts => pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1], p[2] - pts[i - 1][2]) : 0, 0);
+  function addRun(r) { r.id = "R" + runs.length; r.bars = []; runs.push(r); return r; }
+  function addBar(run, o) {
+    const b = Object.assign({ id: bars.length, layer: run.layer, run: run, size: run.size, type: run.type || "N", shape: "straight" }, o);
+    b.len = Math.round(polyLen(b.pts) + (b.hooks || 0));
+    b.kg = b.len / 1000 * KGM[b.type + b.size];
+    bars.push(b); run.bars.push(b); return b;
+  }
+  function pieces(a, b, size, odd) {
+    if (b - a <= STOCK) return [[a, b]];
+    const lap = LAP[size], out = [];
+    if (!odd) { let s = a; for (;;) { const e = Math.min(s + STOCK, b); out.push([s, e]); if (e >= b) break; s = e - lap; } }
+    else { let e = b; const t = []; for (;;) { const s = Math.max(e - STOCK, a); t.push([s, e]); if (s <= a) break; e = s + lap; } t.reverse().forEach(p => out.push(p)); }
+    return out;
+  }
+  // split a bar line [a,b] at level changes. Z-type (≤160): stop C short each side. L-type step: the low side runs into the nib.
+  function intervals(X, p, a, b) {
+    const at = s => X ? lvl(s, p) : lvl(p, s);
+    const cand = (X ? [DROP.x0, DROP.x1, STEP.x0] : [DROP.y0, DROP.y1, STEP.y0]).filter(t => t > a && t < b && at(t - 1) !== at(t + 1)).sort((u, v) => u - v);
+    const ivs = [], trs = []; let s0 = a;
+    cand.forEach(t => {
+      const o0 = at(t - 1), o1 = at(t + 1), big = Math.abs(o1 - o0) > 160, up = o1 > o0;
+      trs.push({ t: t, o0: o0, o1: o1, big: big, up: up });
+      ivs.push({ s: s0, e: big && up ? t + STEP.nib - C : t - C, o: o0, fs: s0 === a, fe: false });
+      s0 = big && !up ? t - STEP.nib + C : t + C;
+    });
+    ivs.push({ s: s0, e: b, o: at(b - 1), fs: s0 === a, fe: true });
+    return { ivs: ivs, trs: trs };
+  }
+  function minusF(a, b, fs, fe, cuts) {
+    let segs = [{ s: a, e: b, fs: fs, fe: fe }];
+    cuts.forEach(c => { const out = []; segs.forEach(g => { if (c.b <= g.s || c.a >= g.e) { out.push(g); return; } if (c.a > g.s) out.push({ s: g.s, e: c.a, fs: g.fs, fe: true }); if (c.b < g.e) out.push({ s: c.b, e: g.e, fs: true, fe: g.fe }); }); segs = out; });
+    return segs.filter(g => g.e - g.s > 300);
+  }
+  const so = (X, p) => X ? fmt(Math.abs(p)) + (p >= 0 ? " N" : " S") + " of grid A" : fmt(Math.abs(p)) + (p >= 0 ? " E" : " W") + " of grid 1";
+  // a simple straight bar that follows the slab levels (stops short at a set-down, runs into the nib at a step)
+  function placeLine(run, X, p, a, b, z, o) {
+    const P = (sv, zz) => X ? [sv, p, zz] : [p, sv, zz];
+    intervals(X, p, a, b).ivs.forEach(iv => {
+      if (iv.e - iv.s < 300) return;
+      const zz = z + iv.o, pts = [P(iv.s, zz), P(iv.e, zz)]; let cogs = 0;
+      const edgeS = X ? iv.s <= SL.x0 + C + 1 : iv.s <= SL.y0 + C + 1, edgeE = X ? iv.e >= SL.x1 - C - 1 : iv.e >= SL.y1 - C - 1;
+      if (o.cog && iv.fs && edgeS) { pts.unshift(P(iv.s, COGZ + iv.o)); cogs++; }
+      if (o.cog && iv.fe && edgeE) { pts.push(P(iv.e, COGZ + iv.o)); cogs++; }
+      addBar(run, { pts: pts, shape: cogs === 2 ? "cogged both ends" : cogs ? "cogged one end" : "straight", setout: o.setout, note: (o.note || "") + (cogs ? " Cogged down at the slab edge." : "") + (iv.o ? " Placed at the " + (iv.o > 0 ? "raised step level." : "set-down level.") : "") });
+    });
+  }
+
+  // ---- main mats: A, B bottom @200; C, D top @150 ----
+  const MATS = [
+    { layer: "A", size: 16, sp: 200, dir: "X", z: 38, top: false, at: 7200, frac: 0.3 },
+    { layer: "B", size: 12, sp: 200, dir: "Y", z: 52, top: false, at: 4200, frac: 0.2 },
+    { layer: "C", size: 12, sp: 150, dir: "Y", z: 152, top: true, at: 3700, frac: 0.82 },
+    { layer: "D", size: 12, sp: 150, dir: "X", z: 164, top: true, at: 8200, frac: 0.72 }
+  ];
+  const ZTAG = { A: [DROP.x1 + 380, (DROP.y0 + DROP.y1) / 2], D: [DROP.x0 - 420, DROP.y0 + 700], B: [(DROP.x0 + DROP.x1) / 2, DROP.y0 - 380], C: [DROP.x0 + 1000, DROP.y1 + 380] };
+  const LTAG = { A: [STEP.x0 + 150, 6600], D: [STEP.x0 + 150, 8300], B: [11600, STEP.y0 + 150], C: [13200, STEP.y0 + 150] };
+  MATS.forEach(m => {
+    const d = m.size, X = m.dir === "X", L = LAP[d];
+    const a0 = X ? SL.x0 + C : SL.y0 + C, a1 = X ? SL.x1 - C : SL.y1 - C;
+    const q0 = X ? SL.y0 : SL.x0, q1 = X ? SL.y1 : SL.x1;
+    const n = Math.floor((q1 - q0 - 2 * C - d) / m.sp) + 1;
+    const start = q0 + (q1 - q0 - (n - 1) * m.sp) / 2;
+    const run = addRun({ layer: m.layer, size: d, dir: m.dir, sp: m.sp, n: n, kind: "main", z: m.z,
+      label: n + " N" + d + "-" + m.sp + " · " + m.layer, callout: "N" + d + "-" + m.sp + " LAYER " + m.layer + (X ? " E–W" : " N–S") + (m.top ? ", COGGED AT FREE EDGES" : ""),
+      setout: { first: start - q0, last: q1 - (start + (n - 1) * m.sp), edges: X ? ["S", "N"] : ["W", "E"] } });
+    const zrun = addRun({ layer: m.layer, size: d, dir: m.dir, kind: "z", z: m.z, label: "Z-BARS N" + d + "-" + m.sp + " · " + m.layer, callout: "Z-BAR SPLICES N" + d + "-" + m.sp + " LAYER " + m.layer + " AT 70 SET-DOWN, LAP " + L + " EACH SIDE" });
+    const lrun = addRun({ layer: m.layer, size: d, dir: m.dir, kind: "l", z: m.z, label: "L-BARS N" + d + "-" + m.sp + " · " + m.layer, callout: "L-BARS N" + d + "-" + m.sp + " LAYER " + m.layer + " EACH SIDE OF 200 STEP, LEG " + L });
+    const P = (sv, z) => X ? [sv, m.p, z] : [m.p, sv, z];
+    for (let i = 0; i < n; i++) {
+      const p = start + i * m.sp; m.p = p;
+      const { ivs, trs } = intervals(X, p, a0, a1);
+      const cuts = HOLES.filter(h => X ? (p > h.y0 - d / 2 && p < h.y1 + d / 2) : (p > h.x0 - d / 2 && p < h.x1 + d / 2)).map(h => ({ a: (X ? h.x0 : h.y0) - C, b: (X ? h.x1 : h.y1) + C }));
+      ivs.forEach(iv => {
+        const z = m.z + iv.o;
+        minusF(iv.s, iv.e, iv.fs, iv.fe, cuts).forEach(g => {
+          const ps = pieces(g.s, g.e, d, i % 2 === 1);
+          ps.forEach((pc, k) => {
+            const pts = [P(pc[0], z), P(pc[1], z)]; let cogs = 0;
+            if (m.top && k === 0 && g.fs) { pts.unshift(P(pc[0], COGZ + iv.o)); cogs++; }
+            if (m.top && k === ps.length - 1 && g.fe) { pts.push(P(pc[1], COGZ + iv.o)); cogs++; }
+            addBar(run, { pts: pts, shape: cogs === 2 ? "cogged both ends" : cogs === 1 ? "cogged one end" : "straight", lapPrev: k > 0, lapNext: k < ps.length - 1, setout: so(X, p),
+              note: (cogs ? "Top bar cogged down at a free edge or void face (L-bar end). " : "") + (iv.o === -DROP.d ? "Set-down mat bar, 70 lower than the main mat." : iv.o > 0 ? "Raised-step mat bar, 200 above the main slab." : (!iv.fs || !iv.fe) ? "Stops at the level change; a Z-bar or L-bars splice across." : "") });
+          });
+        });
+      });
+      trs.forEach(tr => {
+        const z0 = m.z + tr.o0, z1 = m.z + tr.o1, t = tr.t;
+        if (!tr.big) {
+          addBar(zrun, { pts: [P(t - L, z0), P(t - C, z0), P(t + C, z1), P(t + L, z1)], shape: "Z-bar", setout: so(X, p) + " at " + (X ? "x " : "y ") + fmt(t),
+            note: "Z-bar splice across the 70 set-down: laps " + L + " with the mat on each side." });
+        } else {
+          const q = p + 24, Q = (sv, z) => X ? [sv, q, z] : [q, sv, z];
+          const sg = tr.up ? 1 : -1, zLo = tr.up ? z0 : z1, zHi = tr.up ? z1 : z0;
+          addBar(lrun, { pts: [Q(t - sg * L, zLo), Q(t + sg * (C + 40), zLo), Q(t + sg * (C + 40), zHi)], shape: "L-bar", setout: so(X, p) + " at " + (X ? "x " : "y ") + fmt(t) + ", low side",
+            note: "L-bar from the low slab: " + L + " leg lapping the low mat, vertical leg up the step nib." });
+          addBar(lrun, { pts: [Q(t + sg * (C + 64 + L), zHi), Q(t + sg * (C + 64), zHi), Q(t + sg * (C + 64), zLo)], shape: "L-bar", setout: so(X, p) + " at " + (X ? "x " : "y ") + fmt(t) + ", high side",
+            note: "L-bar from the raised slab: " + L + " leg lapping the raised mat, vertical leg down the step nib. L-bars sit alongside the mat bars." });
+        }
+      });
+    }
+    run.dist = { dir: m.dir, at: m.at, p0: start, p1: start + (n - 1) * m.sp, z: m.z + 22, frac: m.frac };
+    zrun.tagPos = [ZTAG[m.layer][0], ZTAG[m.layer][1], m.z];
+    lrun.tagPos = [LTAG[m.layer][0], LTAG[m.layer][1], m.z + 100];
+  });
+
+  // ---- N12 edge bars top and bottom around the free slab edges (inside the cogs) ----
+  (function () {
+    const off = C + 12;
+    const et = addRun({ layer: "D", size: 12, dir: "X", kind: "edge", z: 140, label: "N12 EDGE BAR T", callout: "N12 EDGE BAR TOP, ALL FREE SLAB EDGES" });
+    const eb = addRun({ layer: "A", size: 12, dir: "X", kind: "edge", z: 70, label: "N12 EDGE BAR B", callout: "N12 EDGE BAR BOTTOM, ALL FREE SLAB EDGES" });
+    [[true, SL.y0 + off], [true, SL.y1 - off], [false, SL.x0 + off], [false, SL.x1 - off]].forEach(e => {
+      const a = e[0] ? SL.x0 + off : SL.y0 + off, b = e[0] ? SL.x1 - off : SL.y1 - off;
+      [[et, 140], [eb, 70]].forEach(rz => placeLine(rz[0], e[0], e[1], a, b, rz[1], { setout: "slab edge", note: "Edge bar along the free slab edge, tied inside the top-bar cogs; laps 600 where split." }));
+    });
+    et.tagPos = [2600, SL.y0 + off, 160]; eb.tagPos = [SL.x0 + off, 1300, 90];
+  })();
+
+  // ---- additional top bars over flat-plate columns (columns not on a beam line) ----
+  const COLS = [];
+  GX.forEach(gx => GY.forEach(gy => COLS.push({ x: gx[1], y: gy[1], name: gx[0] + "/" + gy[0] })));
+  (function () {
+    const rx = addRun({ layer: "D", size: 16, dir: "X", kind: "add", z: 164, label: "ADD N16-200 · D × 3000", callout: "ADD N16-200 LAYER D × 3000 OVER COLUMNS" });
+    const ry = addRun({ layer: "C", size: 16, dir: "Y", kind: "add", z: 150, label: "ADD N16-200 · C × 3000", callout: "ADD N16-200 LAYER C × 3000 OVER COLUMNS" });
+    COLS.filter(c => !inBeam(c.x, c.y).length).forEach(c => {
+      for (let o = -400; o <= 400; o += 200) {
+        placeLine(rx, true, c.y + o + 75, Math.max(c.x - 1500, SL.x0 + C), Math.min(c.x + 1500, SL.x1 - C), 164, { cog: true, setout: "over column " + c.name, note: "Additional top bar over column " + c.name + ", 1500 each side of the column centre." });
+        placeLine(ry, false, c.x + o + 75, Math.max(c.y - 1500, SL.y0 + C), Math.min(c.y + 1500, SL.y1 - C), 150, { cog: true, setout: "over column " + c.name, note: "Additional top bar over column " + c.name + ", 1500 each side of the column centre." });
+      }
+    });
+    rx.tagPos = [14000 - 900, 9000 - 650, 190 + STEP.rise]; ry.tagPos = [9500 - 900, 4500 - 700, 190];
+  })();
+
+  // ---- extra bars ----
+  (function () {
+    const ex1 = addRun({ layer: "A", size: 16, dir: "X", kind: "extra", z: 38, label: "EXTRA N16-200 · A × 3000", callout: "EXTRA N16-200 LAYER A × 3000 MID-SPAN, BAY 2–3 / A–B" });
+    for (let y = 1100; y <= 3500; y += 200) placeLine(ex1, true, y, 5750, 8750, 38, { setout: so(true, y), note: "Extra bottom bar at mid-span, placed between the layer A mat bars." });
+    ex1.tagPos = [7250, 2300, 60];
+    const ex2 = addRun({ layer: "D", size: 16, dir: "X", kind: "extra", z: 164, label: "EXTRA N16-300 · D × 3000 OVER IB1", callout: "EXTRA N16-300 LAYER D × 3000 OVER BEAM IB1" });
+    for (let y = -75; y <= 9200; y += 300) placeLine(ex2, true, y, 3500, 6500, 164, { setout: so(true, y), note: "Extra top bar across beam IB1, 1500 each side of the beam centreline, between the layer D mat bars." });
+    ex2.tagPos = [5900, 2700, 190];
+    const ex3 = addRun({ layer: "C", size: 12, dir: "X", kind: "extra", z: 140, label: "EXTRA 2-N12 × 1200 DIAG", callout: "EXTRA 2-N12 × 1200 DIAGONAL AT EACH RE-ENTRANT CORNER OF OPENINGS, UNDER LAYER C" });
+    HOLES.forEach(h => [[h.x0, h.y0, -1, -1], [h.x1, h.y0, 1, -1], [h.x1, h.y1, 1, 1], [h.x0, h.y1, -1, 1]].forEach(cr => {
+      [60, 160].forEach(k => {
+        const cx = cr[0] + cr[2] * k / Math.SQRT2, cy = cr[1] + cr[3] * k / Math.SQRT2, dx = cr[2] * 600 / Math.SQRT2, dy = -cr[3] * 600 / Math.SQRT2;
+        addBar(ex3, { pts: [[cx - dx, cy - dy, 140], [cx + dx, cy + dy, 140]], shape: "straight", setout: h.id.toLowerCase() + " corner", note: "Diagonal crack-control bar across the re-entrant corner, tied under the top mat." });
+      });
+    }));
+    ex3.tagPos = [HOLES[0].x1 + 420, HOLES[0].y1 + 420, 160];
+  })();
+
+  // ---- trimmers top and bottom at both openings ----
+  function addTrims(h, name, sizeB, sizeT, ext) {
+    const yL = [h.y0 - 60, h.y0 - 135, h.y1 + 60, h.y1 + 135], xL = [h.x0 - 60, h.x0 - 135, h.x1 + 60, h.x1 + 135];
+    const cx = v => Math.max(SL.x0 + C, Math.min(SL.x1 - C, v)), cy = v => Math.max(SL.y0 + C, Math.min(SL.y1 - C, v));
+    [{ layer: "A", size: sizeB, X: true, z: 38 }, { layer: "B", size: sizeB, X: false, z: 46 + sizeB / 2 }, { layer: "C", size: sizeT, X: false, z: 152 }, { layer: "D", size: sizeT, X: true, z: 164 }].forEach(t => {
+      const run = addRun({ layer: t.layer, size: t.size, dir: t.X ? "X" : "Y", kind: "trim", z: t.z, label: "2-N" + t.size + " TRIM · " + t.layer, callout: "2-N" + t.size + " TRIMMERS EACH SIDE OF " + name + " (LAYER " + t.layer + ")" });
+      (t.X ? yL : xL).forEach(p => placeLine(run, t.X, p, t.X ? cx(h.x0 - ext) : cy(h.y0 - ext), t.X ? cx(h.x1 + ext) : cy(h.y1 + ext), t.z, { cog: t.layer === "C" || t.layer === "D", setout: name.toLowerCase() + " edge", note: "Trimmer: replaces the bars stopped at the opening and extends " + ext + " past each corner." }));
+      run.tagPos = t.X ? [(h.x0 + h.x1) / 2, t.layer === "A" ? h.y1 + 300 : h.y0 - 300, t.z] : [t.layer === "B" ? h.x0 - 360 : h.x1 + 360, (h.y0 + h.y1) / 2, t.z];
+    });
+  }
+  addTrims(HOLES[0], "STAIR VOID", 16, 12, 600);
+  addTrims(HOLES[1], "RISER", 12, 12, 500);
+
+  // ---- balcony (cantilever, set down 50) ----
+  (function () {
+    const xs = (sp, d) => { const n = Math.floor((BALC.x1 - BALC.x0 - 2 * C - d) / sp) + 1, st = BALC.x0 + (BALC.x1 - BALC.x0 - (n - 1) * sp) / 2; return Array.from({ length: n }, (_, i) => st + i * sp); };
+    const ys = (sp, d) => { const n = Math.floor((BALC.y1 - BALC.y0 - 2 * C - d) / sp) + 1, st = BALC.y0 + (BALC.y1 - BALC.y0 - (n - 1) * sp) / 2; return Array.from({ length: n }, (_, i) => st + i * sp); };
+    const zb1 = BALC.bot + C + 6, zb2 = zb1 + 12, zt1 = BALC.top - C - 6, zt2 = zt1 - 12;
+    const b1 = addRun({ layer: "A", size: 12, dir: "X", kind: "balc", z: zb1, label: "BALC N12-300 · A", callout: "BALCONY N12-300 LAYER A E–W" });
+    const yb = ys(300, 12); yb.forEach(p => addBar(b1, { pts: [[BALC.x0 + C, p, zb1], [BALC.x1 - C, p, zb1]], setout: fmt(p - 9000) + " N of grid C" }));
+    b1.dist = { dir: "X", at: 6300, p0: yb[0], p1: yb[yb.length - 1], z: zb1 + 22, frac: 0.5 };
+    const b2 = addRun({ layer: "B", size: 12, dir: "Y", kind: "balc", z: zb2, label: "BALC N12-300 · B", callout: "BALCONY N12-300 LAYER B N–S" });
+    const xb = xs(300, 12); xb.forEach(p => addBar(b2, { pts: [[p, BALC.y0 + C, zb2], [p, BALC.y1 - C, zb2]], setout: fmt(p) + " E of grid 1" }));
+    b2.dist = { dir: "Y", at: 10650, p0: xb[0], p1: xb[xb.length - 1], z: zb2 + 22, frac: 0.12 };
+    const t2 = addRun({ layer: "C", size: 12, dir: "Y", kind: "balc", z: zt2, label: "BALC N12-200 T · CANTILEVER", callout: "BALCONY N12-200 TOP: COG AT EDGE, Z AT 50 STEP, 1500 INTO SLAB" });
+    const xt = xs(200, 12);
+    xt.forEach(p => addBar(t2, { pts: [[p, BALC.y1 - C, 32], [p, BALC.y1 - C, zt2], [p, BALC.y0 + C, zt2], [p, BALC.y0 - C, 152], [p, BALC.y0 - 1800, 152]],
+      shape: "cog + Z", setout: fmt(p) + " E of grid 1", note: "Cantilever top bar: cog down at the balcony edge, Z-step up 50 at the slab edge, anchored 1500 back into the floor slab." }));
+    t2.dist = { dir: "Y", at: 9900, p0: xt[0], p1: xt[xt.length - 1], z: zt2 + 22, frac: 0.8 };
+    const t1 = addRun({ layer: "D", size: 12, dir: "X", kind: "balc", z: zt1, label: "BALC N12-300 · D", callout: "BALCONY N12-300 LAYER D E–W, COGGED BOTH ENDS" });
+    const yt = ys(300, 12); yt.forEach(p => addBar(t1, { pts: [[BALC.x0 + C, p, 32], [BALC.x0 + C, p, zt1], [BALC.x1 - C, p, zt1], [BALC.x1 - C, p, 32]], shape: "cogged both ends", setout: fmt(p - 9000) + " N of grid C", note: "Balcony top distribution bar, cogged down at both free side edges." }));
+    t1.dist = { dir: "X", at: 7400, p0: yt[0], p1: yt[yt.length - 1], z: zt1 + 22, frac: 0.5 };
+    const be = addRun({ layer: "D", size: 12, dir: "X", kind: "edge", z: 90, label: "BALC N12 EDGE BARS T&B", callout: "BALCONY N12 EDGE BARS TOP AND BOTTOM, 3 FREE EDGES" });
+    const o2 = C + 12;
+    [90, 38].forEach(z => {
+      addBar(be, { pts: [[BALC.x0 + o2, BALC.y1 - o2, z], [BALC.x1 - o2, BALC.y1 - o2, z]], setout: "balcony outer edge", note: "Edge bar along the balcony's free edge, inside the cogs." });
+      addBar(be, { pts: [[BALC.x0 + o2, BALC.y0 + o2, z], [BALC.x0 + o2, BALC.y1 - o2, z]], setout: "balcony west edge", note: "Edge bar along the balcony's free edge, inside the cogs." });
+      addBar(be, { pts: [[BALC.x1 - o2, BALC.y0 + o2, z], [BALC.x1 - o2, BALC.y1 - o2, z]], setout: "balcony east edge", note: "Edge bar along the balcony's free edge, inside the cogs." });
+    });
+    be.tagPos = [BALC.x0 + 1500, BALC.y1 - o2, 110];
+  })();
+
+  // ---- beams: IB1 on grid 2, EB1 edge beams on grids A and 1 ----
+  BEAMS.forEach(bm => {
+    const X = bm.dir === "X", ld = bm.lig[0], soff = T - bm.D;
+    const P = (sv, tv, z) => X ? [sv, bm.at + tv, z] : [bm.at + tv, sv, z];
+    const spread = (n, d) => { const e = bm.w / 2 - C - ld - d / 2; return n === 1 ? [0] : Array.from({ length: n }, (_, i) => -e + i * 2 * e / (n - 1)); };
+    const zB = soff + C + ld + bm.bot[0] / 2, zT = 126;
+    const bot = addRun({ layer: "BM", size: bm.bot[0], dir: bm.dir, kind: "beam", z: zB, label: bm.id + " · " + bm.bot[1] + "N" + bm.bot[0] + " B", callout: bm.id + " " + bm.bot[1] + "N" + bm.bot[0] + " BOTTOM, COGGED ENDS" });
+    spread(bm.bot[1], bm.bot[0]).forEach(tv => addBar(bot, { pts: [P(bm.a + C, tv, zB + 300), P(bm.a + C, tv, zB), P(bm.b - C, tv, zB), P(bm.b - C, tv, zB + 300)], beam: true, shape: "cogged both ends", setout: tv === 0 ? "on beam centreline" : fmt(Math.abs(tv)) + " off beam centreline", note: "Beam bottom bar with standard cogs turned up at both beam ends (cog length nominal, 300)." }));
+    bot.tagPos = X ? [bm.a + (bm.b - bm.a) * bm.tagS, bm.at, zB] : [bm.at, bm.a + (bm.b - bm.a) * bm.tagS, zB];
+    const top = addRun({ layer: "BM", size: bm.top[0], dir: bm.dir, kind: "beam", z: zT, label: bm.id + " · " + bm.top[1] + "N" + bm.top[0] + " T", callout: bm.id + " " + bm.top[1] + "N" + bm.top[0] + " TOP, COGGED ENDS" });
+    spread(bm.top[1], bm.top[0]).forEach(tv => addBar(top, { pts: [P(bm.a + C, tv, zT - 300), P(bm.a + C, tv, zT), P(bm.b - C, tv, zT), P(bm.b - C, tv, zT - 300)], beam: true, shape: "cogged both ends", setout: tv === 0 ? "on beam centreline" : fmt(Math.abs(tv)) + " off beam centreline", note: "Beam top bar with standard cogs turned down at both beam ends (cog length nominal, 300). The slab mats run over the beam cage." }));
+    top.tagPos = X ? [bm.a + (bm.b - bm.a) * (bm.tagS + 0.3), bm.at, zT + 40] : [bm.at, bm.a + (bm.b - bm.a) * (bm.tagS + 0.3), zT + 40];
+    const lg = addRun({ layer: "BM", size: ld, type: bm.lig[2], dir: bm.dir, kind: "lig", z: soff + 100, label: bm.id + " · " + bm.lig[2] + ld + " LIGS @" + bm.lig[1], callout: bm.id + " " + bm.lig[2] + ld + " CLOSED LIGS @ " + bm.lig[1] });
+    const w = bm.w - 2 * C - ld, zb = soff + C + ld / 2, h = 140 - zb;
+    for (let sv = bm.a + 50; sv <= bm.b - 50; sv += bm.lig[1])
+      addBar(lg, { pts: [P(sv, -w / 2, zb), P(sv, w / 2, zb), P(sv, w / 2, zb + h), P(sv, -w / 2, zb + h), P(sv, -w / 2, zb)], hooks: 240, shape: "closed lig", lig: true, setout: fmt(sv) + (X ? " E of grid 1" : " N of grid A"), note: "Cut length = centreline perimeter plus two 120 hook allowances (placeholder until a shape-code table is set up)." });
+    lg.tagPos = X ? [bm.a + (bm.b - bm.a) * (bm.tagS + 0.15), bm.at + 260, soff + 150] : [bm.at + 260, bm.a + (bm.b - bm.a) * (bm.tagS + 0.15), soff + 150];
+  });
+
+  // ---- columns below (existing) + starters for columns above ----
+  COLS.forEach(c => { const bms = inBeam(c.x, c.y); c.top = bms.length ? Math.min(...bms.map(b => T - b.D)) : lvl(c.x - 1, c.y - 1); c.off = lvl(c.x - 1, c.y - 1); });
+  (function () {
+    const o = COL / 2 - 40 - 10 - 12;
+    const offs = [[-o, -o], [0, -o], [o, -o], [-o, 0], [o, 0], [-o, o], [0, o], [o, o]];
+    const cv = addRun({ layer: "CL", size: 24, dir: "Z", kind: "col", z: -800, label: "COL 400 × 400 · 8N24 · R10-200", callout: "COLUMN BELOW: 8N24 VERTICALS, R10 TIES @ 200", existing: true });
+    const ct = addRun({ layer: "CL", size: 10, type: "R", dir: "Z", kind: "col", z: -800, label: "", callout: "COLUMN BELOW: R10 TIES @ 200", existing: true });
+    const st = addRun({ layer: "ST", size: 24, dir: "Z", kind: "start", z: T + 400, label: "8N24 STARTERS · PROJ 950", callout: "8N24 STARTERS PER COLUMN, PROJECT 950 ABOVE SLAB" });
+    COLS.forEach(c => {
+      const bmNames = [...new Set(inBeam(c.x, c.y).map(b => b.id))];
+      offs.forEach(([dx, dy]) => {
+        const ix = dx === 0 ? 0 : -Math.sign(dx) * 300, iy = dx === 0 ? -Math.sign(dy) * 300 : 0;
+        addBar(cv, { pts: [[c.x + dx, c.y + dy, COLB + 50], [c.x + dx, c.y + dy, c.top + 128], [c.x + dx + ix, c.y + dy + iy, c.top + 128]], shape: "cogged top", col: c, existing: true, setout: "column " + c.name, note: "Existing column below, already poured; verticals cogged into the slab/beam. Shown for context; not in this pour's schedule." });
+        addBar(st, { pts: [[c.x + dx + ix, c.y + dy + iy, 70 + c.off], [c.x + dx, c.y + dy, 70 + c.off], [c.x + dx, c.y + dy, T + c.off + PROJ]], shape: "L starter", col: c, setout: "column " + c.name, note: "Starter for the column above: cogged foot in the slab, projects 950 above the slab to lap with the column bars." + (bmNames.length ? " Framed by beam " + bmNames.join(" and ") + " at this column." : " Flat-plate column: additional top bars over the column instead of a beam.") });
+      });
+      const r = COL / 2 - 40 - 5;
+      for (let z = COLB + 100; z <= c.top - 100; z += 200)
+        addBar(ct, { pts: [[c.x - r, c.y - r, z], [c.x + r, c.y - r, z], [c.x + r, c.y + r, z], [c.x - r, c.y + r, z], [c.x - r, c.y - r, z]], hooks: 200, shape: "closed tie", col: c, existing: true, setout: "column " + c.name, note: "Existing column tie, already poured." });
+    });
+    cv.tagPos = [14000 + 300, 4500 - 450, -900];
+    st.tagPos = [9500, 4500, T + PROJ + 60];
+  })();
+
+  // ---- bar chairs at 1000 both ways ----
+  for (let x = SL.x0 + 500; x < SL.x1; x += 1000) for (let y = SL.y0 + 500; y < BALC.y1; y += 1000) {
+    const inMain = x > SL.x0 && x < SL.x1 && y > SL.y0 && y < SL.y1;
+    const inBalc = x > BALC.x0 + 100 && x < BALC.x1 - 100 && y > BALC.y0 + 100 && y < BALC.y1 - 100;
+    if (!inMain && !inBalc) continue;
+    if (HOLES.some(h => x > h.x0 - 100 && x < h.x1 + 100 && y > h.y0 - 100 && y < h.y1 + 100)) continue;
+    if (inBeam(x, y).length) continue;
+    const o = lvl(x, y); let s = o, t = 146 + o;
+    if (inBalc) { s = BALC.bot; t = BALC.top - C - 24; }
+    chairs.push({ pts: [[x, y, s], [x, y, t]], size: 8, chair: true, layer: "CH" });
+  }
+
+  // ---- bar marks (this pour only) ----
+  const sched = bars.filter(b => !b.existing);
+  const groups = new Map();
+  sched.forEach(b => { const k = b.type + b.size + "|" + b.len + "|" + b.shape; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
+  const marks = [...groups.values()].sort((A, B) => {
+    const a = A[0], b = B[0];
+    return (LBY[a.layer].idx - LBY[b.layer].idx) || (b.size - a.size) || (b.len - a.len);
+  }).map((list, i) => {
+    const m = "A" + (i + 1);
+    list.forEach(b => { b.mark = m; });
+    return { mark: m, type: list[0].type, size: list[0].size, shape: list[0].shape, len: list[0].len, qty: list.length, layer: list[0].layer, kg: list.reduce((s, b) => s + b.kg, 0) };
+  });
+  bars.filter(b => b.existing).forEach(b => { b.mark = "EX"; });
+  runs.forEach(r => { r.marks = [...new Set(r.bars.map(b => b.mark))]; });
+
+  // === MODEL END ===
+  const $ = id => document.getElementById(id);
+  $("stBars").textContent = fmt(sched.length);
+  $("stMarks").textContent = marks.length;
+  $("stMass").textContent = fmt(sched.reduce((s, b) => s + b.kg, 0));
+
+  // =============== THREE.JS SCENE ===============
+  const view = $("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  view.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0e1216);
+
+  const OX = 7000, OY = 4500;
+  // scene: x = east, y = up, -z = north (so a top-down camera reads north-up)
+  const W = (x, y, z) => new THREE.Vector3((x - OX) / 1000, z / 1000, -(y - OY) / 1000);
+
+  const persp = new THREE.PerspectiveCamera(38, 1, 0.05, 300);
+  const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 300);
+  ortho.up.set(0, 0, -1);
+  const PLAN_C = W(7000, 5400, 0);
+  ortho.position.set(PLAN_C.x, 60, PLAN_C.z); ortho.lookAt(PLAN_C.x, 0, PLAN_C.z);
+  const ctlP = new THREE.OrbitControls(persp, renderer.domElement);
+  ctlP.enableDamping = true; ctlP.dampingFactor = 0.12; ctlP.maxPolarAngle = Math.PI * 0.49;
+  const ctlO = new THREE.OrbitControls(ortho, renderer.domElement);
+  ctlO.target.copy(PLAN_C); ctlO.enableRotate = false; ctlO.screenSpacePanning = true;
+  ctlO.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  ctlO.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
+  ctlO.enabled = false;
+  let cam = persp, planMode = false;
+
+  scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x1a2028, 0.9));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(-6, 14, 8); scene.add(sun);
+
+  // concrete
+  const cMat = new THREE.MeshStandardMaterial({ color: 0xb9c2ca, transparent: true, opacity: 0.11, depthWrite: false, roughness: 1, side: THREE.DoubleSide });
+  const colMat = new THREE.MeshStandardMaterial({ color: 0x8d99a6, transparent: true, opacity: 0.18, depthWrite: false, roughness: 1 });
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x7d8a97, transparent: true, opacity: 0.75 });
+  const concrete = new THREE.Group(); scene.add(concrete);
+  function rectPath(p, r, rev) {
+    const pts = [[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1]]; if (rev) pts.reverse();
+    p.moveTo(pts[0][0], pts[0][1]); pts.slice(1).forEach(q => p.lineTo(q[0], q[1])); p.lineTo(pts[0][0], pts[0][1]);
+  }
+  function slabPiece(r, holes, z0, th, mat) {
+    const s = new THREE.Shape(); rectPath(s, r, false);
+    holes.forEach(h => { const p = new THREE.Path(); rectPath(p, h, true); s.holes.push(p); });
+    const g = new THREE.ExtrudeGeometry(s, { depth: th, bevelEnabled: false });
+    g.rotateX(-Math.PI / 2); g.scale(0.001, 0.001, 0.001); g.translate(-OX / 1000, z0 / 1000, OY / 1000);
+    const m = new THREE.Mesh(g, mat); m.renderOrder = 10; concrete.add(m);
+    concrete.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat));
+  }
+  function box(x0, x1, y0, y1, z0, z1, mat) {
+    const g = new THREE.BoxGeometry((x1 - x0) / 1000, (z1 - z0) / 1000, (y1 - y0) / 1000);
+    const c = W((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); g.translate(c.x, c.y, c.z);
+    const m = new THREE.Mesh(g, mat); m.renderOrder = 10; concrete.add(m);
+    concrete.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat));
+  }
+  slabPiece(SL, HOLES.concat([DROP, STEP]), 0, T, cMat);
+  slabPiece(DROP, [], -DROP.d, T, cMat);
+  slabPiece(STEP, [], STEP.rise, T, cMat);
+  box(STEP.x0, STEP.x0 + STEP.nib, STEP.y0, STEP.y1, 0, STEP.rise + T, cMat);
+  box(STEP.x0, STEP.x1, STEP.y0, STEP.y0 + STEP.nib, 0, STEP.rise + T, cMat);
+  slabPiece(BALC, [], BALC.bot, BALC.top - BALC.bot, cMat);
+  BEAMS.forEach(bm => bm.dir === "X" ? box(bm.a, bm.b, bm.at - bm.w / 2, bm.at + bm.w / 2, T - bm.D, 0, cMat) : box(bm.at - bm.w / 2, bm.at + bm.w / 2, bm.a, bm.b, T - bm.D, 0, cMat));
+  COLS.forEach(c => box(c.x - COL / 2, c.x + COL / 2, c.y - COL / 2, c.y + COL / 2, COLB, c.top, colMat));
+
+  // grid lines + dimension strings
+  const gridGrp = new THREE.Group(); scene.add(gridGrp);
+  const dashMat = new THREE.LineDashedMaterial({ color: 0x5d6976, dashSize: 0.5, gapSize: 0.18 });
+  const GZ = T + 6;
+  function gline(a, b) { const g = new THREE.BufferGeometry().setFromPoints([a, b]); const l = new THREE.Line(g, dashMat); l.computeLineDistances(); gridGrp.add(l); }
+  GX.forEach(g => gline(W(g[1], -1450, GZ), W(g[1], 11450, GZ)));
+  GY.forEach(g => gline(W(-1450, g[1], GZ), W(15450, g[1], GZ)));
+  const dimMat = new THREE.LineBasicMaterial({ color: 0x6f7c89 });
+  const dimPts = [];
+  const DYL = -1050, DXL = -1050;
+  dimPts.push(W(0, DYL, GZ), W(14000, DYL, GZ));
+  GX.forEach(g => dimPts.push(W(g[1] - 90, DYL - 90, GZ), W(g[1] + 90, DYL + 90, GZ)));
+  dimPts.push(W(DXL, 0, GZ), W(DXL, 9000, GZ));
+  GY.forEach(g => dimPts.push(W(DXL - 90, g[1] - 90, GZ), W(DXL + 90, g[1] + 90, GZ)));
+  gridGrp.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(dimPts), dimMat));
+  const planGrid = new THREE.GridHelper(40, 40, 0x222a33, 0x182028); planGrid.position.y = COLB / 1000 - 0.01; scene.add(planGrid);
+
+  // bars → instanced cylinder segments, one mesh per layer
+  const unitCyl = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
+  const UP = new THREE.Vector3(0, 1, 0);
+  function segMatrix(p0, p1, r) {
+    const a = W(p0[0], p0[1], p0[2]), b = W(p1[0], p1[1], p1[2]);
+    const d = b.clone().sub(a), L = d.length();
+    const q = new THREE.Quaternion().setFromUnitVectors(UP, d.normalize());
+    return new THREE.Matrix4().compose(a.add(b).multiplyScalar(0.5), q, new THREE.Vector3(r, L + r * 0.6, r));
+  }
+  const layerObj = {};
+  LAYERS.forEach(l => {
+    const group = new THREE.Group(); scene.add(group);
+    const list = l.id === "CH" ? chairs : bars.filter(b => b.layer === l.id);
+    const inst = [];
+    list.forEach(b => { const r = b.size / 2000; for (let i = 1; i < b.pts.length; i++) inst.push({ b: b, m: segMatrix(b.pts[i - 1], b.pts[i], r) }); });
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.35 });
+    const mesh = new THREE.InstancedMesh(unitCyl, mat, Math.max(1, inst.length));
+    inst.forEach((e, i) => mesh.setMatrixAt(i, e.m));
+    mesh.count = inst.length;
+    mesh.userData.list = inst.map(e => e.b);
+    group.add(mesh);
+    const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(l.css), transparent: true, opacity: 1 });
+    layerObj[l.id] = { group: group, mesh: mesh, mat: mat, inst: inst, lineMat: lineMat, base: new THREE.Color(l.css), mode: "full" };
+  });
+
+  // distribution lines + run anchors
+  runs.forEach(r => {
+    const lo = layerObj[r.layer];
+    if (r.dist) {
+      const d = r.dist, t = 90, pts = [];
+      const P = (p, s) => d.dir === "X" ? W(s, p, d.z) : W(p, s, d.z);   // p = perpendicular coord, s = along coord
+      const a = P(d.p0, d.at), b = P(d.p1, d.at);
+      pts.push(a, b);
+      [d.p0, d.p1].forEach(p => { pts.push(d.dir === "X" ? W(d.at - t, p - t, d.z) : W(p - t, d.at - t, d.z), d.dir === "X" ? W(d.at + t, p + t, d.z) : W(p + t, d.at + t, d.z)); });
+      lo.group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), lo.lineMat));
+      r.anchor = a.clone().lerp(b, d.frac);
+    } else if (r.tagPos) {
+      r.anchor = W(r.tagPos[0], r.tagPos[1], r.tagPos[2]);
+    }
+  });
+
+  // =============== STATE + UI ===============
+  const ORDER = ["BM", "A", "B", "CH", "C", "D", "ST"];
+  const NSTEP = ORDER.length;
+  const state = { step: NSTEP, all: true, conc: true, tags: true, ghost: true, explode: false, sel: null, selRun: null, mark: null };
+  const STEP_INFO = [
+    { title: "Formwork", sub: "deck, set-down, step, balcony; cols poured", c: null },
+    { title: "Beam cages", sub: "IB1 grid 2 · EB1 edge beams grids A, 1", c: LBY.BM.css },
+    { title: "Layer A · bottom 1st", sub: "N16-200 E–W · Z/L-bars · extras · trims", c: LBY.A.css },
+    { title: "Layer B · bottom 2nd", sub: "N12-200 N–S · Z/L-bars · trims · balcony", c: LBY.B.css },
+    { title: "Bar chairs", sub: "@1000 both ways", c: LBY.CH.css },
+    { title: "Layer C · top 3rd", sub: "N12-150 N–S cogged · L-bars · add · diag", c: LBY.C.css },
+    { title: "Layer D · top 4th", sub: "N12-150 E–W cogged · edge bars · extras", c: LBY.D.css },
+    { title: "Column starters", sub: "8N24 per column · project 950", c: LBY.ST.css }
+  ];
+  const stepsEl = $("steps");
+  STEP_INFO.forEach((s, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = '<button type="button" class="step" data-step="' + i + '"' + (s.c ? ' style="--c:' + s.c + '"' : "") + '><span class="n">' + i + '</span><span class="t"><b>' + esc(s.title) + "</b><small>" + esc(s.sub) + "</small></span></button>";
+    stepsEl.appendChild(li);
+  });
+  stepsEl.addEventListener("click", e => { const b = e.target.closest(".step"); if (!b) return; state.step = +b.dataset.step; state.all = false; apply(); });
+  $("prev").onclick = () => { state.all = false; state.step = Math.max(0, state.step - 1); apply(); };
+  $("next").onclick = () => { if (state.all) { state.all = false; state.step = 0; } else state.step = Math.min(NSTEP, state.step + 1); apply(); };
+  $("all").onclick = () => { state.all = true; state.step = NSTEP; apply(); };
+  function bindToggle(id, key) { $(id).onclick = () => { state[key] = !state[key]; $(id).setAttribute("aria-pressed", String(state[key])); apply(); }; }
+  bindToggle("tgConc", "conc"); bindToggle("tgTags", "tags"); bindToggle("tgGhost", "ghost"); bindToggle("tgExplode", "explode");
+  const LEG = { CL: "Cols below", BM: "Beams", A: "A · bot 1st", B: "B · bot 2nd", CH: "Chairs", C: "C · top 3rd", D: "D · top 4th", ST: "Starters" };
+  $("legend").innerHTML = LAYERS.map(l => '<span style="--c:' + l.css + '"><i></i>' + LEG[l.id] + "</span>").join("");
+
+  // ---- labels (run tags, grid bubbles, dimensions, notes) ----
+  const tagsEl = $("tags");
+  const labels = [];
+  function mkLabel(html, cls, pos, extra) {
+    const el = document.createElement(extra && extra.run ? "button" : "div");
+    if (el.tagName === "BUTTON") el.type = "button";
+    el.className = "lbl " + cls; el.innerHTML = html;
+    tagsEl.appendChild(el);
+    const L = Object.assign({ el: el, pos: pos, cls: cls }, extra || {});
+    labels.push(L); return L;
+  }
+  runs.forEach(r => {
+    if (!r.label || !r.anchor) return;
+    const ms = r.marks.length > 3 ? r.marks.slice(0, 3).join(" ") + " +" + (r.marks.length - 3) : r.marks.join(" ");
+    const L = mkLabel(esc(r.label) + "<small>" + (r.marks[0] === "EX" ? "existing, poured" : esc(ms)) + "</small>", "tag", r.anchor, { run: r, layer: r.layer, kind: "run" });
+    L.el.style.setProperty("--c", LBY[r.layer].css);
+    L.el.addEventListener("click", ev => { ev.stopPropagation(); selectRun(r); });
+    r.lbl = L;
+  });
+  GX.forEach(g => { mkLabel(g[0], "bub", W(g[1], -1700, GZ), { kind: "bub", center: true }); mkLabel(g[0], "bub", W(g[1], 11700, GZ), { kind: "bub", center: true }); });
+  GY.forEach(g => { mkLabel(g[0], "bub", W(-1700, g[1], GZ), { kind: "bub", center: true }); mkLabel(g[0], "bub", W(15700, g[1], GZ), { kind: "bub", center: true }); });
+  for (let i = 1; i < GX.length; i++) mkLabel(fmt(GX[i][1] - GX[i - 1][1]), "dimt", W((GX[i][1] + GX[i - 1][1]) / 2, DYL - 220, GZ), { kind: "dim", center: true });
+  for (let i = 1; i < GY.length; i++) mkLabel(fmt(GY[i][1] - GY[i - 1][1]), "dimt", W(DXL - 380, (GY[i][1] + GY[i - 1][1]) / 2, GZ), { kind: "dim", center: true });
+  [
+    ["SET DOWN 70 · WET AREA", (DROP.x0 + DROP.x1) / 2, (DROP.y0 + DROP.y1) / 2, T - 64],
+    ["BALCONY 180 THK · SET DOWN 50", (BALC.x0 + BALC.x1) / 2, 10550, BALC.top + 6],
+    ["STAIR VOID", (HOLES[0].x0 + HOLES[0].x1) / 2, (HOLES[0].y0 + HOLES[0].y1) / 2, T + 6],
+    ["RISER 600 × 600", 3300, 1750, T + 6],
+    ["IB1 600 × 400", BEAM.at + 520, 3300, T + 6],
+    ["EB1 500 × 400", 7600, -50, T + 6],
+    ["EB1 500 × 400", -50, 4000, T + 6],
+    ["STEP UP 200", 12000, 7000, STEP.rise + T + 6],
+    ["LEVEL 1 · 200 THK SLAB", 7200, 6800, T + 6]
+  ].forEach(a => mkLabel(esc(a[0]), "anno", W(a[1], a[2], a[3]), { kind: "anno", center: true }));
+  const barTag = mkLabel("", "tag bar", new THREE.Vector3(), { kind: "barTag" });
+  barTag.el.hidden = true;
+
+  // ---- apply visual state ----
+  function layerMode(id) {
+    if (id === "CL") return "full";
+    if (state.all) return "full";
+    const i = ORDER.indexOf(id) + 1;
+    if (i < state.step) return state.ghost ? "ghost" : "full";
+    if (i === state.step) return "full";
+    return "off";
+  }
+  function apply() {
+    LAYERS.forEach(l => {
+      const o = layerObj[l.id], m = layerMode(l.id);
+      o.group.visible = m !== "off";
+      const ghost = m === "ghost";
+      o.mat.transparent = ghost; o.mat.opacity = ghost ? 0.15 : 1; o.mat.depthWrite = !ghost; o.mat.needsUpdate = true;
+      o.lineMat.opacity = ghost ? 0.18 : 1;
+      o.group.position.y = state.explode ? EXPLODE[l.id] : 0;
+      o.mode = m;
+    });
+    concrete.visible = state.conc;
+    cMat.opacity = state.all ? 0.11 : 0.07;
+    stepsEl.querySelectorAll(".step").forEach(b => {
+      const i = +b.dataset.step;
+      b.setAttribute("aria-pressed", String(!state.all && i === state.step));
+      b.classList.toggle("done", state.all || i < state.step);
+    });
+    $("all").setAttribute("aria-pressed", String(state.all));
+    const s = STEP_INFO[state.step];
+    $("steplabel").innerHTML = state.all ? "<b>All layers</b> · as built" : "<b>Step " + state.step + " of " + NSTEP + "</b> · " + esc(s.title);
+    $("stepcap").innerHTML = state.all
+      ? "Showing the finished floor. Press <b>Next</b> to rebuild it in fixing order."
+      : state.step === 0 ? "Formwork: deck with the 70 wet-area set-down, the 200 step up in the NE bay, the balcony 50 lower, the stair void and riser. The columns below are already poured."
+      : "Placing <b>" + esc(s.title) + "</b> (" + esc(s.sub) + ") on top of what's already fixed.";
+    if (state.sel && !state.sel.chair && layerObj[state.sel.layer].mode === "off") clearSel();
+    recolor();
+  }
+  function recolor() {
+    const c = new THREE.Color(), white = new THREE.Color(0xffffff);
+    LAYERS.forEach(l => {
+      const o = layerObj[l.id];
+      o.inst.forEach((e, i) => {
+        const b = e.b;
+        c.copy(o.base);
+        if (state.mark) { if (b.mark === state.mark) c.lerp(white, 0.35); else c.multiplyScalar(0.25); }
+        else if (state.selRun && b.run && b.run !== state.selRun) c.multiplyScalar(0.4);
+        if (state.sel === b) c.copy(white);
+        o.mesh.setColorAt(i, c);
+      });
+      if (o.mesh.instanceColor) o.mesh.instanceColor.needsUpdate = true;
+    });
+  }
+
+  // ---- inspector ----
+  const insp = $("inspector");
+  function showDefault() {
+    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title"><b>Level 1 floor · example</b></div>' +
+      '<dl class="kv"><dt>Slab</dt><dd>14 500 × 9 500, 200 THK, 32 MPa, cover 30</dd>' +
+      '<dt>Requirements</dt><dd>Bottom mats @200, top mats @150, laps 600 on all bars</dd>' +
+      '<dt>Layers</dt><dd>A bottom 1st N16-200 E–W · B bottom 2nd N12-200 N–S · C top 3rd N12-150 N–S · D top 4th N12-150 E–W</dd>' +
+      '<dt>Edges</dt><dd>Top bars cogged (L) at free edges and voids; N12 edge bars T&amp;B</dd>' +
+      '<dt>Set-down</dt><dd>Wet area 3200 × 2900 down 70: mats stop at the step, Z-bar splices T&amp;B</dd>' +
+      '<dt>Step</dt><dd>NE bay (3–4 / B–C) up 200 on a 300 nib: L-bars each side, top and bottom</dd>' +
+      '<dt>Extras</dt><dd>N16 over columns, N16 mid-span, N16 over IB1, 2-N12 diagonals at opening corners</dd>' +
+      '<dt>Balcony</dt><dd>5000 × 1800 cantilever, 180 THK, down 50; N12-200 top with cog + Z, 1500 into slab</dd>' +
+      '<dt>Beams</dt><dd>IB1 grid 2, 600 × 400: 3N20 B, 3N16 T, N12 ligs @200 · EB1 grids A and 1, 500 × 400: 2N16 T&amp;B, R10 ligs @300</dd>' +
+      '<dt>Columns</dt><dd>12 × 400 × 400 below; 8N24 starters project 950, framed by beams on grids 1, 2, A</dd>' +
+      '<dt>Voids</dt><dd>Stair void 2600 × 2200 and riser 600 × 600, 2-bar trimmers each side T&amp;B</dd></dl>' +
+      '<p class="note">Click any bar or tag in the model to see its mark, shape, cut length, setout and laps.</p>';
+  }
+  function showBar(b) {
+    const l = LBY[b.layer];
+    if (b.chair) {
+      insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">CH</span><b>Bar chair</b></div>' +
+        '<dl class="kv"><dt>Height</dt><dd>' + fmt(b.pts[1][2] - b.pts[0][2]) + '</dd><dt>Spacing</dt><dd>1000 both ways</dd></dl>' +
+        '<p class="note">Typical general notes call for chairs at no more than 1 m centres both ways.</p>';
+      return;
+    }
+    const r = b.run, laps = [];
+    if (b.lapPrev) laps.push(LAP[b.size] + " at start");
+    if (b.lapNext) laps.push(LAP[b.size] + " at end");
+    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(b.mark) + '</span><b>' + b.type + b.size + " · " + esc(b.shape) + "</b></div>" +
+      '<dl class="kv"><dt>Layer</dt><dd>' + esc(l.name) + "</dd>" +
+      "<dt>Run</dt><dd>" + esc(r.callout) + "</dd>" +
+      "<dt>Cut length</dt><dd>" + fmt(b.len) + "</dd>" +
+      "<dt>Setout</dt><dd>" + esc(b.setout || "") + "</dd>" +
+      (b.lig || b.col ? "" : "<dt>Laps</dt><dd>" + (laps.length ? laps.join(", ") : "none, single length") + "</dd>") +
+      "<dt>Mass</dt><dd>" + b.kg.toFixed(2) + " kg</dd></dl>" +
+      (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "");
+  }
+  function showRun(r) {
+    const l = LBY[r.layer], kg = r.bars.reduce((s, b) => s + b.kg, 0);
+    let rows = "<dt>Layer</dt><dd>" + esc(l.name) + "</dd><dt>Callout</dt><dd>" + esc(r.callout) + "</dd>";
+    if (r.kind === "main") rows += "<dt>Bar lines</dt><dd>" + r.n + " @ " + r.sp + "</dd><dt>Setout</dt><dd>first " + fmt(r.setout.first) + " from " + r.setout.edges[0] + " edge, last " + fmt(r.setout.last) + " from " + r.setout.edges[1] + " edge</dd>";
+    rows += "<dt>Pieces</dt><dd>" + r.bars.length + "</dd>";
+    if (!r.existing) rows += "<dt>Marks</dt><dd>" + esc(r.marks.join(", ")) + "</dd><dt>Mass</dt><dd>" + fmt(kg) + " kg</dd>";
+    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(r.layer) + "</span><b>" + esc(r.label || r.callout) + "</b></div>" +
+      '<dl class="kv">' + rows + "</dl>" +
+      (r.kind === "main" ? '<p class="note">Bar lines longer than 12 m are split with 600 staggered laps. Top bars are cogged where they meet a free edge or void. Z-bars splice across the 70 set-down; L-bars each side splice across the 200 step.</p>' : "") +
+      (r.existing ? '<p class="note">Existing column cage, already poured. Not in this pour\'s schedule.</p>' : "");
+  }
+  function clearSel() { state.sel = null; state.selRun = null; barTag.el.hidden = true; }
+  function midPoint(b) {
+    const total = polyLen(b.pts) / 2; let acc = 0;
+    for (let i = 1; i < b.pts.length; i++) {
+      const p = b.pts[i - 1], q = b.pts[i], L = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+      if (acc + L >= total) { const t = (total - acc) / L; return W(p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t); }
+      acc += L;
+    }
+    return W(b.pts[0][0], b.pts[0][1], b.pts[0][2]);
+  }
+  function selectBar(b) {
+    state.sel = b; state.selRun = null; state.mark = null; markRows();
+    showBar(b); recolor();
+    if (!b.chair) {
+      barTag.pos = midPoint(b); barTag.layer = b.layer;
+      barTag.el.innerHTML = esc(b.mark) + " · " + b.type + b.size + " · " + fmt(b.len) + "<small>" + esc(b.layer) + " · " + esc(b.shape) + "</small>";
+      barTag.el.hidden = false;
+    } else barTag.el.hidden = true;
+  }
+  function selectRun(r) { state.sel = null; state.selRun = r; state.mark = null; markRows(); barTag.el.hidden = true; showRun(r); recolor(); }
+
+  // ---- schedule ----
+  const schedEl = $("sched");
+  schedEl.innerHTML = marks.map(m => '<tr data-mark="' + m.mark + '"><td><span class="dot" style="--c:' + LBY[m.layer].css + '"></span>' + m.mark + "</td><td>" + m.type + m.size + "</td><td>" + esc(m.shape) + '</td><td class="num">' + fmt(m.len) + '</td><td class="num">' + m.qty + '</td><td class="num">' + m.kg.toFixed(1) + "</td></tr>").join("");
+  $("totQty").textContent = fmt(sched.length);
+  $("totKg").textContent = fmt(sched.reduce((s, b) => s + b.kg, 0));
+  function markRows() { schedEl.querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", tr.dataset.mark === state.mark)); }
+  schedEl.addEventListener("click", e => {
+    const tr = e.target.closest("tr"); if (!tr) return;
+    const m = tr.dataset.mark;
+    state.mark = state.mark === m ? null : m; state.sel = null; state.selRun = null; barTag.el.hidden = true;
+    markRows();
+    if (state.mark) {
+      const mk = marks.find(x => x.mark === m), l = LBY[mk.layer];
+      if (!state.all && ORDER.indexOf(mk.layer) + 1 > state.step) { state.all = true; state.step = NSTEP; }
+      apply();
+      insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + m + "</span><b>Bar mark " + m + "</b></div>" +
+        '<dl class="kv"><dt>Bar</dt><dd>' + mk.type + mk.size + ", " + esc(mk.shape) + "</dd><dt>Cut length</dt><dd>" + fmt(mk.len) + "</dd><dt>Quantity</dt><dd>" + mk.qty + "</dd><dt>Layer</dt><dd>" + esc(LBY[mk.layer].name) + "</dd><dt>Mass</dt><dd>" + mk.kg.toFixed(1) + " kg</dd></dl>" +
+        '<p class="note">Every bar with this mark is highlighted. Click the row again to clear.</p>';
+    } else { recolor(); showDefault(); }
+  });
+
+  // ---- picking ----
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  function pick(cx, cy) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, cam);
+    const meshes = LAYERS.map(l => layerObj[l.id]).filter(o => o.group.visible && o.mode !== "ghost" && o.inst.length).map(o => o.mesh);
+    const hit = ray.intersectObjects(meshes, false)[0];
+    if (!hit || hit.instanceId == null) return null;
+    return hit.object.userData.list[hit.instanceId];
+  }
+  let down = null;
+  const cvs = renderer.domElement;
+  cvs.addEventListener("pointerdown", e => { down = { x: e.clientX, y: e.clientY }; });
+  cvs.addEventListener("pointerup", e => {
+    if (!down) return;
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y); down = null;
+    if (moved > 5) return;
+    const b = pick(e.clientX, e.clientY);
+    if (b) selectBar(b); else { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); }
+  });
+  const tip = $("tip");
+  let hoverPending = false, lastMove = null;
+  cvs.addEventListener("pointermove", e => {
+    if (e.buttons) { tip.hidden = true; return; }
+    lastMove = e; if (hoverPending) return; hoverPending = true;
+    requestAnimationFrame(() => {
+      hoverPending = false;
+      const ev = lastMove, b = pick(ev.clientX, ev.clientY);
+      if (!b) { tip.hidden = true; cvs.style.cursor = ""; return; }
+      const rect = cvs.getBoundingClientRect();
+      tip.textContent = b.chair ? "Bar chair" : b.mark + " · " + b.type + b.size + " · " + fmt(b.len) + " · " + b.layer;
+      tip.style.left = (ev.clientX - rect.left) + "px"; tip.style.top = (ev.clientY - rect.top) + "px";
+      tip.hidden = false; cvs.style.cursor = "pointer";
+    });
+  });
+  cvs.addEventListener("pointerleave", () => { tip.hidden = true; });
+
+  // ---- cameras ----
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const PRESETS = {
+    iso: { p: new THREE.Vector3(-11.5, 9.5, 12.5), t: new THREE.Vector3(0.3, -0.3, -0.6) },
+    side: { p: new THREE.Vector3(0.5, 0.2, 17.5), t: new THREE.Vector3(0.5, -0.4, -0.9) },
+    fit: { p: new THREE.Vector3(-10, 13.5, 15), t: new THREE.Vector3(0.3, -0.4, -0.9) }
+  };
+  let tween = null;
+  function setPlan(on) {
+    planMode = on; cam = on ? ortho : persp; ctlO.enabled = on; ctlP.enabled = !on;
+    $("hud").textContent = on ? "Plan view · drag to pan · scroll to zoom · click a bar or tag" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag";
+    resize();
+  }
+  function goCam(name) {
+    if (name === "plan") { ortho.zoom = 1; ctlO.target.copy(PLAN_C); ortho.position.set(PLAN_C.x, 60, PLAN_C.z); ortho.updateProjectionMatrix(); setPlan(true); return; }
+    setPlan(false);
+    const pr = PRESETS[name];
+    if (reduce) { persp.position.copy(pr.p); ctlP.target.copy(pr.t); return; }
+    tween = { p0: persp.position.clone(), t0: ctlP.target.clone(), p1: pr.p, t1: pr.t, s: performance.now(), d: 650 };
+  }
+  document.querySelectorAll("[data-cam]").forEach(b => b.addEventListener("click", () => goCam(b.dataset.cam)));
+  persp.position.copy(PRESETS.iso.p); ctlP.target.copy(PRESETS.iso.t);
+  window.addEventListener("keydown", e => {
+    if (e.target.closest && e.target.closest("input,textarea")) return;
+    if (e.key === "ArrowRight") $("next").click();
+    if (e.key === "ArrowLeft") $("prev").click();
+  });
+
+  function resize() {
+    const w = view.clientWidth, h = view.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    persp.aspect = w / h; persp.fov = w < 560 ? 54 : 38; persp.updateProjectionMatrix();
+    const asp = w / h, viewH = Math.max(14.6, 18.6 / asp);
+    ortho.left = -viewH * asp / 2; ortho.right = viewH * asp / 2; ortho.top = viewH / 2; ortho.bottom = -viewH / 2;
+    ortho.updateProjectionMatrix();
+  }
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(view); else window.addEventListener("resize", resize);
+  setPlan(false);
+
+  // ---- label layout each frame ----
+  const v = new THREE.Vector3();
+  function prio(L) {
+    if (L.kind === "barTag") return -1;
+    if (L.kind === "run") return (L.run === state.selRun || (!state.all && ORDER.indexOf(L.layer) + 1 === state.step)) ? 0 : 3;
+    if (L.kind === "bub") return 1;
+    if (L.kind === "dim") return 2;
+    return 4;
+  }
+  function placeLabels() {
+    const w = view.clientWidth, h = view.clientHeight, placed = [];
+    labels.slice().sort((a, b) => prio(a) - prio(b)).forEach(L => {
+      let show = true, off = 0;
+      if (L.kind === "run") { const o = layerObj[L.layer]; show = state.tags && o.group.visible && o.mode === "full"; off = o.group.position.y; }
+      else if (L.kind === "anno") show = state.tags;
+      else if (L.kind === "barTag") { show = !!state.sel && !state.sel.chair; if (show) off = layerObj[L.layer].group.position.y; }
+      if (!show) { L.el.hidden = true; return; }
+      v.copy(L.pos); v.y += off; v.project(cam);
+      if (v.z > 1 || v.x < -1.05 || v.x > 1.05 || v.y < -1.05 || v.y > 1.05) { L.el.hidden = true; return; }
+      const x = (v.x + 1) / 2 * w, y = (1 - v.y) / 2 * h;
+      L.el.hidden = false;
+      const tw = L.el.offsetWidth, th = L.el.offsetHeight;
+      const box = L.center ? { l: x - tw / 2, r: x + tw / 2, t: y - th / 2, b: y + th / 2 } : { l: x - tw / 2, r: x + tw / 2, t: y - th - 10, b: y - 10 };
+      const clash = placed.some(p => !(box.r < p.l || box.l > p.r || box.b < p.t || box.t > p.b));
+      if (clash && L.kind !== "barTag" && L.run !== state.selRun) { L.el.hidden = true; return; }
+      placed.push({ l: box.l - 3, r: box.r + 3, t: box.t - 3, b: box.b + 3 });
+      L.el.style.transform = "translate(" + Math.round(box.l) + "px," + Math.round(box.t) + "px)";
+      if (L.kind === "run") L.el.classList.toggle("cur", L.run === state.selRun || (!state.all && ORDER.indexOf(L.layer) + 1 === state.step));
+    });
+  }
+
+  function frame(now) {
+    if (tween) {
+      const k = Math.min(1, (now - tween.s) / tween.d), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      persp.position.lerpVectors(tween.p0, tween.p1, e); ctlP.target.lerpVectors(tween.t0, tween.t1, e);
+      if (k >= 1) tween = null;
+    }
+    (planMode ? ctlO : ctlP).update();
+    renderer.render(scene, cam);
+    placeLabels();
+    requestAnimationFrame(frame);
+  }
+  showDefault();
+  apply();
+  requestAnimationFrame(frame);
+})();
+</script>

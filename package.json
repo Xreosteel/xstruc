@@ -1,0 +1,9 @@
+{
+  "name": "xstruc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "3D slab and reinforcement viewer (prototype)",
+  "scripts": {
+    "test": "node scripts/check.js"
+  }
+}
