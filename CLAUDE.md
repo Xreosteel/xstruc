@@ -11,6 +11,7 @@ X Struc is a browser-based 3D slab-and-reinforcement viewer that will grow into 
   - Architecture: https://claude.ai/artifact/D7Jf59XywqkZmL8UK7xeGm
   - Notation reference (Australian reo callouts, schedules, abbreviations): https://claude.ai/artifact/Di9ePutHNpoTtwQ5ZC3bsX
 - Published viewer (artifact, keep this URL): https://claude.ai/artifact/AyxtiYDBagzRjSgJ3sQgM8
+- Public web version: https://xreosteel.github.io/xstruc/ — deployed by `.github/workflows/pages.yml` on every push to `main` (runs `npm test` first; only `index.html` is published). Nothing to do beyond pushing; if the Pages run fails, say so in the devlog.
 
 ## Rules for a scheduled run
 

@@ -2,7 +2,7 @@
 
 3D slab and reinforcement viewer, built towards a SaaS that turns engineers' markup plans into verified 3D reo models and fabrication-ready bar schedules (Australian notation, AS 3600 / AS/NZS 4671).
 
-**Live prototype:** https://claude.ai/artifact/AyxtiYDBagzRjSgJ3sQgM8 (private; share from the page's Share menu)
+**Live viewer:** https://xreosteel.github.io/xstruc/ (public, deployed from `main` by GitHub Actions) · claude.ai artifact: https://claude.ai/artifact/AyxtiYDBagzRjSgJ3sQgM8 (private; share from the page's Share menu)
 
 ## Run it
 
