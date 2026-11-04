@@ -109,8 +109,20 @@ checkModel("two mats only", { callouts: "N16-200 A E-W\nN12-150 D E-W" }, 300);
 checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000, 12000, 18000] }, 1500);
 
 // error paths must report, not throw
-const bad = buildModel({ callouts: "N13-200 A\nSL82 T\nN12-200 A\nN16-200 A" });
+const bad = buildModel({ callouts: "N13-200 A\nSL82 T\nN12-200 A E-W\nN16-200 A E-W" });
 if (!bad.errors.some(e => /N13/.test(e)) || !bad.errors.some(e => /mesh/.test(e)) || !bad.errors.some(e => /already defined/.test(e))) fail("expected errors for bad callouts, got: " + bad.errors.join(" | "));
+// layer direction must be stated (#21): no guessed default, the undirected mat is not built, the others still are
+const nodir = buildModel({ callouts: "N16-200 A\nN12-200 B N-S\nN12-150 C N-S\nN12-150 D E-W" });
+if (!nodir.errors.some(e => /^Line 1 .*E-W or N-S.*no direction is assumed/.test(e))) fail("expected a direction error for line 1, got: " + nodir.errors.join(" | "));
+if (nodir.mats.A) fail("mat A was built without a stated direction");
+if (!nodir.mats.B || !nodir.mats.D || nodir.mats.B.dir !== "Y" || nodir.mats.D.dir !== "X") fail("directed mats should still be parsed when another line has none");
+if (nodir.bars.some(b => b.layer === "A" && b.run.kind === "main")) fail("layer A main bars were built from a guessed direction");
+if (nodir.errors.length !== 1) fail("expected exactly one error for the undirected mat, got: " + nodir.errors.join(" | "));
+const eachway = buildModel({ callouts: "N12-200 A EW\nN12-200 B N-S\nN12-200 C HORIZONTAL\nN12-200 D TRANS" });
+if (!eachway.errors.some(e => /^Line 1 .*each way/.test(e)) || !eachway.errors.some(e => /^Line 3 .*horizontal is a wall or beam direction/.test(e)) || !eachway.errors.some(e => /^Line 4 .*transverse/.test(e))) fail("expected each-way / wall-direction errors, got: " + eachway.errors.join(" | "));
+if (eachway.mats.A || eachway.mats.C || eachway.mats.D || !eachway.mats.B) fail("only the N-S mat should survive the each-way / wall-direction lines");
+// every mat the model does build carries a stated plan direction
+[M, buildModel({ callouts: "N12-200 A E-W\nN12-200 B N-S\nN12-200 C N-S\nN12-200 D E-W" })].forEach(mm => Object.values(mm.mats).forEach(m => { if (m.dir !== m.dirIn || (m.dir !== "X" && m.dir !== "Y")) fail("mat " + m.layer + " direction " + m.dir + " does not match its callout " + m.dirIn); }));
 const thin = buildModel({ thickness: 120, cover: 40 });
 if (!thin.errors.some(e => /thin|clash/.test(e))) fail("expected a too-thin error, got: " + thin.errors.join(" | "));
 

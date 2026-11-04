@@ -245,10 +245,10 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
         <div class="field"><label for="inCover">Cover mm (T &amp; B)</label><input id="inCover" type="number" min="15" max="75" step="5"></div>
         <div class="field"><label for="inFc">Concrete f'c MPa</label><input id="inFc" type="number" min="20" max="80" step="5"></div>
         <div class="field"><label for="inLap">Lap, all bars mm</label><input id="inLap" type="number" min="300" max="2500" step="50"></div>
-        <div class="field wide"><label for="inCallouts">Mats, one callout per line: size-spacing, layer A–D, direction E-W or N-S</label><textarea id="inCallouts" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
+        <div class="field wide"><label for="inCallouts">Mats, one callout per line: size-spacing, layer A–D, and which way it runs (E-W or N-S)</label><textarea id="inCallouts" rows="4" spellcheck="false" autocomplete="off" placeholder="N16-200 A E-W"></textarea></div>
       </div>
       <ul class="errs" id="inErrs"></ul>
-      <p class="hint">Layers: A bottom 1st, B bottom 2nd, C top 3rd, D top 4th. Also understood: <code>N12 @ 200 CTS</code>, <code>17N16-250 T1</code>, <code>N12-200 T&amp;B EW</code>.</p>
+      <p class="hint">Layers: A bottom 1st, B bottom 2nd, C top 3rd, D top 4th. Every mat must say which way it runs: <code>E-W</code> or <code>N-S</code>, one direction per layer; nothing is assumed when the drawing is silent. Also understood: <code>N12 @ 200 CTS A E-W</code>, <code>N12-150 C NS</code>.</p>
       <div class="feats" id="feats">
         <label><input type="checkbox" data-feat="beams" checked> Beams IB1 + EB1</label>
         <label><input type="checkbox" data-feat="columns" checked> Columns + starters</label>
@@ -535,6 +535,16 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     return out;
   }
 
+  // A slab mat runs one way, and the drawing must say which (DECISIONS.md: no default direction; backlog #21).
+  // Returns null when the parsed direction is a plan direction (X = E-W, Y = N-S), else the error wording for the panel.
+  function matDirectionError(direction) {
+    if (direction === "X" || direction === "Y") return null;
+    if (!direction) return "say which way this mat runs: E-W or N-S (no direction is assumed).";
+    if (direction === "EW") return "\"each way\" covers two layers; give each layer its own direction, E-W or N-S.";
+    const words = { H: "horizontal", V: "vertical", LONG: "longitudinal", TRANS: "transverse" };
+    return (words[direction] || direction) + " is a wall or beam direction; a slab mat runs E-W or N-S.";
+  }
+
   // ---------- model builder ----------
   function buildModel(cfg) {
     cfg = Object.assign({}, DEFAULT_CFG, cfg || {});
@@ -560,11 +570,12 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     if (!(LAPLEN >= 300 && LAPLEN <= 2500)) errors.push("Lap must be 300–2500 mm.");
 
     // mats from callouts
-    const mats = {}, parsed = [];
+    const mats = {}, parsed = [], named = {};   // named: layers a callout line names, even when that line is rejected
     String(cfg.callouts || "").split(/\r?\n/).forEach((line, i) => {
       if (!line.trim()) return;
       const p = parseCallout(line, { scheme: cfg.scheme || "ABCD" }); p.line = i + 1; parsed.push(p);
       const where = "Line " + (i + 1) + " (" + line.trim() + "): ";
+      if (p.layer && MAT_LAYERS.indexOf(p.layer) >= 0) named[p.layer] = true;
       if (p.error) { errors.push(where + p.error + "."); return; }
       if (p.kind === "thickness") { warnings.push(where + "slab thickness is set in its own field; line ignored."); return; }
       if (p.kind === "mesh") { errors.push(where + "mesh is not supported yet (backlog #6); use N bars for the mats."); return; }
@@ -572,18 +583,21 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       if (!p.layer || MAT_LAYERS.indexOf(p.layer) < 0) { errors.push(where + "say which layer this mat is: A, B, C or D."); return; }
       if (!p.spacing) { errors.push(where + "no spacing found (write N12-200 or N12 @ 200)."); return; }
       if (p.type !== "N") { errors.push(where + "mats must be N (D500N) bars."); return; }
+      // Direction must be stated (DECISIONS.md 2026-11-04, backlog #21): no guessed default, no "each way" for one layer.
+      const dirErr = matDirectionError(p.direction);
+      if (dirErr) { errors.push(where + dirErr); return; }
       if (mats[p.layer]) { errors.push(where + "layer " + p.layer + " is already defined on line " + mats[p.layer].line + "."); return; }
       if (p.spacing < p.size * 2 + 20) { errors.push(where + "spacing " + p.spacing + " is too tight for N" + p.size + "."); return; }
       if (p.spacing > 600) { warnings.push(where + "spacing over 600 exceeds the usual slab maximum (2D or 300 whichever is less)."); }
       mats[p.layer] = { layer: p.layer, size: p.size, sp: p.spacing, dirIn: p.direction, line: i + 1, count: p.count };
     });
-    MAT_LAYERS.forEach(l => { if (!mats[l]) warnings.push("No mat for layer " + l + "; it is left out of this model."); });
+    MAT_LAYERS.forEach(l => { if (!mats[l] && !named[l]) warnings.push("No mat for layer " + l + "; it is left out of this model."); });   // a rejected line already has its error
     const dA = mats.A ? mats.A.size : 16, dB = mats.B ? mats.B.size : 12, dC = mats.C ? mats.C.size : 12, dD = mats.D ? mats.D.size : 12;
     const Z = { A: C + dA / 2, B: C + dA + dB / 2, D: T - C - dD / 2, C: T - C - dD - dC / 2 };
     if (Z.C - dC / 2 - (Z.B + dB / 2) < 40) errors.push("Slab too thin for this mat stack: top and bottom mats would clash.");
     const COGZ = Z.B + dB / 2 + 4;            // top-bar cogs turn down to just above the bottom mat
     const zEdgeT = Z.C - dC / 2 - 6, zEdgeB = Z.B + dB / 2 + 12, zChairTop = Z.C - dC / 2;
-    MAT_LAYERS.forEach(l => { const m = mats[l]; if (!m) return; m.top = l === "C" || l === "D"; m.z = Z[l]; m.dir = m.dirIn === "X" ? "X" : m.dirIn === "Y" ? "Y" : (l === "A" || l === "D" ? "X" : "Y"); });
+    MAT_LAYERS.forEach(l => { const m = mats[l]; if (!m) return; m.top = l === "C" || l === "D"; m.z = Z[l]; m.dir = m.dirIn; });   // dirIn is X or Y here; anything else was rejected above
     if (mats.A && mats.B && mats.A.dir === mats.B.dir) warnings.push("Layers A and B run the same way; a bottom mat normally crosses (A E-W, B N-S).");
     if (mats.C && mats.D && mats.C.dir === mats.D.dir) warnings.push("Layers C and D run the same way; a top mat normally crosses.");
 

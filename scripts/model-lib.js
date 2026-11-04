@@ -17,7 +17,7 @@ function loadModel() {
   if (i0 < 0 || i1 < 0 || i1 < i0) throw new Error("MODEL START / MODEL END markers missing or out of order");
   const model = main.slice(i0, i1);
   const ctx = { console, Math, Map, Set, Array, Object, Number, String, Infinity, isFinite, exports: {} };
-  vm.runInNewContext(model + "\n;exports.out = { parseCallout, buildModel, DEFAULT_CFG, LAYERS, LBY, MESH_CODES, BAR_SIZES, bendGeom, pinDia, cutLength, SHAPES, nearestGrid, barAxis, gridSetout };", ctx, { filename: "model" });
+  vm.runInNewContext(model + "\n;exports.out = { parseCallout, buildModel, DEFAULT_CFG, LAYERS, LBY, MESH_CODES, BAR_SIZES, bendGeom, pinDia, cutLength, SHAPES, nearestGrid, barAxis, gridSetout, matDirectionError };", ctx, { filename: "model" });
   return ctx.exports.out;
 }
 module.exports = { loadModel };

@@ -3,7 +3,7 @@
 // Each case: [input, options, expected partial object]. Only listed keys are compared.
 "use strict";
 const { loadModel } = require("./model-lib");
-const { parseCallout } = loadModel();
+const { parseCallout, matDirectionError } = loadModel();
 
 const TB = { scheme: "TB" }, AB = { scheme: "ABCD" };
 const CASES = [
@@ -73,6 +73,18 @@ const CASES = [
   ["n12-150 d e-w", AB, { layer: "D", position: "T", direction: "X" }],
   ["N12-200 B", AB, { layer: "B", position: "B" }],
   ["N12-200 B", TB, { layer: null, position: "B" }],
+  // direction is a grammar field: absent stays null (buildModel turns that into an error, #21), each-way is not a layer direction
+  ["N12-200 A", AB, { layer: "A", direction: null }],
+  ["N12 @ 200 CTS A E-W", AB, { layer: "A", spacing: 200, direction: "X" }],
+  ["N12-150 C NS", AB, { layer: "C", direction: "Y" }],
+  ["N12-200 A EAST-WEST", AB, { layer: "A", direction: "X" }],
+  ["N12-200 B NORTH-SOUTH", AB, { layer: "B", direction: "Y" }],
+  ["N12-200 D X", AB, { layer: "D", direction: "X" }],
+  ["N12-200 C Y", AB, { layer: "C", direction: "Y" }],
+  ["N12-200 A EW", AB, { layer: "A", direction: "EW" }],
+  ["N12-200 A EACH WAY", AB, { layer: "A", direction: "EW" }],
+  ["N12-200 A HORIZ", AB, { layer: "A", direction: "H" }],
+  ["N12-200 A LONGITUDINAL", AB, { layer: "A", direction: "LONG" }],
   // errors
   ["N13-200 T", TB, { kind: "bar", error: "N13 is not a standard N bar size" }],
   ["REFER DETAIL 5/S-301", TB, { kind: null, error: "no bar or mesh designation found (expected something like N12-200 T)" }],
@@ -86,5 +98,13 @@ CASES.forEach(([input, opts, exp]) => {
   if (bad.length) failures.push("  " + JSON.stringify(input) + "\n    " + bad.map(k => k + ": expected " + JSON.stringify(exp[k]) + ", got " + JSON.stringify(got[k])).join("\n    "));
   else pass++;
 });
-if (failures.length) { console.error("grammar: FAIL " + failures.length + " of " + CASES.length + "\n" + failures.join("\n")); process.exit(1); }
+// mat direction rule (#21): only E-W / N-S build a mat; silence, each-way and wall/beam words are errors with a reason
+const DIR_CASES = [["X", null], ["Y", null], [null, /E-W or N-S/], [undefined, /no direction is assumed/], ["EW", /each way.*own direction/i], ["H", /horizontal.*wall or beam/], ["V", /vertical/], ["LONG", /longitudinal/], ["TRANS", /transverse/]];
+DIR_CASES.forEach(([dir, exp]) => {
+  const got = matDirectionError(dir);
+  if (exp === null ? got !== null : !(typeof got === "string" && exp.test(got))) failures.push("  matDirectionError(" + JSON.stringify(dir) + "): expected " + (exp === null ? "null" : exp) + ", got " + JSON.stringify(got));
+  else pass++;
+});
+const total = CASES.length + DIR_CASES.length;
+if (failures.length) { console.error("grammar: FAIL " + failures.length + " of " + total + "\n" + failures.join("\n")); process.exit(1); }
 console.log("grammar: OK (" + pass + " cases)");
