@@ -13,7 +13,7 @@ See `DECISIONS.md`. The first users are site crews, so items that help a fixer o
 
 - [x] **19. Fixing view for a tablet.** A "Site" mode (button in the header) that strips the UI to the stage plus a big stepper: one layer at a time in fixing order, large type (18 px+ tags, 44 px touch targets), the current layer solid and everything below ghosted, tap a bar for mark, size, cut length, setout from the nearest grid and lap positions, a "next layer" button a thumb can hit, no inputs panel. Must work at 1024 × 768 landscape and portrait; test with the smoke script at those sizes.
 - [x] **20. Setout from grids on every bar.** Each bar's inspector and site-view card shows the offset of its first and last bar from the nearest grid lines (not just the slab edge), and the lap positions as distances from a grid, so a fixer can set out with a tape.
-- [ ] **21. Layer direction must be stated.** Per DECISIONS: a mat callout without E-W / N-S is an error in the inputs panel, not a guessed default. Update the example callouts, the hint text, `test-grammar.js` and `check.js`.
+- [x] **21. Layer direction must be stated.** Per DECISIONS: a mat callout without E-W / N-S is an error in the inputs panel, not a guessed default. Update the example callouts, the hint text, `test-grammar.js` and `check.js`.
 - [ ] **9. Per-layer placing drawing (2D).** A canvas view per layer that reads like a placing drawing: bars as lines, tags with distribution lines, setout dimensions from grids, cogs as ticks. Switch between 3D and the 2D sheet; keep selection in sync. (Moved up from Phase 1b.)
 - [ ] **7. Geometry editing.** Openings, set-downs, steps and the balcony become editable lists in the inputs panel (x0, y0, x1, y1, depth). Add/remove rows; the model rebuilds. Needed before a real job can be entered.
 
@@ -49,6 +49,8 @@ See `DECISIONS.md`. The first users are site crews, so items that help a fixer o
 
 ## Done notes
 
+- #21 (2026-11-04): a mat callout without E-W / N-S is an error in the inputs panel, never a guessed default. `matDirectionError(direction)` (between the MODEL markers) accepts only X / Y; silence, "each way" (two layers in one line) and wall/beam words (horizontal, vertical, longitudinal, transverse) each get their own wording. The rejected mat is not built, the other mats still are, and the scene keeps the last good model; the "No mat for layer" warning is skipped for a layer whose line was rejected. Panel label, placeholder and hint say every mat must state its direction. Grammar test +20 cases, `check.js` error paths, `smoke.js` panel assertion + screenshot `smoke-8-direction-error.png`.
+
 - #20 (2026-11-04): grid setout lives in the model. `nearestGrid`, `barAxis` and `gridSetout` sit between the MODEL markers; every bar with a plan axis carries `b.grid = {dir, ends, line, from, to, laps[], lineIndex, n, sp}` and every run of parallel lines (mats, balcony) carries `r.grid = {first, last}`. Each ref is `{v, grid, at, d, side, text}` from the nearest grid line; a lap zone's two ends are measured from the same grid. The desktop inspector shows bar line (with "line i of n @ sp"), both ends and lap zones; the site card reads the same object; fitments show their position along the beam. `check.js` asserts the refs add up, use the nearest grid, match the geometry and lap flags and cover every bar line; `smoke.js` asserts the inspector and site-card wording.
 
 - #19 (2026-11-04): **Site mode** button in the header (also `#site` in the URL). Strips the page to the stage, a side panel and a stepper bar: Prev / Next (64 px) plus one 44 px chip per step and "Finished floor"; one layer at a time, below ghosted, 18 px tags, 36 px grid bubbles. The side panel (landscape) lists the runs to place now, tappable; tapping a bar swaps it for a card with mark, size, shape, cut length, bar line from the nearest grid (and line i of n), both ends from the nearest grids, and lap zones from a grid. Portrait shows the card as a bottom sheet. Camera presets now fit the floor to the stage (`fitCam`) at any aspect. `window.xstruc` test handle; smoke test covers 1024 × 768 and 768 × 1024.
@@ -60,5 +62,4 @@ See `DECISIONS.md`. The first users are site crews, so items that help a fixer o
 ## Parked (needs a human decision first)
 
 - Crank vs splice-bar detail at shallow set-downs (currently Z-bars; many firms use splice bars). Ask the engineer.
-- Layer direction convention when the drawing is silent (currently outer layers E–W).
 - N10 mass and mesh sheet masses: verify against a current InfraBuild / ARC catalogue before shipping.

@@ -2,6 +2,23 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-04 · run 7 (scheduled) · backlog #21 layer direction must be stated
+
+**Done:** a mat callout that does not say which way it runs is an error in the inputs panel, per `DECISIONS.md` (no default direction). The model never guesses.
+
+- `matDirectionError(direction)` sits between the MODEL markers next to the grammar and is exported to the scripts. Only `X` (E-W) and `Y` (N-S) build a mat. Silence → "say which way this mat runs: E-W or N-S (no direction is assumed)"; `EW` / each way → "covers two layers; give each layer its own direction"; `H` / `V` / `LONG` / `TRANS` → "<word> is a wall or beam direction; a slab mat runs E-W or N-S". The old fallback (`A`/`D` → E-W, `B`/`C` → N-S) is gone: `m.dir = m.dirIn`.
+- A rejected line is not built; the other mats still parse so every bad line reports at once. The "No mat for layer X" warning is skipped when a line named that layer but was rejected (the error already says so). The viewer keeps the last good model and outlines the callouts field, as before for any line error.
+- Panel copy: label "…and which way it runs (E-W or N-S)", placeholder `N16-200 A E-W`, hint "Every mat must say which way it runs: E-W or N-S, one direction per layer; nothing is assumed when the drawing is silent."
+- `parseCallout` itself is unchanged: `direction` stays a grammar field (null when absent) so the TB-scheme cases still parse; the rule lives in the model where the layer is known.
+- Tests: `test-grammar.js` +11 ABCD direction cases and 9 `matDirectionError` cases (62 → 82); `check.js` builds an undirected mat (exactly one error, layer A not built, B and D still built with their stated directions), an each-way / horizontal / transverse set (only the N-S line survives), asserts every built mat has `dir === dirIn ∈ {X, Y}`, and the old bad-callouts fixture now states its directions. Verified the new check fails when the fallback is put back. `smoke.js` types an undirected mat, asserts the error line, `aria-invalid`, the open panel and an unchanged bar count; new screenshot `smoke-8-direction-error.png`.
+- Example totals unchanged: 1,458 bars / 78 marks / 5,300 kg.
+
+**Check:** `check: OK` · `grammar: OK (82 cases)` · `shapes: OK (126 assertions)` · `smoke: OK` (screenshot `smoke-8-direction-error.png`)
+
+**Parked:** nothing new. The "layer direction when the drawing is silent" item is removed from Parked: it is decided (error, no default).
+
+**Next run:** backlog #9 (per-layer placing drawing, 2D canvas per layer with bars as lines, tags with distribution lines, setout dimensions from grids, cogs as ticks; keep selection in sync with 3D). It is big: split it in `BACKLOG.md` (9a: canvas sheet for one layer with bars, grids and dims; 9b: tags + distribution lines + cog ticks; 9c: selection sync and site-mode use) and do 9a.
+
 ## 2026-11-04 · run 6 (scheduled) · backlog #20 setout from grids on every bar
 
 **Done:** grid setout moved from the site view into the model, shown on the desktop inspector as well as the site card, and asserted headlessly.
