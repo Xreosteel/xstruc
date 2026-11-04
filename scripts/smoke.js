@@ -86,6 +86,36 @@ const { chromium } = require("playwright");
   console.log("inspector bar:", insp.bar.slice(0, 300));
   await page.screenshot({ path: path.join(outDir, "smoke-7-inspector.png") });
 
+  // 2D placing sheet (#9a): the stage swaps to a canvas, the stepper picks the layer, a click on a drawn bar selects it
+  await page.click("#all"); await page.click("#tgSheet"); await page.waitForTimeout(400);
+  const sh = await page.evaluate(() => {
+    const vis = el => !!el && el.offsetParent !== null, S = window.xstruc.sheet();
+    return { on: window.xstruc.state.sheet, canvas: vis(document.getElementById("sheet")), view: vis(document.getElementById("view")), pressed: document.getElementById("tgSheet").getAttribute("aria-pressed"), solid: S.solid.join(""), bars: S.bars.length, dims: S.dims.length, title: S.title[0], cw: document.getElementById("sheet").clientWidth };
+  });
+  console.log("sheet all:", JSON.stringify(sh));
+  await page.screenshot({ path: path.join(outDir, "smoke-9-sheet-all.png") });
+  await page.click("#steps .step[data-step='2']"); await page.waitForTimeout(300);   // layer A
+  const shA = await page.evaluate(() => {
+    const S = window.xstruc.sheet(), M = window.xstruc.model();
+    const it = S.bars.find(x => !x.ghost && x.bar.run.kind === "main" && x.bar.line === 3 && !x.bar.lapPrev);   // a layer-A mat bar, third line
+    const p = it.pts, mid = [(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2], xy = window.xstruc.sheetXY(mid[0], mid[1]);
+    const r = document.getElementById("sheet").getBoundingClientRect();
+    return { solid: S.solid.join(""), ghost: S.ghost.join(""), ink: S.bars.filter(x => !x.ghost).length, dims: S.dims.length, cogs: S.bars.reduce((s, x) => s + x.cogs.length, 0), id: it.bar.id, mark: it.bar.mark, cx: r.left + xy[0], cy: r.top + xy[1], title: S.title[0] };
+  });
+  await page.mouse.click(shA.cx, shA.cy); await page.waitForTimeout(200);
+  shA.sel = await page.evaluate(() => window.xstruc.state.sel && window.xstruc.state.sel.id);
+  shA.insp = (await page.textContent("#inspector")).replace(/\s+/g, " ").slice(0, 120);
+  console.log("sheet A:", JSON.stringify(shA));
+  await page.screenshot({ path: path.join(outDir, "smoke-9-sheet-A.png") });
+  await page.click("#steps .step[data-step='6']"); await page.waitForTimeout(300);   // layer D: cogged top bars
+  const shD = await page.evaluate(() => { const S = window.xstruc.sheet(); return { solid: S.solid.join(""), cogs: S.bars.filter(x => !x.ghost).reduce((s, x) => s + x.cogs.length, 0), selKept: window.xstruc.state.sel && window.xstruc.state.sel.id }; });
+  console.log("sheet D:", JSON.stringify(shD));
+  await page.screenshot({ path: path.join(outDir, "smoke-9-sheet-D.png") });
+  await page.click(".side [data-cam=iso]"); await page.waitForTimeout(300);
+  const shOff = await page.evaluate(() => ({ on: window.xstruc.state.sheet, view: document.getElementById("view").offsetParent !== null, canvas: document.getElementById("sheet").offsetParent !== null, sel: window.xstruc.state.sel && window.xstruc.state.sel.id }));
+  console.log("sheet off:", JSON.stringify(shOff));
+  await page.click("#all");
+
   // site mode (tablet fixing view) at 1024 × 768 landscape and portrait
   const siteRuns = [];
   for (const vp of [{ width: 1024, height: 768 }, { width: 768, height: 1024 }]) {
@@ -147,6 +177,14 @@ const { chromium } = require("playwright");
   if (!/Bar line ?(?:[\d,]+ [NS] of|on) grid [A-Z] · bar line \d+ of \d+ @ \d+/.test(insp.bar) || !/Runs ?W end [\d,]+ [EW] of grid \d/.test(insp.bar) || !/lap zone [\d,]+ [EW] of grid (\d) to [\d,]+ [EW] of grid \1/.test(insp.bar)) problems.push("desktop inspector lacks grid setout / lap zone: " + insp.bar.slice(0, 300));
   if (!/First line ?[\d,]+ [EW] of grid \d \(/.test(insp.run) || !/Last line/.test(insp.run)) problems.push("run inspector lacks first/last line from grids: " + insp.run.slice(0, 200));
   siteRuns.forEach(r => { if (!/lap zone [\d,]+ [EW] of grid \d to/.test(r.card)) problems.push("site " + r.vp + ": bar card lap zone is not from a grid: " + r.card); });
+  // 2D placing sheet
+  if (!sh.on || !sh.canvas || sh.view || sh.pressed !== "true" || sh.cw < 300) problems.push("sheet did not replace the 3D stage: " + JSON.stringify(sh));
+  if (sh.solid !== "BMABCHCDST" || sh.bars < 1000 || sh.dims !== 0 || !/ALL LAYERS/.test(sh.title)) problems.push("finished-floor sheet wrong: " + JSON.stringify(sh));
+  if (shA.solid !== "A" || shA.ghost !== "BM" || shA.ink < 100 || shA.dims < 2 || !/LAYER A/.test(shA.title)) problems.push("layer A sheet wrong: " + JSON.stringify(shA));
+  if (shA.sel !== shA.id || !shA.insp.includes(shA.mark)) problems.push("clicking a bar on the sheet did not select it (" + shA.sel + " vs " + shA.id + "): " + shA.insp);
+  if (shD.solid !== "D" || shD.cogs < 10) problems.push("layer D sheet should show cog ticks: " + JSON.stringify(shD));
+  if (shD.selKept !== shA.id) problems.push("stepping to layer D should keep the selection (not visible, but kept by 3D rules): got " + shD.selKept);
+  if (shOff.on || !shOff.view || shOff.canvas || shOff.sel !== shA.id) problems.push("3D button did not restore the stage with the selection kept: " + JSON.stringify(shOff));
   if (errors.length) problems.push("console errors:\n  " + errors.join("\n  "));
   if (+s0.bars.replace(/\D/g, "") < 800) problems.push("default model has too few bars: " + s0.bars);
   if (s0.steps !== 8) problems.push("expected 8 steps, got " + s0.steps);

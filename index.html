@@ -103,6 +103,11 @@ details.sec:not([open]) { gap: 0; }
 #view { position: absolute; inset: 0; }
 #view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 #tags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+/* 2D placing sheet (backlog #9a): a paper-coloured canvas that replaces the 3D stage for one layer */
+#sheet { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; background: #f3f0e8; }
+#sheet.pan { cursor: grabbing; }
+.stage.sheet .legend { display: none; }   /* the sheet's title names the layer and what is ghosted below */
+.stage.sheet .building { background: rgba(243,240,232,0.6); color: #4a5560; }
 .lbl { position: absolute; left: 0; top: 0; }
 .tag { pointer-events: auto; cursor: pointer; font-family: var(--mono); font-size: 11.5px; line-height: 1.25; white-space: nowrap; background: rgba(14, 18, 22, 0.9); border: 1px solid rgba(255,255,255,0.08); border-left: 3px solid var(--c); color: var(--fg); padding: 3px 7px 3px 6px; border-radius: 3px; }
 .tag small { display: block; color: var(--muted); font-size: 10px; }
@@ -282,6 +287,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
         <button class="btn" type="button" data-cam="side">Side</button>
         <button class="btn" type="button" data-cam="fit">Fit</button>
       </div>
+      <button class="btn" type="button" id="tgSheet" aria-pressed="false" title="Draw the current layer as a 2D placing sheet: bars as lines, cogs as ticks, setout from the grids">2D placing sheet</button>
       <div class="toggles">
         <button class="btn" type="button" id="tgConc" aria-pressed="true">Concrete</button>
         <button class="btn" type="button" id="tgTags" aria-pressed="true">Tags &amp; notes</button>
@@ -293,6 +299,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       <h2>How to read it</h2>
       <p class="caption">Each tag is one run of bars, written like the placing drawing: <b>count, size, spacing, layer</b>. The tick-ended line under it shows which bars it covers.</p>
       <p class="caption"><b>Plan</b> gives a true top-down floor plan with grids and dimensions. Step through the layers in fixing order: the layer being placed is solid, the ones below are ghosted.</p>
+      <p class="caption"><b>2D placing sheet</b> draws the current layer as a placing drawing: bars as lines, cogs as ticks, grids with dimension strings, and the first and last bar line dimensioned from the nearest grid. Drag to pan, scroll to zoom, double-click to fit, click a bar for its details.</p>
       <p class="caption"><b>Site mode</b> (top right) is the tablet view for fixing: one layer at a time, big tags, tap a bar for its mark, cut length, setout from the grids and laps.</p>
     </div>
   </aside>
@@ -300,6 +307,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   <main class="stage" aria-label="3D floor model">
     <div id="view"></div>
     <div id="tags"></div>
+    <canvas id="sheet" hidden aria-label="2D placing sheet of the current layer"></canvas>
     <div id="tip" hidden></div>
     <div class="steplabel" id="steplabel"></div>
     <div class="legend" id="legend"></div>
@@ -952,6 +960,84 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       HOLES: HOLES, DROP: DROP, STEP: STEP, BALC: BALC, BEAMS: BEAMS, COLS: COLS, COL: COL, COLB: COLB, PROJ: PROJ,
       bars: bars, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kg, LAYERS: LAYERS, LBY: LBY, EXPLODE: EXPLODE, lvl: lvl };
   }
+
+  // ---------- 2D placing sheet (backlog #9a) ----------
+  // One layer's placing drawing as plain geometry in plan millimetres (x east, y north): bars as polylines, cogs and
+  // hooks as ticks, grid lines with bubbles and dimension strings, concrete outlines, and setout dimensions from the
+  // nearest grid line to the first and last bar line of every run (r.grid, #20). Headless on purpose: the viewer
+  // draws it on a canvas and a later DXF / PDF export can write the same primitives. solid = layer ids drawn in ink,
+  // ghost = layer ids drawn faint (the layers already fixed below). Bars with existing: true are context only and stay off the sheet.
+  function buildSheet(M, solid, ghost) {
+    solid = (solid || []).slice(); ghost = (ghost || []).filter(l => solid.indexOf(l) < 0);
+    const SL = M.SL, ext = 1450, DYL = M.gy[0] - 1050, DXL = M.gx[0] - 1050, yTop = M.BALC ? M.BALC.y1 : SL.y1;
+    const rect = (r, id) => ({ x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, id: id || r.id || "" });
+    const beamRect = bm => bm.dir === "X" ? { x0: bm.a, x1: bm.b, y0: bm.at - bm.w / 2, y1: bm.at + bm.w / 2, id: bm.id } : { x0: bm.at - bm.w / 2, x1: bm.at + bm.w / 2, y0: bm.a, y1: bm.b, id: bm.id };
+    const S = {
+      solid: solid, ghost: ghost, layer: solid.length === 1 ? solid[0] : null,
+      bounds: { x0: SL.x0 - 1700, x1: SL.x1 + 1700, y0: SL.y0 - 1700, y1: yTop + 1700 },
+      concrete: {
+        slab: rect(SL, "SLAB"), holes: M.HOLES.map(h => rect(h)),
+        drop: M.DROP ? rect(M.DROP, "SET DOWN " + M.DROP.d) : null,
+        step: M.STEP ? { rect: rect(M.STEP, "STEP UP " + M.STEP.rise), nib: M.STEP.nib } : null,
+        balcony: M.BALC ? rect(M.BALC, "BALCONY") : null,
+        beams: M.BEAMS.map(beamRect),
+        cols: M.COLS.map(c => ({ x0: c.x - M.COL / 2, x1: c.x + M.COL / 2, y0: c.y - M.COL / 2, y1: c.y + M.COL / 2, id: c.name }))
+      },
+      grids: {
+        x: M.GX.map(g => ({ name: g[0], v: g[1], a: SL.y0 - ext + 250, b: yTop + ext - 250, bub: [SL.y0 - ext, yTop + ext] })),
+        y: M.GY.map(g => ({ name: g[0], v: g[1], a: SL.x0 - ext + 250, b: SL.x1 + ext - 250, bub: [SL.x0 - ext, SL.x1 + ext] }))
+      },
+      gridDims: [], notes: [], bars: [], chairs: [], dims: [], title: []
+    };
+    // dimension strings between grid lines, as on the general arrangement: measure = the axis the number is along, at = where the line sits on the other axis
+    for (let i = 1; i < M.gx.length; i++) S.gridDims.push({ measure: "x", a: M.gx[i - 1], b: M.gx[i], at: DYL, text: fmt(M.gx[i] - M.gx[i - 1]) });
+    for (let i = 1; i < M.gy.length; i++) S.gridDims.push({ measure: "y", a: M.gy[i - 1], b: M.gy[i], at: DXL, text: fmt(M.gy[i] - M.gy[i - 1]) });
+    // feature notes, same wording as the 3D annotations
+    S.notes.push({ x: (SL.x0 + SL.x1) / 2, y: SL.y0 + M.W * 0.72, text: M.cfg.name.toUpperCase() + " · " + M.T + " THK SLAB" });
+    if (M.DROP) S.notes.push({ x: (M.DROP.x0 + M.DROP.x1) / 2, y: (M.DROP.y0 + M.DROP.y1) / 2, text: "SET DOWN " + M.DROP.d + " · WET AREA" });
+    if (M.STEP) S.notes.push({ x: (M.STEP.x0 + M.STEP.x1) / 2, y: (M.STEP.y0 + M.STEP.y1) / 2, text: "STEP UP " + M.STEP.rise });
+    if (M.BALC) S.notes.push({ x: (M.BALC.x0 + M.BALC.x1) / 2, y: M.BALC.y1 - 500, text: "BALCONY " + (M.BALC.top - M.BALC.bot) + " THK · SET DOWN 50" });
+    M.HOLES.forEach(h => S.notes.push({ x: (h.x0 + h.x1) / 2, y: h.id.indexOf("RISER") === 0 ? h.y0 - 250 : (h.y0 + h.y1) / 2, text: h.id }));
+    M.BEAMS.forEach(bm => S.notes.push({ x: bm.dir === "X" ? bm.a + (bm.b - bm.a) * 0.52 : bm.at + 520, y: bm.dir === "X" ? bm.at : bm.a + (bm.b - bm.a) * 0.36, text: bm.id + " " + bm.D + " × " + bm.w }));
+    // bars: plan polyline (vertical legs collapse to their point); a near-vertical leg at either end is a cog or hook,
+    // drawn as a tick of the leg's height, perpendicular to the bar, as on a placing drawing
+    const planLen = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const want = {}; solid.forEach(l => { want[l] = false; }); ghost.forEach(l => { want[l] = true; });
+    M.bars.forEach(b => {
+      if (b.existing || !(b.layer in want)) return;
+      const pts = [];
+      b.pts.forEach(p => { const q = pts[pts.length - 1]; if (!q || Math.hypot(p[0] - q[0], p[1] - q[1]) > 1) pts.push([p[0], p[1]]); });
+      const cogs = [], n = b.pts.length, planTotal = pts.reduce((s, p, i) => i ? s + planLen(pts[i - 1], p) : 0, 0);
+      const tick = (k, legFrom, legTo) => {   // k = index of the vertical leg's outer point, leg = the adjoining plan leg
+        const dz = Math.abs(b.pts[k][2] - b.pts[k === 0 ? 1 : n - 2][2]);
+        if (dz < 20) return;
+        const d = planLen(legFrom, legTo); if (d < 1) return;
+        const ux = (legTo[0] - legFrom[0]) / d, uy = (legTo[1] - legFrom[1]) / d;
+        // a short turned-down leg is a cog (tick); a leg taller than the bar's plan length is a vertical bar (a starter), shown end-on
+        cogs.push({ x: b.pts[k][0], y: b.pts[k][1], nx: -uy, ny: ux, len: Math.round(dz), end: k === 0 ? "start" : "end", kind: dz > planTotal ? "vertical" : "cog" });
+      };
+      if (n >= 3 && planLen(b.pts[0], b.pts[1]) < 1) tick(0, b.pts[1], b.pts[2]);
+      if (n >= 3 && planLen(b.pts[n - 2], b.pts[n - 1]) < 1) tick(n - 1, b.pts[n - 3], b.pts[n - 2]);
+      S.bars.push({ id: b.id, bar: b, layer: b.layer, pts: pts, cogs: cogs, w: b.size, ghost: want[b.layer], point: pts.length === 1 });
+    });
+    if ("CH" in want) M.chairs.forEach(c => S.chairs.push({ x: c.pts[0][0], y: c.pts[0][1], ghost: want.CH }));
+    // setout dimensions from the nearest grid to the first and last bar line of each run on a one-layer sheet, drawn on
+    // the run's distribution line so the tag (#9b), the pitch and the setout read together
+    if (S.layer) M.runs.forEach(r => {
+      if (r.layer !== S.layer || !r.grid || !r.dist) return;
+      const X = r.dir === "X";
+      [[r.grid.first, "first"], [r.grid.last, "last"]].forEach(gw => {
+        const g = gw[0]; if (Math.abs(g.d) < 5) return;
+        S.dims.push({ measure: X ? "y" : "x", a: g.at, b: g.v, at: r.dist.at, text: fmt(Math.abs(g.d)), grid: g.grid, run: r.id, which: gw[1] });
+      });
+    });
+    // title lines
+    const lname = l => (LBY[l] ? LBY[l].name : l).toUpperCase();
+    const mat = S.layer && M.mats[S.layer] ? " · N" + M.mats[S.layer].size + "-" + M.mats[S.layer].sp + (M.mats[S.layer].dir === "X" ? " E–W" : " N–S") : "";
+    S.title.push(M.cfg.name.toUpperCase() + " · PLACING SHEET · " + (S.layer ? lname(S.layer) + mat : solid.length ? "ALL LAYERS" : "FORMWORK"));
+    S.title.push(M.T + " THK · COVER " + M.C + " · LAPS " + M.cfg.lap + " · " + (S.layer ? S.bars.filter(x => !x.ghost).length + " BARS THIS LAYER" : fmt(M.sched.length) + " BARS") + (ghost.length ? " · BELOW: " + ghost.join(" ") : ""));
+    return S;
+  }
   // === MODEL END ===
 
   // =============== VIEWER ===============
@@ -987,7 +1073,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
 
   const ORDER = ["BM", "A", "B", "CH", "C", "D", "ST"];
   const NSTEP = ORDER.length;
-  const state = { step: NSTEP, all: true, conc: true, tags: true, ghost: true, explode: false, sel: null, selRun: null, mark: null, site: false };
+  const state = { step: NSTEP, all: true, conc: true, tags: true, ghost: true, explode: false, sel: null, selRun: null, mark: null, site: false, sheet: false };
   let M = null, built = null;   // current model and its scene objects
 
   // scene: x = east, y = up, -z = north (so a top-down camera reads north-up)
@@ -1197,10 +1283,12 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     $("siteNext").disabled = state.all;
     if (state.sel && !state.sel.chair && built.layerObj[state.sel.layer].mode === "off") clearSel();
     if (state.site && !state.sel && !state.selRun) siteDefault();
+    if (state.sheet) updateSheet();
     recolor();
   }
   function recolor() {
     if (!built) return;
+    if (state.sheet) drawSheet();
     const c = new THREE.Color(), white = new THREE.Color(0xffffff);
     LAYERS.forEach(l => {
       const o = built.layerObj[l.id];
@@ -1374,6 +1462,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     $("btnSite").setAttribute("aria-pressed", String(on));
     $("sitectl").hidden = !on; $("sitebar").hidden = !on;
     if (on) {
+      if (state.sheet) setSheet(false);   // the sheet joins site mode with #9c
       state.ghost = true; state.tags = true; state.explode = false; state.conc = true;
       [["tgConc", "conc"], ["tgTags", "tags"], ["tgGhost", "ghost"], ["tgExplode", "explode"]].forEach(p => $(p[0]).setAttribute("aria-pressed", String(state[p[1]])));
       if (state.all) { state.all = false; state.step = Math.min(1, NSTEP); }
@@ -1465,6 +1554,166 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   });
   cvs.addEventListener("pointerleave", () => { tip.hidden = true; });
 
+  // ---- 2D placing sheet (#9a): draws buildSheet() on a canvas; the build sequence picks the layer ----
+  const sheetCv = $("sheet"), sctx = sheetCv.getContext("2d"), stageEl = document.querySelector(".stage");
+  const INK = "#1a1e23", GHOSTC = "#d4cfc4", CONC = "#6e7781", DIMC = "#3f5f80", GRIDC = "#8a94a0", PAPER = "#f3f0e8";
+  const MONO = '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace', UIF = '"Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif';
+  let sheet = null, sheetKey = "", sv = { s: 0.04, tx: 0, ty: 0 };   // sv: px per mm and the pan offset (y north = up the screen)
+  const sx = x => sv.tx + x * sv.s, sy = y => sv.ty - y * sv.s;
+  // a placing sheet is one layer: the step's layer in ink, the layers already fixed below it faint (Ghost below on) or
+  // left off (Ghost below off); the finished floor draws every layer in its colour
+  function sheetLayers() {
+    if (state.all) return { solid: ORDER.slice(), ghost: [] };
+    const cur = ORDER[state.step - 1];
+    return { solid: cur ? [cur] : [], ghost: state.ghost ? ORDER.slice(0, Math.max(0, state.step - 1)) : [] };
+  }
+  function sheetSize() {
+    const w = stageEl.clientWidth, h = stageEl.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (sheetCv.width !== Math.round(w * dpr) || sheetCv.height !== Math.round(h * dpr)) { sheetCv.width = Math.round(w * dpr); sheetCv.height = Math.round(h * dpr); return true; }
+    return false;
+  }
+  function sheetFit() {
+    if (!sheet) return;
+    const b = sheet.bounds, w = stageEl.clientWidth, h = stageEl.clientHeight;
+    if (!w || !h) return;
+    sv.s = Math.min(w / (b.x1 - b.x0), h / (b.y1 - b.y0)) * 0.97;
+    sv.tx = w / 2 - (b.x0 + b.x1) / 2 * sv.s; sv.ty = h / 2 + (b.y0 + b.y1) / 2 * sv.s;
+  }
+  // rebuild the sheet geometry when the model or the layer selection changed (recolor() draws it)
+  function updateSheet(fit) {
+    if (!M || !state.sheet) return;
+    const L = sheetLayers(), key = M.cfg.name + "|" + M.bars.length + "|" + L.solid.join() + "|" + L.ghost.join();
+    if (key !== sheetKey || !sheet) { const b0 = sheet && sheet.bounds; sheet = buildSheet(M, L.solid, L.ghost); sheetKey = key; if (fit || !b0 || JSON.stringify(b0) !== JSON.stringify(sheet.bounds)) sheetFit(); }
+    else if (fit) sheetFit();
+  }
+  function drawSheet() {
+    if (!sheet || !state.sheet) return;
+    sheetSize();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = stageEl.clientWidth, h = stageEl.clientHeight, c = sctx;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.fillStyle = PAPER; c.fillRect(0, 0, w, h);
+    c.lineJoin = "round"; c.lineCap = "butt";
+    const R = r => { c.beginPath(); c.rect(sx(r.x0), sy(r.y1), (r.x1 - r.x0) * sv.s, (r.y1 - r.y0) * sv.s); };
+    const line = (x0, y0, x1, y1) => { c.beginPath(); c.moveTo(sx(x0), sy(y0)); c.lineTo(sx(x1), sy(y1)); c.stroke(); };
+    const K = sheet.concrete;
+    // concrete: columns filled, beams dashed (below the slab), slab and features outlined
+    c.fillStyle = "rgba(110,119,129,0.18)"; c.strokeStyle = CONC; c.lineWidth = 1;
+    K.cols.forEach(r => { R(r); c.fill(); c.stroke(); });
+    c.setLineDash([6, 4]); K.beams.forEach(r => { R(r); c.stroke(); }); c.setLineDash([]);
+    c.lineWidth = 1.6; R(K.slab); c.stroke();
+    c.lineWidth = 1.2;
+    K.holes.forEach(r => { R(r); c.stroke(); line(r.x0, r.y0, r.x1, r.y1); line(r.x0, r.y1, r.x1, r.y0); });
+    if (K.drop) { c.setLineDash([8, 5]); R(K.drop); c.stroke(); c.setLineDash([]); }
+    if (K.step) { R(K.step.rect); c.stroke(); c.setLineDash([3, 3]); line(K.step.rect.x0 + K.step.nib, K.step.rect.y0, K.step.rect.x0 + K.step.nib, K.step.rect.y1); line(K.step.rect.x0, K.step.rect.y0 + K.step.nib, K.step.rect.x1, K.step.rect.y0 + K.step.nib); c.setLineDash([]); }
+    if (K.balcony) { c.lineWidth = 1.6; R(K.balcony); c.stroke(); }
+    // grids: dashed centre lines, bubbles at both ends, dimension strings between them
+    c.strokeStyle = GRIDC; c.lineWidth = 1; c.setLineDash([14, 5, 3, 5]);
+    sheet.grids.x.forEach(g => line(g.v, g.a, g.v, g.b));
+    sheet.grids.y.forEach(g => line(g.a, g.v, g.b, g.v));
+    c.setLineDash([]);
+    const bub = (x, y, name) => { const r = 11; c.beginPath(); c.arc(sx(x), sy(y), r, 0, Math.PI * 2); c.fillStyle = PAPER; c.fill(); c.strokeStyle = INK; c.lineWidth = 1.2; c.stroke(); c.fillStyle = INK; c.font = "600 12px " + UIF; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(name, sx(x), sy(y) + 0.5); };
+    sheet.grids.x.forEach(g => g.bub.forEach(y => bub(g.v, y, g.name)));
+    sheet.grids.y.forEach(g => g.bub.forEach(x => bub(x, g.v, g.name)));
+    const dim = (d, col, strong) => {   // dimension line with oblique ticks and the number beside it
+      const vert = d.measure === "y";
+      const x0 = vert ? d.at : d.a, x1 = vert ? d.at : d.b, y0 = vert ? d.a : d.at, y1 = vert ? d.b : d.at;
+      c.strokeStyle = col; c.lineWidth = strong ? 1.2 : 1; line(x0, y0, x1, y1);
+      const t = 4; [[x0, y0], [x1, y1]].forEach(p => { c.beginPath(); c.moveTo(sx(p[0]) - t, sy(p[1]) + t); c.lineTo(sx(p[0]) + t, sy(p[1]) - t); c.stroke(); });
+      c.fillStyle = col; c.font = (strong ? "500 " : "400 ") + "11px " + MONO; c.textAlign = "center"; c.textBaseline = vert ? "middle" : "bottom";
+      if (vert) { c.save(); c.translate(sx(d.at) - 4, sy((d.a + d.b) / 2)); c.rotate(-Math.PI / 2); c.textBaseline = "bottom"; c.fillText(d.text, 0, 0); c.restore(); }
+      else c.fillText(d.text, sx((d.a + d.b) / 2), sy(d.at) - 3);
+    };
+    sheet.gridDims.forEach(d => dim(d, GRIDC, false));
+    // bars: layers below faint, the layer being placed in ink; several solid layers (finished floor) in their colours
+    const many = sheet.solid.length > 1;
+    const poly = (it, col, lw) => {
+      c.strokeStyle = col; c.fillStyle = col; c.lineWidth = lw;
+      if (it.point) { c.beginPath(); c.arc(sx(it.pts[0][0]), sy(it.pts[0][1]), Math.max(1.5, lw), 0, Math.PI * 2); c.fill(); return; }
+      c.beginPath(); it.pts.forEach((p, i) => { if (i) c.lineTo(sx(p[0]), sy(p[1])); else c.moveTo(sx(p[0]), sy(p[1])); }); c.stroke();
+      it.cogs.forEach(k => {
+        if (k.kind === "vertical") { c.beginPath(); c.arc(sx(k.x), sy(k.y), Math.max(3, lw * 1.6), 0, Math.PI * 2); c.stroke(); return; }   // a starter seen end-on
+        const L = Math.max(5, k.len * sv.s); c.beginPath(); c.moveTo(sx(k.x), sy(k.y)); c.lineTo(sx(k.x) + k.nx * L, sy(k.y) - k.ny * L); c.stroke();
+      });
+    };
+    const lwOf = (w, k) => (w <= 12 ? 1.1 : w <= 16 ? 1.5 : 2) * k;
+    sheet.bars.forEach(it => { if (it.ghost) poly(it, GHOSTC, lwOf(it.w, 0.6)); });
+    sheet.chairs.forEach(ch => { c.strokeStyle = ch.ghost ? GHOSTC : INK; c.lineWidth = 1; const X = sx(ch.x), Y = sy(ch.y); c.beginPath(); c.moveTo(X - 4, Y - 4); c.lineTo(X + 4, Y + 4); c.moveTo(X - 4, Y + 4); c.lineTo(X + 4, Y - 4); c.stroke(); });
+    const dimmed = (state.mark || state.selRun) ? "rgba(26,30,35,0.22)" : null;
+    sheet.bars.forEach(it => {
+      if (it.ghost || it.bar === state.sel) return;
+      const b = it.bar, lc = LBY[it.layer].css;
+      let col = many ? lc : INK;
+      if (state.mark) col = b.mark === state.mark ? lc : dimmed;
+      else if (state.selRun) col = b.run === state.selRun ? lc : dimmed;
+      poly(it, col, lwOf(it.w, (state.mark && b.mark === state.mark) || (state.selRun && b.run === state.selRun) ? 1.6 : 1));
+    });
+    const selIt = state.sel && !state.sel.chair ? sheet.bars.find(it => it.bar === state.sel && !it.ghost) : null;
+    if (selIt) { poly(selIt, "rgba(255,255,255,0.9)", lwOf(selIt.w, 3.2)); poly(selIt, LBY[selIt.layer].css, lwOf(selIt.w, 2)); }
+    // setout from the nearest grid to the first and last bar line of each run
+    sheet.dims.forEach(d => dim(d, DIMC, true));
+    // feature notes and the title
+    c.font = "500 10.5px " + MONO; c.textAlign = "center"; c.textBaseline = "middle";
+    sheet.notes.forEach(n => {   // paper halo so the note reads over the bars
+      const tw = c.measureText(n.text).width, X = sx(n.x), Y = sy(n.y);
+      c.fillStyle = "rgba(243,240,232,0.85)"; c.fillRect(X - tw / 2 - 3, Y - 7, tw + 6, 14);
+      c.fillStyle = CONC; c.fillText(n.text, X, Y);
+    });
+    c.fillStyle = "rgba(243,240,232,0.88)"; c.fillRect(0, 0, w, 50);   // title band stays readable when zoomed in
+    c.fillStyle = INK; c.textAlign = "left"; c.textBaseline = "top";
+    c.font = "700 15px " + UIF; c.fillText(sheet.title[0], 14, 12);
+    c.font = "400 12px " + MONO; c.fillStyle = CONC; c.fillText(sheet.title[1], 14, 33);
+    c.font = "400 11px " + MONO; c.textAlign = "right"; c.fillText("1 : " + fmt(1 / (sv.s / (96 / 25.4))) + " on this screen · N ↑", w - 14, 12);
+  }
+  // nearest bar of the layer being placed within 7 px of the pointer (chairs too, when they are the step)
+  function sheetPick(px, py) {
+    if (!sheet) return null;
+    const mx = (px - sv.tx) / sv.s, my = (sv.ty - py) / sv.s, tol = 7 / sv.s;
+    let best = null, bd = tol;
+    const segD = (p, q) => { const dx = q[0] - p[0], dy = q[1] - p[1], L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((mx - p[0]) * dx + (my - p[1]) * dy) / L2)) : 0; return Math.hypot(mx - (p[0] + t * dx), my - (p[1] + t * dy)); };
+    sheet.bars.forEach(it => { if (it.ghost) return; for (let i = 0; i < Math.max(1, it.pts.length - 1); i++) { const d = segD(it.pts[i], it.pts[Math.min(i + 1, it.pts.length - 1)]); if (d < bd) { bd = d; best = it.bar; } } });
+    if (!best && sheet.chairs.length) sheet.chairs.forEach((ch, i) => { if (ch.ghost) return; const d = Math.hypot(mx - ch.x, my - ch.y); if (d < bd) { bd = d; best = M.chairs[i]; } });
+    return best;
+  }
+  function setSheet(on) {
+    state.sheet = on;
+    stageEl.classList.toggle("sheet", on);
+    $("tgSheet").setAttribute("aria-pressed", String(on));
+    view.hidden = on; tagsEl.hidden = on; sheetCv.hidden = !on; $("steplabel").hidden = on; tip.hidden = true;
+    $("hud").textContent = on ? "2D placing sheet · drag to pan · scroll to zoom · double-click to fit · click a bar" : planMode ? "Plan view · drag to pan · scroll to zoom · click a bar or tag" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag";
+    if (on) { sheetSize(); updateSheet(true); drawSheet(); } else resize();
+  }
+  $("tgSheet").onclick = () => setSheet(!state.sheet);
+  let sdown = null;
+  sheetCv.addEventListener("pointerdown", e => { sdown = { x: e.clientX, y: e.clientY, tx: sv.tx, ty: sv.ty, moved: false }; sheetCv.setPointerCapture(e.pointerId); });
+  sheetCv.addEventListener("pointermove", e => {
+    const rect = sheetCv.getBoundingClientRect();
+    if (sdown) {
+      if (!sdown.moved && Math.hypot(e.clientX - sdown.x, e.clientY - sdown.y) > 4) { sdown.moved = true; sheetCv.classList.add("pan"); tip.hidden = true; }
+      if (sdown.moved) { sv.tx = sdown.tx + (e.clientX - sdown.x); sv.ty = sdown.ty + (e.clientY - sdown.y); drawSheet(); }
+      return;
+    }
+    const b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
+    if (!b) { tip.hidden = true; return; }
+    tip.textContent = b.chair ? "Bar chair" : b.mark + " · " + b.type + b.size + " · " + fmt(b.len) + " · " + b.layer;
+    tip.style.left = (e.clientX - rect.left) + "px"; tip.style.top = (e.clientY - rect.top) + "px"; tip.hidden = false;
+  });
+  sheetCv.addEventListener("pointerup", e => {
+    if (!sdown) return;
+    const d = sdown; sdown = null; sheetCv.classList.remove("pan");
+    if (d.moved) return;
+    const rect = sheetCv.getBoundingClientRect(), b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
+    if (b) selectBar(b); else { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); }
+  });
+  sheetCv.addEventListener("pointercancel", () => { sdown = null; sheetCv.classList.remove("pan"); });
+  sheetCv.addEventListener("pointerleave", () => { tip.hidden = true; });
+  sheetCv.addEventListener("wheel", e => {
+    e.preventDefault();
+    const rect = sheetCv.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const k = Math.exp(-e.deltaY * 0.0015), s1 = Math.max(0.004, Math.min(2, sv.s * k)), kk = s1 / sv.s;
+    sv.tx = px - (px - sv.tx) * kk; sv.ty = py - (py - sv.ty) * kk; sv.s = s1; drawSheet();
+  }, { passive: false });
+  sheetCv.addEventListener("dblclick", () => { sheetFit(); drawSheet(); });
+
   // ---- cameras (presets scale with the model) ----
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let tween = null;
@@ -1500,6 +1749,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   }
   function goCam(name, snap) {
     if (!built) return;
+    if (state.sheet) setSheet(false);   // a camera preset is a 3D view; the sheet comes back with its button
     const pr = presets();
     if (name === "plan") { const c = pr.planC; ortho.zoom = 1; ctlO.target.copy(c); ortho.position.set(c.x, 80, c.z); ortho.lookAt(c.x, 0, c.z); ortho.updateProjectionMatrix(); setPlan(true); return; }
     setPlan(false);
@@ -1514,8 +1764,9 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     if (e.key === "ArrowLeft") $("prev").click();
   });
   function resize() {
-    const w = view.clientWidth, h = view.clientHeight;
     if (state.site) document.documentElement.style.setProperty("--sitebar-h", $("sitebar").offsetHeight + "px");
+    if (state.sheet) { if (sheetSize()) { sheetFit(); drawSheet(); } return; }
+    const w = view.clientWidth, h = view.clientHeight;
     if (!w || !h) return;
     renderer.setSize(w, h, false);
     persp.aspect = w / h; persp.fov = w < 560 ? 54 : 38; persp.updateProjectionMatrix();
@@ -1524,7 +1775,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     ortho.left = -viewH * asp / 2; ortho.right = viewH * asp / 2; ortho.top = viewH / 2; ortho.bottom = -viewH / 2;
     ortho.updateProjectionMatrix();
   }
-  if (window.ResizeObserver) new ResizeObserver(resize).observe(view); else window.addEventListener("resize", resize);
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(document.querySelector(".stage")); else window.addEventListener("resize", resize);
 
   // ---- label layout each frame ----
   const v = new THREE.Vector3();
@@ -1563,9 +1814,11 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       persp.position.lerpVectors(tween.p0, tween.p1, e); ctlP.target.lerpVectors(tween.t0, tween.t1, e);
       if (k >= 1) tween = null;
     }
-    (planMode ? ctlO : ctlP).update();
-    renderer.render(scene, cam);
-    placeLabels();
+    if (!state.sheet) {   // the 2D sheet draws on its own canvas; the 3D stage is hidden, so skip the WebGL frame
+      (planMode ? ctlO : ctlP).update();
+      renderer.render(scene, cam);
+      placeLabels();
+    }
     requestAnimationFrame(frame);
   }
 
@@ -1607,6 +1860,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     model.cfg.example = !!opts.example;
     clearSel(); state.mark = null;
     teardown(); buildScene(model); lastGood = cfg;
+    sheet = null; sheetKey = "";   // the sheet is rebuilt from the new model by apply()
     renderSteps(); renderSchedule(); showDefault(); slabline(model); apply(); resize();
     $("siteFloor").textContent = model.cfg.name + " · " + model.T + " THK · laps " + model.cfg.lap;
     if (opts.camera) goCam("iso", true); else if (planMode) goCam("plan");
@@ -1631,6 +1885,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   requestAnimationFrame(frame);
   if (location.hash === "#site" || /[?&]site\b/.test(location.search)) setSite(true);
   // test handle for scripts/smoke.js (headless Chromium cannot aim a tap at a 12 mm bar reliably)
-  window.xstruc = { model: () => M, state: state, selectBar: id => { const b = M.bars.find(x => x.id === id); if (b) selectBar(b); return !!b; }, selectRun: id => { const r = M.runs.find(x => x.id === id); if (r) selectRun(r); return !!r; }, setSite: setSite };
+  window.xstruc = { model: () => M, state: state, selectBar: id => { const b = M.bars.find(x => x.id === id); if (b) selectBar(b); return !!b; }, selectRun: id => { const r = M.runs.find(x => x.id === id); if (r) selectRun(r); return !!r; }, setSite: setSite,
+    sheet: () => sheet, setSheet: setSheet, sheetXY: (x, y) => [sx(x), sy(y)] };
 })();
 </script>

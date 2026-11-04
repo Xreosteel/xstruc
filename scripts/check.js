@@ -7,7 +7,9 @@ const { loadModel } = require("./model-lib");
 
 let lib;
 try { lib = loadModel(); } catch (e) { fail(e.message); }
-const { buildModel, DEFAULT_CFG, LBY } = lib;
+const { buildModel, DEFAULT_CFG, LBY, buildSheet } = lib;
+const fmt = n => Math.round(n).toLocaleString("en-AU");
+const FIX = ["BM", "A", "B", "CH", "C", "D", "ST"];   // fixing order, as the viewer steps through it
 
 function checkModel(name, cfg, minBars) {
   let M;
@@ -34,6 +36,7 @@ function checkModel(name, cfg, minBars) {
     if (r.label && !r.dist && !r.tagPos) problems.push("run " + r.id + " (" + r.label + ") has a label but no tag anchor");
   });
   checkGridSetout(M, problems);
+  checkSheets(M, problems);
   const qty = marks.reduce((s, m) => s + m.qty, 0);
   if (qty !== sched.length) problems.push("schedule qty " + qty + " != scheduled bars " + sched.length);
   const kgM = marks.reduce((s, m) => s + m.kg, 0);
@@ -100,6 +103,74 @@ function checkGridSetout(M, problems) {
   });
   if (withGrid < bars.length * 0.5) problems.push("only " + withGrid + " of " + bars.length + " bars have a grid setout");
   if (M.cfg === DEFAULT_CFG && withLaps < 50) problems.push("only " + withLaps + " lap zones on the example; expected the long E–W bars to lap");
+}
+
+// 2D placing sheet (#9a): one sheet per fixing step (that layer in ink, the layers below ghosted) plus the finished floor.
+// Every bar of the layer is on the sheet as its plan polyline, every short turned-down end leg is a cog tick, grids and
+// their dimension strings match the model, and every run's first and last bar line is dimensioned from its nearest grid.
+function checkSheets(M, problems) {
+  const inSheet = b => !b.existing;
+  const planPts = b => { const out = []; b.pts.forEach(p => { const q = out[out.length - 1]; if (!q || Math.hypot(p[0] - q[0], p[1] - q[1]) > 1) out.push([p[0], p[1]]); }); return out; };
+  const endLegs = b => { const n = b.pts.length; if (n < 3) return 0; let k = 0; const pl = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]); if (pl(b.pts[0], b.pts[1]) < 1 && Math.abs(b.pts[1][2] - b.pts[0][2]) >= 20 && pl(b.pts[1], b.pts[2]) >= 1) k++; if (pl(b.pts[n - 2], b.pts[n - 1]) < 1 && Math.abs(b.pts[n - 1][2] - b.pts[n - 2][2]) >= 20 && pl(b.pts[n - 3], b.pts[n - 2]) >= 1) k++; return k; };
+  const sheets = FIX.map((lid, i) => ({ lid: lid, S: buildSheet(M, [lid], FIX.slice(0, i)) }));
+  sheets.push({ lid: null, S: buildSheet(M, FIX, []) });
+  sheets.forEach(({ lid, S }) => {
+    const where = "sheet " + (lid || "all");
+    const p = m => problems.push(where + ": " + m);
+    const solidBars = M.bars.filter(b => inSheet(b) && (lid ? b.layer === lid : true));
+    const ghostBars = lid ? M.bars.filter(b => inSheet(b) && FIX.indexOf(b.layer) >= 0 && FIX.indexOf(b.layer) < FIX.indexOf(lid)) : [];
+    const sol = S.bars.filter(it => !it.ghost), gho = S.bars.filter(it => it.ghost);
+    if (sol.length !== solidBars.length) p(sol.length + " bars in ink, layer has " + solidBars.length);
+    if (gho.length !== ghostBars.length) p(gho.length + " ghost bars, layers below have " + ghostBars.length);
+    if (S.layer !== lid) p("layer " + S.layer + " != " + lid);
+    if (S.bars.some(it => it.bar.existing || it.layer === "CL")) p("existing / column-below bars are drawn");
+    const b = S.bounds; if (!(b.x1 > b.x0 && b.y1 > b.y0)) p("bad bounds");
+    let cogs = 0, expCogs = 0;
+    S.bars.forEach(it => {
+      const bb = it.bar, w = "bar " + bb.id + " (" + (bb.run.label || bb.run.callout) + ")";
+      const exp = planPts(bb);
+      if (it.pts.length !== exp.length || it.pts.some((q, i) => Math.abs(q[0] - exp[i][0]) > 0.01 || Math.abs(q[1] - exp[i][1]) > 0.01)) p(w + ": plan polyline differs from the bar's projected points");
+      if (it.pts.some(q => !isFinite(q[0]) || !isFinite(q[1]) || q[0] < b.x0 - 1 || q[0] > b.x1 + 1 || q[1] < b.y0 - 1 || q[1] > b.y1 + 1)) p(w + ": point outside the sheet bounds");
+      if (it.point !== (it.pts.length === 1)) p(w + ": point flag wrong");
+      if (it.w !== bb.size || it.layer !== bb.layer) p(w + ": size / layer not carried");
+      cogs += it.cogs.length; expCogs += endLegs(bb);
+      it.cogs.forEach(k => {
+        if (Math.abs(Math.hypot(k.nx, k.ny) - 1) > 1e-6) p(w + ": cog tick normal is not a unit vector");
+        if (!(k.len >= 20) || !["cog", "vertical"].includes(k.kind) || !["start", "end"].includes(k.end)) p(w + ": bad cog tick " + JSON.stringify(k));
+        const e = k.end === "start" ? bb.pts[0] : bb.pts[bb.pts.length - 1];
+        if (Math.abs(k.x - e[0]) > 0.01 || Math.abs(k.y - e[1]) > 0.01) p(w + ": cog tick is not at the bar end");
+        // the tick is perpendicular to the adjoining plan leg
+        const leg = k.end === "start" ? [bb.pts[1], bb.pts[2]] : [bb.pts[bb.pts.length - 3], bb.pts[bb.pts.length - 2]];
+        const dx = leg[1][0] - leg[0][0], dy = leg[1][1] - leg[0][1];
+        if (Math.abs(dx * k.nx + dy * k.ny) > 1e-6 * Math.hypot(dx, dy)) p(w + ": cog tick is not perpendicular to the bar");
+      });
+    });
+    if (cogs !== expCogs) p(cogs + " cog ticks, expected " + expCogs + " turned-down end legs");
+    if (lid === "ST" && !sol.every(it => it.cogs.length === 1 && it.cogs[0].kind === "vertical")) p("every starter should show one vertical leg end-on");
+    if (lid === "D" && M.cfg.features.edges && cogs < 10) p("layer D should be cogged at the free edges, only " + cogs + " ticks");
+    // grids and their dimension strings
+    if (S.grids.x.length !== M.GX.length || S.grids.x.some((g, i) => g.name !== M.GX[i][0] || g.v !== M.GX[i][1] || g.bub.length !== 2 || !(g.a < g.b))) p("x grids differ from the model");
+    if (S.grids.y.length !== M.GY.length || S.grids.y.some((g, i) => g.name !== M.GY[i][0] || g.v !== M.GY[i][1] || g.bub.length !== 2 || !(g.a < g.b))) p("y grids differ from the model");
+    if (S.gridDims.length !== M.gx.length - 1 + M.gy.length - 1) p("grid dimension count " + S.gridDims.length);
+    S.gridDims.forEach(d => { if (d.text !== fmt(Math.abs(d.b - d.a)) || !["x", "y"].includes(d.measure) || !isFinite(d.at)) p("bad grid dim " + JSON.stringify(d)); });
+    // chairs only on their own step (and ghosted after it)
+    const chairsExp = lid === null ? M.chairs.length : (FIX.indexOf("CH") <= FIX.indexOf(lid) ? M.chairs.length : 0);
+    if (S.chairs.length !== chairsExp) p(S.chairs.length + " chairs, expected " + chairsExp);
+    if (lid === "CH" && S.chairs.some(ch => ch.ghost)) p("chairs ghosted on their own step");
+    // setout dims: one per run end that is off a grid line, from the nearest grid, on the run's distribution line
+    if (lid) {
+      M.runs.filter(r => r.layer === lid && r.grid && r.dist).forEach(r => {
+        [["first", r.grid.first], ["last", r.grid.last]].forEach(([which, g]) => {
+          const d = S.dims.find(x => x.run === r.id && x.which === which);
+          if (Math.abs(g.d) < 5) { if (d) p("run " + r.id + " " + which + " line is on grid " + g.grid + " but has a dim"); return; }
+          if (!d) { p("run " + r.id + " (" + r.label + ") has no " + which + "-line setout dim"); return; }
+          if (d.measure !== (r.dir === "X" ? "y" : "x") || d.a !== g.at || d.b !== g.v || d.grid !== g.grid || d.text !== fmt(Math.abs(g.d)) || d.at !== r.dist.at) p("run " + r.id + " " + which + " dim " + JSON.stringify(d) + " does not match r.grid " + JSON.stringify(g));
+        });
+      });
+      if (S.dims.some(d => !M.runs.find(r => r.id === d.run && r.layer === lid))) p("a setout dim belongs to another layer's run");
+    } else if (S.dims.length) p("the finished-floor sheet should carry no per-run setout dims");
+    if (!S.title[0].includes(lid ? LBY[lid].name.toUpperCase() : "ALL LAYERS") || !/THK · COVER \d+ · LAPS \d+/.test(S.title[1])) p("title " + JSON.stringify(S.title));
+  });
 }
 
 const M = checkModel("default example", DEFAULT_CFG, 800);
