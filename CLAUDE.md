@@ -5,8 +5,8 @@ X Struc is a browser-based 3D slab-and-reinforcement viewer that will grow into 
 ## What exists
 
 - `index.html` — the whole app, self-contained (three.js r128 + OrbitControls from CDN, everything else inline). It renders an example Level 1 floor with layers A–D, beams, columns with starters, a set-down, a step, a balcony, openings, L/Z-bars and extras, with a fixing-order stepper, tags, an inspector and a live bar schedule.
-- The model code sits between `// === MODEL START ===` and `// === MODEL END ===` inside the inline script. It must stay headless (no DOM, no THREE) so `scripts/check.js` can run it in Node.
-- `scripts/check.js` — parses the page, runs the model headlessly, asserts invariants. **It must pass before every commit.**
+- The model code sits between `// === MODEL START ===` and `// === MODEL END ===` inside the inline script: `DEFAULT_CFG`, `parseCallout(text, {scheme})`, `buildModel(cfg)` → `{bars, runs, chairs, sched, marks, errors, warnings, …}`. It must stay headless (no DOM, no THREE) so the scripts can run it in Node. The viewer side calls `rebuild(cfg)` which tears down and rebuilds the scene.
+- `scripts/check.js` — parses the page, runs `buildModel` headlessly on several configs, asserts invariants. `scripts/test-grammar.js` — callout grammar cases. `scripts/smoke.js <dir with node_modules/three>` — headless Chromium run of the page (install `three@0.128.0` in a scratch dir first; the CDN is not reachable from the test container). **`npm test` must pass before every commit; run the smoke test when the viewer code changes.**
 - Design docs (claude.ai docs, read them with the Artifact/docs tools, not WebFetch):
   - Architecture: https://claude.ai/artifact/D7Jf59XywqkZmL8UK7xeGm
   - Notation reference (Australian reo callouts, schedules, abbreviations): https://claude.ai/artifact/Di9ePutHNpoTtwQ5ZC3bsX

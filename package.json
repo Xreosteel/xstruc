@@ -4,6 +4,6 @@
   "private": true,
   "description": "3D slab and reinforcement viewer (prototype)",
   "scripts": {
-    "test": "node scripts/check.js"
+    "test": "node scripts/check.js && node scripts/test-grammar.js"
   }
 }

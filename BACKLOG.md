@@ -35,6 +35,10 @@ Conventions every item must respect are in `CLAUDE.md`.
 - [ ] **17. Scale calibration.** Two-point click plus a typed distance; dimension-entity check.
 - [ ] **18. Callout-to-zone association.** Leader tracing, distribution-line extent, then point-in-polygon, with a confidence score shown on each tag.
 
+## Done notes
+
+- #1–3 (2026-11-04): `buildModel(cfg)` builds everything from grids, thickness, cover, f'c, lap, callouts and feature toggles; `parseCallout(text, {scheme})` is the grammar (62 test cases in `scripts/test-grammar.js`); the inputs panel rebuilds the scene live with inline errors. Extras/trimmers/additional bars from callouts are still example-driven (see #7). `scripts/smoke.js` runs the page in headless Chromium with a local three.js.
+
 ## Parked (needs a human decision first)
 
 - Crank vs splice-bar detail at shallow set-downs (currently Z-bars; many firms use splice bars). Ask the engineer.
