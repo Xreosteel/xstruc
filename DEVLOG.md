@@ -2,6 +2,24 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-04 · run 6 (scheduled) · backlog #20 setout from grids on every bar
+
+**Done:** grid setout moved from the site view into the model, shown on the desktop inspector as well as the site card, and asserted headlessly.
+
+- `nearestGrid(G, v, dirs, useGrid)`, `barAxis(b)` and `gridSetout(b, GX, GY, lap)` now live between the MODEL markers (the viewer's `gridRef` / `barAxis` are gone). `addBar` attaches `b.grid = {dir, ends, line, from, to, laps[], lineIndex, n, sp}` to every bar with a plan axis; each ref is `{v, grid, at, d, side, text}` measured from the nearest grid line ("1,680 E of grid 3", "on grid A"). Column bars and diagonals have no `grid` and keep their setout text.
+- Lap zones: `{end, len, a, b, text}` from the bar end inwards by the lap; both ends of a zone are measured from the same grid (the one nearest the bar end) so one tape setting marks it. Wording: "600 lap at the E end, lap zone 2,820 W of grid 4 to 2,220 W of grid 4". The neighbouring bar's zone resolves to the same mm range from its own nearest grid.
+- Mat bars carry `line` (bar line *i*); `runSetout` gives main and balcony runs `r.grid = {first, last, n, sp}`; balcony runs now have `n` / `sp` too, so their bars show "line *i* of *n* @ sp".
+- Desktop inspector: a bar shows Bar line, Runs (W/E or S/N end from the nearest grid) and Laps rows from `b.grid`; a fitment shows its position along the beam; a run shows First line / Last line from grids with the slab-edge distance in brackets. The site card reads the same rows (`gridRows`, `runGridRows`).
+- `check.js`: `checkGridSetout` on every config: every straight plan bar has `grid`; each ref adds up (`at + d == v`), names a real grid, is the nearest one and matches the geometry; from/to span equals the plan length; lap zone count equals the lap flags, length equals the lap, ends share a grid and sit at the bar end; bar-line index reconstructs the line position from the run's first line; runs cover all *n* lines; ≥ 50 lap zones on the example. Verified the assertions bite by breaking the zone length and the nearest-grid rule.
+- `smoke.js`: selects a lapped layer-D bar and the layer-C run on the desktop and asserts the inspector shows the grid-based bar line, ends and a same-grid lap zone; the site card must show a lap zone "from a grid". New screenshot `smoke-7-inspector.png`.
+- Example totals unchanged: 1,458 bars / 78 marks / 5,300 kg.
+
+**Check:** `check: OK` · `grammar: OK (62 cases)` · `shapes: OK (126 assertions)` · `smoke: OK` (screenshots `smoke-6-site-1024.png`, `smoke-7-inspector.png`)
+
+**Parked:** nothing new.
+
+**Next run:** backlog #21 (layer direction must be stated): make a mat callout without E-W / N-S an error per `DECISIONS.md`, update the hint text, the example callouts (already stated), `test-grammar.js` and `check.js` ("two mats only" and "no features at all" configs rely on the guessed default and need directions added).
+
 ## 2026-11-04 · run 5 (manual, with Baji) · backlog #19 fixing view for a tablet
 
 **Done:** Site mode, the first site-crew feature from `DECISIONS.md`.
