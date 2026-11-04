@@ -67,6 +67,17 @@ const { chromium } = require("playwright");
   await page.click("#sched tr:nth-child(5)"); await page.waitForTimeout(200);
   console.log("inspector:", (await page.textContent("#inspector")).slice(0, 80).replace(/\s+/g, " "));
 
+  // desktop inspector: a lapped mat bar shows its bar line, both ends and lap zone from the nearest grids (#20)
+  const insp = await page.evaluate(() => {
+    const M = window.xstruc.model(), b = M.bars.find(x => x.layer === "D" && x.run.kind === "main" && x.lapPrev && x.line % 2 === 0);
+    window.xstruc.selectBar(b.id);
+    const t = document.getElementById("inspector").textContent.replace(/\s+/g, " ");
+    const r = M.runs.find(x => x.kind === "main" && x.layer === "C"); window.xstruc.selectRun(r.id);
+    return { bar: t, run: document.getElementById("inspector").textContent.replace(/\s+/g, " ") };
+  });
+  console.log("inspector bar:", insp.bar.slice(0, 300));
+  await page.screenshot({ path: path.join(outDir, "smoke-7-inspector.png") });
+
   // site mode (tablet fixing view) at 1024 × 768 landscape and portrait
   const siteRuns = [];
   for (const vp of [{ width: 1024, height: 768 }, { width: 768, height: 1024 }]) {
@@ -125,6 +136,9 @@ const { chromium } = require("playwright");
     if (!/Callout|Bar lines/.test(r.runCard)) p("run card not shown: " + r.runCard);
     if (!r.off) p("exit did not restore the full UI");
   });
+  if (!/Bar line ?(?:[\d,]+ [NS] of|on) grid [A-Z] · bar line \d+ of \d+ @ \d+/.test(insp.bar) || !/Runs ?W end [\d,]+ [EW] of grid \d/.test(insp.bar) || !/lap zone [\d,]+ [EW] of grid (\d) to [\d,]+ [EW] of grid \1/.test(insp.bar)) problems.push("desktop inspector lacks grid setout / lap zone: " + insp.bar.slice(0, 300));
+  if (!/First line ?[\d,]+ [EW] of grid \d \(/.test(insp.run) || !/Last line/.test(insp.run)) problems.push("run inspector lacks first/last line from grids: " + insp.run.slice(0, 200));
+  siteRuns.forEach(r => { if (!/lap zone [\d,]+ [EW] of grid \d to/.test(r.card)) problems.push("site " + r.vp + ": bar card lap zone is not from a grid: " + r.card); });
   if (errors.length) problems.push("console errors:\n  " + errors.join("\n  "));
   if (+s0.bars.replace(/\D/g, "") < 800) problems.push("default model has too few bars: " + s0.bars);
   if (s0.steps !== 8) problems.push("expected 8 steps, got " + s0.steps);

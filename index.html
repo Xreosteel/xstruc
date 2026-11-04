@@ -411,6 +411,43 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   const fmt = n => Math.round(n).toLocaleString("en-AU");
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 
+  // ---------- setout from grids ----------
+  // A fixer sets out with a tape from the nearest grid line, not from the slab edge, so every bar in plan carries
+  // grid-referenced distances (backlog #20): its line across the run direction, both ends along it, and its lap zones.
+  // G is a grid list [[name, coordinate], …] (GX for x, GY for y); dirs = [positive side, negative side] in plan words.
+  function nearestGrid(G, v, dirs, useGrid) {
+    let g = G[0]; G.forEach(q => { if (q[0] === useGrid ? true : (useGrid == null && Math.abs(v - q[1]) < Math.abs(v - g[1]))) g = q; });
+    const d = Math.round(v - g[1]), on = Math.abs(d) < 5;
+    return { v: Math.round(v), grid: g[0], at: g[1], d: d, side: on ? "" : d > 0 ? dirs[0] : dirs[1], text: on ? "on grid " + g[0] : fmt(Math.abs(d)) + " " + (d > 0 ? dirs[0] : dirs[1]) + " of grid " + g[0] };
+  }
+  // Which way a bar runs in plan (from its longest leg), its extent along that way and its line position across it.
+  // null for bars with no plan axis (starters, column verticals, ties, diagonals).
+  function barAxis(b) {
+    const xs = b.pts.map(p => p[0]), ys = b.pts.map(p => p[1]);
+    const dx = Math.max(...xs) - Math.min(...xs), dy = Math.max(...ys) - Math.min(...ys);
+    let best = 0, p = null, X = null;
+    for (let i = 1; i < b.pts.length; i++) { const l = Math.hypot(b.pts[i][0] - b.pts[i - 1][0], b.pts[i][1] - b.pts[i - 1][1]); if (l > best) { best = l; X = Math.abs(b.pts[i][0] - b.pts[i - 1][0]) >= Math.abs(b.pts[i][1] - b.pts[i - 1][1]); p = X ? b.pts[i][1] : b.pts[i][0]; } }
+    if (dx >= 300 && dx > dy * 3) return { X: true, a: Math.min(...xs), b: Math.max(...xs), p: p };
+    if (dy >= 300 && dy > dx * 3) return { X: false, a: Math.min(...ys), b: Math.max(...ys), p: p };
+    return null;
+  }
+  // b.grid for one bar: { dir, ends, line, from, to, laps[], lineIndex?, n? }; every ref is a nearestGrid() result.
+  // Lap zones run from the bar end inwards by the lap length (the lapped bar overlaps this zone).
+  function gridSetout(b, GX, GY, lap) {
+    const ax = b.col ? null : barAxis(b); if (!ax) return null;   // column bars are set out by their column, not a bar line
+    const ref = (v, axis, useGrid) => axis === "x" ? nearestGrid(GX, v, ["E", "W"], useGrid) : nearestGrid(GY, v, ["N", "S"], useGrid);
+    const cross = ax.X ? "y" : "x", along = ax.X ? "x" : "y", ends = ax.X ? ["W", "E"] : ["S", "N"];
+    const g = { dir: ax.X ? "X" : "Y", ends: ends, line: ref(ax.p, cross), from: ref(ax.a, along), to: ref(ax.b, along), laps: [] };
+    if (b.line && b.run && b.run.n) { g.lineIndex = b.line; g.n = b.run.n; g.sp = b.run.sp; }
+    if (lap && !b.lig && !b.tie && !b.col) {
+      // both ends of a lap zone are measured from the same grid (the one nearest the bar end) so one tape setting marks the zone
+      if (b.lapPrev) g.laps.push({ end: ends[0], len: lap, a: g.from, b: ref(ax.a + lap, along, g.from.grid) });
+      if (b.lapNext) g.laps.push({ end: ends[1], len: lap, a: ref(ax.b - lap, along, g.to.grid), b: g.to });
+      g.laps.forEach(z => { z.text = fmt(z.len) + " lap at the " + z.end + " end, lap zone " + z.a.text + " to " + z.b.text; });
+    }
+    return g;
+  }
+
   // ---------- default configuration: the Level 1 example ----------
   const DEFAULT_CFG = {
     name: "Level 1",
@@ -595,7 +632,13 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       const c = classify(b, b.geom);
       b.code = c.code; b.shapeName = c.name; b.dims = c.dims; b.dimStr = c.dimStr; b.flags = c.flags;
       if (c.flags.length && !b.existing) cogFlagged++;
+      b.grid = gridSetout(b, GX, GY, LAP[b.size] || LAPLEN);
       bars.push(b); run.bars.push(b); return b;
+    }
+    // r.grid for a run of parallel bar lines: first and last line from the nearest grid, plus the slab-edge distances.
+    function runSetout(r, X, start, end) {
+      const ref = v => X ? nearestGrid(GY, v, ["N", "S"]) : nearestGrid(GX, v, ["E", "W"]);
+      r.grid = { cross: X ? "y" : "x", first: ref(start), last: ref(end), n: r.n, sp: r.sp };
     }
     // Split a bar line [a, b] into stock-length pieces with laps. exS / exE = extra steel at the start / end (a cog or hook)
     // that must also come out of the 12 m stock bar. odd = stagger (split from the far end) for alternate bars.
@@ -685,7 +728,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
               const pts = [P(pc[0], z), P(pc[1], z)]; let cogs = 0;
               if (m.top && F.edges && k === 0 && g.fs) { pts.unshift(P(pc[0], COGZ + iv.o)); cogs++; }
               if (m.top && F.edges && k === ps.length - 1 && g.fe) { pts.push(P(pc[1], COGZ + iv.o)); cogs++; }
-              addBar(run, { pts: pts, shape: cogs === 2 ? "cogged both ends" : cogs === 1 ? "cogged one end" : "straight", lapPrev: k > 0, lapNext: k < ps.length - 1, setout: so(X, p),
+              addBar(run, { pts: pts, shape: cogs === 2 ? "cogged both ends" : cogs === 1 ? "cogged one end" : "straight", lapPrev: k > 0, lapNext: k < ps.length - 1, line: i + 1, setout: so(X, p),
                 note: (cogs ? "Top bar cogged down at a free edge or void face (L-bar end). " : "") + (iv.o < 0 ? "Set-down mat bar, " + (-iv.o) + " lower than the main mat." : iv.o > 0 ? "Raised-step mat bar, " + iv.o + " above the main slab." : (!iv.fs || !iv.fe) ? "Stops at the level change; a Z-bar or L-bars splice across." : "") });
             });
           });
@@ -708,6 +751,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       }
       const along0 = X ? SL.x0 : SL.y0, alongL = X ? L : Wd;
       run.dist = { dir: m.dir, at: along0 + alongL * tagAlong[lid], p0: start, p1: start + (n - 1) * m.sp, z: m.z + 22, frac: tagFrac[lid] };
+      runSetout(run, X, start, start + (n - 1) * m.sp);
       if (zrun) { if (zrun.bars.length) zrun.tagPos = X ? [lid < "C" ? DROP.x1 + 380 : DROP.x0 - 420, (DROP.y0 + DROP.y1) / 2, m.z] : [(DROP.x0 + DROP.x1) / 2, lid < "C" ? DROP.y0 - 380 : DROP.y1 + 380, m.z]; else runs.splice(runs.indexOf(zrun), 1); }
       if (lrun) { if (lrun.bars.length) lrun.tagPos = X ? [STEP.x0 + 150, STEP.y0 + (lid < "C" ? 2100 : 3800), m.z + 100] : [STEP.x0 + (lid < "C" ? 2100 : 3700), STEP.y0 + 150, m.z + 100]; else runs.splice(runs.indexOf(lrun), 1); }
     });
@@ -783,19 +827,20 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       const xs = (sp, d) => { const n = Math.floor((BALC.x1 - BALC.x0 - 2 * C - d) / sp) + 1, st = BALC.x0 + (BALC.x1 - BALC.x0 - (n - 1) * sp) / 2; return Array.from({ length: n }, (_, i) => st + i * sp); };
       const ys = (sp, d) => { const n = Math.floor((BALC.y1 - BALC.y0 - 2 * C - d) / sp) + 1, st = BALC.y0 + (BALC.y1 - BALC.y0 - (n - 1) * sp) / 2; return Array.from({ length: n }, (_, i) => st + i * sp); };
       const zb1 = BALC.bot + C + 6, zb2 = zb1 + 12, zt1 = BALC.top - C - 6, zt2 = zt1 - 12;
+      const lines = (r, arr, sp) => { r.n = arr.length; r.sp = sp; runSetout(r, r.dir === "X", arr[0], arr[arr.length - 1]); };
       const b1 = addRun({ layer: "A", size: 12, dir: "X", kind: "balc", z: zb1, label: "BALC N12-300 · A", callout: "BALCONY N12-300 LAYER A E–W" });
-      const yb = ys(300, 12); yb.forEach(p => addBar(b1, { pts: [[BALC.x0 + C, p, zb1], [BALC.x1 - C, p, zb1]], setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0] }));
+      const yb = ys(300, 12); lines(b1, yb, 300); yb.forEach((p, i) => addBar(b1, { pts: [[BALC.x0 + C, p, zb1], [BALC.x1 - C, p, zb1]], line: i + 1, setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0] }));
       b1.dist = { dir: "X", at: BALC.x0 + (BALC.x1 - BALC.x0) * 0.42, p0: yb[0], p1: yb[yb.length - 1], z: zb1 + 22, frac: 0.5 };
       const b2 = addRun({ layer: "B", size: 12, dir: "Y", kind: "balc", z: zb2, label: "BALC N12-300 · B", callout: "BALCONY N12-300 LAYER B N–S" });
-      const xb = xs(300, 12); xb.forEach(p => addBar(b2, { pts: [[p, BALC.y0 + C, zb2], [p, BALC.y1 - C, zb2]], setout: so(false, p) }));
+      const xb = xs(300, 12); lines(b2, xb, 300); xb.forEach((p, i) => addBar(b2, { pts: [[p, BALC.y0 + C, zb2], [p, BALC.y1 - C, zb2]], line: i + 1, setout: so(false, p) }));
       b2.dist = { dir: "Y", at: BALC.y1 - 400, p0: xb[0], p1: xb[xb.length - 1], z: zb2 + 22, frac: 0.12 };
       const t2 = addRun({ layer: "C", size: 12, dir: "Y", kind: "balc", z: zt2, label: "BALC N12-200 T · CANTILEVER", callout: "BALCONY N12-200 TOP: COG AT EDGE, Z AT 50 STEP, 1500 INTO SLAB" });
-      const xt = xs(200, 12);
+      const xt = xs(200, 12); lines(t2, xt, 200);
       const ckB = Math.max(300, 6 * Math.abs(Z.C - zt2));
-      xt.forEach(p => addBar(t2, { pts: [[p, BALC.y1 - C, 32], [p, BALC.y1 - C, zt2], [p, BALC.y0 + ckB / 2, zt2], [p, BALC.y0 - ckB / 2, Z.C], [p, BALC.y0 - 1800, Z.C]], shape: "cog + Z", setout: so(false, p), note: "Cantilever top bar: cog down at the balcony edge, " + ckB + " crank (1:6) up " + Math.abs(Z.C - zt2) + " at the slab edge, anchored 1500 back into the floor slab." }));
+      xt.forEach((p, i) => addBar(t2, { pts: [[p, BALC.y1 - C, 32], [p, BALC.y1 - C, zt2], [p, BALC.y0 + ckB / 2, zt2], [p, BALC.y0 - ckB / 2, Z.C], [p, BALC.y0 - 1800, Z.C]], shape: "cog + Z", line: i + 1, setout: so(false, p), note: "Cantilever top bar: cog down at the balcony edge, " + ckB + " crank (1:6) up " + Math.abs(Z.C - zt2) + " at the slab edge, anchored 1500 back into the floor slab." }));
       t2.dist = { dir: "Y", at: BALC.y0 + 650, p0: xt[0], p1: xt[xt.length - 1], z: zt2 + 22, frac: 0.8 };
       const t1 = addRun({ layer: "D", size: 12, dir: "X", kind: "balc", z: zt1, label: "BALC N12-300 · D", callout: "BALCONY N12-300 LAYER D E–W, COGGED BOTH ENDS" });
-      const yt = ys(300, 12); yt.forEach(p => addBar(t1, { pts: [[BALC.x0 + C, p, 32], [BALC.x0 + C, p, zt1], [BALC.x1 - C, p, zt1], [BALC.x1 - C, p, 32]], shape: "cogged both ends", setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0], note: "Balcony top distribution bar, cogged down at both free side edges." }));
+      const yt = ys(300, 12); lines(t1, yt, 300); yt.forEach((p, i) => addBar(t1, { pts: [[BALC.x0 + C, p, 32], [BALC.x0 + C, p, zt1], [BALC.x1 - C, p, zt1], [BALC.x1 - C, p, 32]], shape: "cogged both ends", line: i + 1, setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0], note: "Balcony top distribution bar, cogged down at both free side edges." }));
       t1.dist = { dir: "X", at: BALC.x0 + (BALC.x1 - BALC.x0) * 0.64, p0: yt[0], p1: yt[yt.length - 1], z: zt1 + 22, frac: 0.5 };
       const be = addRun({ layer: "D", size: 12, dir: "X", kind: "edge", z: 90, label: "BALC N12 EDGE BARS T&B", callout: "BALCONY N12 EDGE BARS TOP AND BOTTOM, 3 FREE EDGES" });
       const o2 = C + 12;
@@ -1183,18 +1228,15 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
         '<p class="note">Typical general notes call for chairs at no more than 1 m centres both ways.</p>';
       return;
     }
-    const r = b.run, laps = [];
-    if (b.lapPrev) laps.push(M.cfg.lap + " at start");
-    if (b.lapNext) laps.push(M.cfg.lap + " at end");
+    const r = b.run;
     const g = b.geom, bends = b.pts.length - 2 + (b.hookEnds || 0);
     insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(b.mark) + '</span><b>' + b.type + b.size + " · shape " + esc(b.code) + "</b></div>" +
       '<dl class="kv"><dt>Shape</dt><dd>' + esc(b.code) + " · " + esc(b.shapeName) + (bends > 0 ? " · " + bends + (bends === 1 ? " bend" : " bends") + " on a " + g.dp + " pin (" + g.fp + "db)" : "") + "</dd>" +
       "<dt>Dims</dt><dd>" + esc(b.dimStr) + "</dd>" +
-      "<dt>Layer</dt><dd>" + esc(l.name) + "</dd>" +
+      "<dt>Layer</dt><dd>" + esc(l.name) + (b.grid ? " · runs " + (b.grid.dir === "X" ? "E–W" : "N–S") : "") + "</dd>" +
       "<dt>Run</dt><dd>" + esc(r.callout) + "</dd>" +
       "<dt>Cut length</dt><dd>" + fmt(b.len) + (b.len !== b.geomLen ? " (drawn " + fmt(b.geomLen) + " along the centreline)" : "") + "</dd>" +
-      "<dt>Setout</dt><dd>" + esc(b.setout || "") + "</dd>" +
-      (b.lig || b.col ? "" : "<dt>Laps</dt><dd>" + (laps.length ? laps.join(", ") : "none, single length") + "</dd>") +
+      gridRows(b, "<br>").map(row => "<dt>" + row[0] + "</dt><dd>" + row[1] + "</dd>").join("") +
       "<dt>Mass</dt><dd>" + b.kg.toFixed(2) + " kg</dd></dl>" +
       (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "") +
       b.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("");
@@ -1202,7 +1244,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   function showRun(r) {
     const l = LBY[r.layer], kg = r.bars.reduce((s, b) => s + b.kg, 0);
     let rows = "<dt>Layer</dt><dd>" + esc(l.name) + "</dd><dt>Callout</dt><dd>" + esc(r.callout) + "</dd>";
-    if (r.kind === "main") rows += "<dt>Bar lines</dt><dd>" + r.n + " @ " + r.sp + "</dd><dt>Setout</dt><dd>first " + fmt(r.setout.first) + " from " + r.setout.edges[0] + " edge, last " + fmt(r.setout.last) + " from " + r.setout.edges[1] + " edge</dd>";
+    if (r.grid) rows += "<dt>Bar lines</dt><dd>" + r.n + " @ " + r.sp + "</dd>" + runGridRows(r).map(row => "<dt>" + row[0] + "</dt><dd>" + row[1] + "</dd>").join("");
     rows += "<dt>Pieces</dt><dd>" + r.bars.length + "</dd>";
     if (!r.existing) rows += "<dt>Marks</dt><dd>" + esc(r.marks.join(", ")) + "</dd><dt>Mass</dt><dd>" + fmt(kg) + " kg</dd>";
     insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(r.layer) + "</span><b>" + esc(r.label || r.callout) + "</b></div>" +
@@ -1235,24 +1277,27 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   }
   function selectRun(r) { state.sel = null; state.selRun = r; state.mark = null; markRows(); built.barTag.el.hidden = true; showRun(r); recolor(); if (state.site) siteCardRun(r); }
 
+  // ---- setout rows shared by the inspector and the site card (from b.grid / r.grid, computed in the model) ----
+  function gridRows(b, br) {
+    const g = b.grid, rows = [];
+    if (!g) { rows.push(["Setout", esc(b.setout || "")]); return rows; }
+    if (b.lig || b.tie) { rows.push(["Position", esc(g.line.text) + " along the beam"]); return rows; }   // a fitment's "line" is where it sits along the member
+    let line = g.line.text;
+    if (g.lineIndex) line += " · bar line " + g.lineIndex + " of " + g.n + " @ " + g.sp;
+    rows.push(["Bar line", esc(line)]);
+    rows.push(["Runs", esc(g.ends[0] + " end " + g.from.text) + br + esc(g.ends[1] + " end " + g.to.text)]);
+    if (!b.col) rows.push(["Laps", g.laps.length ? g.laps.map(z => esc(z.text)).join(br) : "none, one length"]);
+    return rows;
+  }
+  function runGridRows(r) {
+    const g = r.grid, rows = [];
+    if (!g) return rows;
+    rows.push(["First line", esc(g.first.text) + (r.setout ? " (" + fmt(r.setout.first) + " from the " + r.setout.edges[0] + " edge)" : "")]);
+    rows.push(["Last line", esc(g.last.text) + (r.setout ? " (" + fmt(r.setout.last) + " from the " + r.setout.edges[1] + " edge)" : "")]);
+    return rows;
+  }
+
   // ---- site mode (tablet fixing view) ----
-  // Setout wording for a fixer with a tape: distances from the nearest grid line, never from the slab edge alone.
-  function gridRef(v, axis) {
-    const G = axis === "x" ? M.GX : M.GY, dirs = axis === "x" ? ["E", "W"] : ["N", "S"];
-    let g = G[0]; G.forEach(q => { if (Math.abs(v - q[1]) < Math.abs(v - g[1])) g = q; });
-    const d = Math.round(v - g[1]);
-    return Math.abs(d) < 5 ? "on grid " + g[0] : fmt(Math.abs(d)) + " " + (d > 0 ? dirs[0] : dirs[1]) + " of grid " + g[0];
-  }
-  // Which way a bar runs in plan, its extent along that way and its line position across it (from the longest leg).
-  function barAxis(b) {
-    const xs = b.pts.map(p => p[0]), ys = b.pts.map(p => p[1]);
-    const dx = Math.max(...xs) - Math.min(...xs), dy = Math.max(...ys) - Math.min(...ys);
-    let best = 0, p = null, X = null;
-    for (let i = 1; i < b.pts.length; i++) { const l = Math.hypot(b.pts[i][0] - b.pts[i - 1][0], b.pts[i][1] - b.pts[i - 1][1]); if (l > best) { best = l; X = Math.abs(b.pts[i][0] - b.pts[i - 1][0]) >= Math.abs(b.pts[i][1] - b.pts[i - 1][1]); p = X ? b.pts[i][1] : b.pts[i][0]; } }
-    if (dx >= 300 && dx > dy * 3) return { X: true, a: Math.min(...xs), b: Math.max(...xs), p: p };
-    if (dy >= 300 && dy > dx * 3) return { X: false, a: Math.min(...ys), b: Math.max(...ys), p: p };
-    return null;
-  }
   // the side panel when nothing is selected: what to place in this step, one tappable row per run
   function siteDefault() {
     const card = $("sitecard"); card.classList.remove("sel");
@@ -1277,22 +1322,10 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
         siteKV([["Height", fmt(b.pts[1][2] - b.pts[0][2]), "big"], ["Spacing", "1,000 both ways, under the top mat"]]);
       showCard(true); return;
     }
-    const r = b.run, ax = barAxis(b), rows = [];
+    const r = b.run, g = b.grid, rows = [];
     rows.push(["Cut length", fmt(b.len) + (b.len !== b.geomLen ? ' <small style="font-size:14px;color:var(--muted)">drawn ' + fmt(b.geomLen) + "</small>" : ""), "big"]);
-    rows.push(["Layer", esc(l.name) + (ax ? " · runs " + (ax.X ? "E–W" : "N–S") : "")]);
-    if (ax) {
-      const cross = ax.X ? "y" : "x", along = ax.X ? "x" : "y", ends = ax.X ? ["W", "E"] : ["S", "N"];
-      let line = gridRef(ax.p, cross);
-      if (r.kind === "main" && r.setout) { const q0 = ax.X ? M.SL.y0 : M.SL.x0, i = Math.round((ax.p - (q0 + r.setout.first)) / r.sp) + 1; if (i >= 1 && i <= r.n) line += " · bar line " + i + " of " + r.n + " @ " + r.sp; }
-      rows.push(["Bar line", esc(line)]);
-      rows.push(["Runs", esc(ends[0] + " end " + gridRef(ax.a, along)) + "<br>" + esc(ends[1] + " end " + gridRef(ax.b, along))]);
-      if (!b.lig && !b.col) {
-        const lap = M.cfg.lap, laps = [];
-        if (b.lapPrev) laps.push(fmt(lap) + " lap at the " + ends[0] + " end, lap zone to " + gridRef(ax.a + lap, along));
-        if (b.lapNext) laps.push(fmt(lap) + " lap at the " + ends[1] + " end, lap zone from " + gridRef(ax.b - lap, along));
-        rows.push(["Laps", laps.length ? laps.map(esc).join("<br>") : "none, one length"]);
-      }
-    } else rows.push(["Setout", esc(b.setout || "")]);
+    rows.push(["Layer", esc(l.name) + (g ? " · runs " + (g.dir === "X" ? "E–W" : "N–S") : "")]);
+    rows.push(...gridRows(b, "<br>"));
     rows.push(["Shape", esc(b.code) + " · " + esc(b.shapeName) + (b.dimStr ? "<br>" + esc(b.dimStr) : "")]);
     rows.push(["Run", esc(r.callout)]);
     card.innerHTML = '<div class="hd"><span class="chip">' + esc(b.mark) + "</span><b>" + b.type + b.size + " · " + esc(b.shapeName) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' +
@@ -1306,11 +1339,9 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     card.style.setProperty("--c", l.css);
     rows.push(["Callout", esc(r.callout)]);
     rows.push(["Layer", esc(l.name)]);
-    if (r.kind === "main" && r.setout) {
-      const X = r.dir === "X", cross = X ? "y" : "x", q0 = X ? M.SL.y0 : M.SL.x0, start = q0 + r.setout.first, end = start + (r.n - 1) * r.sp;
+    if (r.grid) {
       rows.push(["Bar lines", r.n + " @ " + r.sp, "big"]);
-      rows.push(["First line", esc(gridRef(start, cross)) + " (" + fmt(r.setout.first) + " from the " + r.setout.edges[0] + " edge)"]);
-      rows.push(["Last line", esc(gridRef(end, cross)) + " (" + fmt(r.setout.last) + " from the " + r.setout.edges[1] + " edge)"]);
+      rows.push(...runGridRows(r));
     } else rows.push(["Pieces", String(r.bars.length), "big"]);
     if (!r.existing) rows.push(["Marks", esc(r.marks.join(", "))], ["Mass", fmt(r.bars.reduce((s, b) => s + b.kg, 0)) + " kg"]);
     card.innerHTML = '<div class="hd"><span class="chip">' + esc(r.layer) + "</span><b>" + esc(r.label || r.callout) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' + siteKV(rows) +
