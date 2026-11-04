@@ -2,6 +2,22 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-04 · run 8 (scheduled) · backlog #9a 2D placing sheet for one layer
+
+**Done:** backlog #9 split in place into 9a / 9b / 9c (the previous entry asked for it); 9a built: a per-layer placing sheet drawn on a canvas, from a headless description of the drawing.
+
+- `buildSheet(M, solid, ghost)` sits between the MODEL markers (exported to the scripts). It returns plan geometry in mm: every non-existing bar of the solid and ghost layers as a plan polyline (vertical legs collapse to their point), a tick for each turned-down end leg (`cogs[]` with position, unit normal perpendicular to the adjoining leg, leg height, `start`/`end`), starters' vertical legs flagged `kind: "vertical"` (drawn end-on as a circle), chairs as points, grids with bubble positions, dimension strings between grids, concrete outlines (slab, holes, set-down, step + nib, balcony, beams dashed, columns), the feature notes, two title lines, and `dims[]`: for a one-layer sheet, the setout from the nearest grid to each run's first and last bar line (`r.grid`, #20), placed on the run's distribution line so the #9b tag will read with it. Bounds are slab ± 1,700 (balcony included).
+- Viewer: a **2D placing sheet** button under the camera presets. It hides the WebGL stage and tags, shows a paper-coloured canvas, skips the WebGL frame while it is up, and draws the sheet: drag to pan, wheel to zoom (around the cursor), double-click to fit, screen scale ("1 : 98 on this screen") top-right, a title band, and the 3D / Plan / Side / Fit buttons return to 3D. The build sequence picks the layer: that layer in ink, the layers already fixed below in faint grey when Ghost below is on (nothing below when it is off), and the finished floor in layer colours. Clicking a drawn bar (7 px tolerance, chairs on their step) calls the same `selectBar`, so the inspector, the schedule row and the 3D selection stay in sync; the selected bar is drawn in its layer colour with a halo; a schedule-mark or run highlight dims the other bars. Site mode turns the sheet off for now (9c).
+- `scripts/check.js`: `checkSheets` builds the seven fixing-step sheets plus the finished floor for every config and asserts the ink / ghost bar counts, that each polyline equals the bar's projected points inside the bounds, that cog ticks equal the turned-down end legs and are perpendicular at the bar end, starters show one vertical leg, layer D is cogged, grids / grid dims / chairs match the model, every run end off a grid line has a dim that matches `r.grid` and sits on the run's distribution line, and the titles. Verified it fails when cog detection or the balcony dims are broken.
+- `scripts/smoke.js`: turns the sheet on (canvas visible, WebGL stage hidden, 1,458 bars on the finished-floor sheet), steps to layer A (238 bars in ink, BM ghosted, 4 setout dims), clicks the third mat bar at its canvas position and checks the inspector shows its mark, steps to layer D (248 cog ticks), returns to 3D with the selection kept. Screenshots `smoke-9-sheet-all.png`, `smoke-9-sheet-A.png`, `smoke-9-sheet-D.png`.
+- Example totals unchanged: 1,458 bars / 78 marks / 5,300 kg. Viewer republished (artifact version 10).
+
+**Check:** `check: OK` · `grammar: OK (82 cases)` · `shapes: OK (126 assertions)` · `smoke: OK` (screenshots `smoke-9-sheet-A.png`, `smoke-9-sheet-D.png`)
+
+**Parked:** nothing new. Two things to watch in 9b: the balcony runs' setout dims sit close to grid C and the vertical dim text is cramped at fit zoom (tags with leaders will reorganise that corner); at 150 spacing the bars merge into a grey block at fit zoom on a 700 px stage (expected; a tablet zooms in, and 9c sets the print scale).
+
+**Next run:** backlog #9b (tags and marks on the sheet): run tags on their distribution lines with leader lines when pushed, lap zones marked on lapped bars, bar marks beside the selected run's bars, a title strip with the layer's callouts. Put the tag and lap-zone geometry into `buildSheet` (headless, asserted in `check.js`) and keep the canvas renderer dumb.
+
 ## 2026-11-04 · run 7 (scheduled) · backlog #21 layer direction must be stated
 
 **Done:** a mat callout that does not say which way it runs is an error in the inputs panel, per `DECISIONS.md` (no default direction). The model never guesses.
