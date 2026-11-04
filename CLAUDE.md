@@ -1,6 +1,6 @@
 # X Struc — instructions for every working session
 
-X Struc is a browser-based 3D slab-and-reinforcement viewer that will grow into a SaaS that turns engineers' markup plans into bar schedules. Owner: Baji (Xreosteel). Read this file, then `DEVLOG.md` (latest entry first), then `BACKLOG.md`.
+X Struc is a browser-based 3D slab-and-reinforcement viewer that will grow into a SaaS that turns engineers' markup plans into bar schedules. Owner: Baji (Xreosteel). Read this file, then `DECISIONS.md` (Baji's decisions; build to them, don't re-ask), then `DEVLOG.md` (latest entry first), then `BACKLOG.md`.
 
 ## What exists
 
