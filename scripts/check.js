@@ -27,6 +27,7 @@ function checkModel(name, cfg, minBars) {
     if (!LBY[b.layer]) problems.push("bar " + b.id + " has unknown layer " + b.layer);
     if (!b.existing && !b.mark) problems.push("bar " + b.id + " in this pour has no mark");
     if (!b.existing && !b.chair && (b.pts[0][2] < -1000 || b.pts.some(p => p[2] > M.T + 1200))) problems.push("bar " + b.id + " outside the slab depth range");
+    if (!b.existing && b.len > 12000) problems.push("bar " + b.id + " (" + b.run.label + ") cut length " + b.len + " exceeds the 12 m stock bar");
   });
   runs.forEach(r => {
     if (!r.bars.length) problems.push("run " + r.id + " (" + (r.label || r.callout) + ") has no bars");

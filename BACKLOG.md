@@ -37,6 +37,8 @@ Conventions every item must respect are in `CLAUDE.md`.
 
 ## Done notes
 
+- #4 (2026-11-04): `bendGeom` (pins per AS 3600 Cl 17.2.3.2: 5db main, 4db N fitments, 3db R; hooks/cogs per Cl 13.1.2.7), `cutLength` (bend deductions + 135° hook steel), `classify` → CIA shape codes S/L/LL/CC/ZL/T with dims to bar extremities. Cut lengths rounded up to 5. `pieces()` now keeps cogged bars within the 12 m stock; `placeLine` splits too. Z-bars and the balcony crank at 1:6 (≥300). Short-cog flag + model warning in thin slabs. 126 assertions in `scripts/test-shapes.js`.
+
 - #1–3 (2026-11-04): `buildModel(cfg)` builds everything from grids, thickness, cover, f'c, lap, callouts and feature toggles; `parseCallout(text, {scheme})` is the grammar (62 test cases in `scripts/test-grammar.js`); the inputs panel rebuilds the scene live with inline errors. Extras/trimmers/additional bars from callouts are still example-driven (see #7). `scripts/smoke.js` runs the page in headless Chromium with a local three.js.
 
 ## Parked (needs a human decision first)

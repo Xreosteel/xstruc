@@ -2,6 +2,24 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-04 · run 4 (manual, with Baji) · backlog #4 shape-code library
+
+**Done:** real bending geometry on every bar, shape codes and bending dimensions on the schedule.
+
+- `bendGeom(type, size, role)`: pin diameter from the AS 3600 Cl 17.2.3.2 rule (5db main bars, 4db N fitments, 3db R fitments), hook and cog geometry per Cl 13.1.2.7 (extension max(4db, 70); cog has the same bar length as the 180° hook). Values match the research table (Findings 1 / `research/01-bar-bending-shape-codes.md`) for R6–N40; 126 assertions in `scripts/test-shapes.js`.
+- `cutLength(pts, g, hookEnds)`: Σ straight legs minus the sharp-corner overshoot at each bend (2·rc·tan(θ/2) − rc·θ), plus 135° hook steel on fitments. The `hooks: 240/200` placeholders are gone. Cut lengths are rounded up to 5 mm; the inspector shows the drawn centreline length beside the cut length when they differ.
+- `classify(b)`: CIA core codes S, L, LL, CC (cranked), ZL (cog + crank), T (closed tie) with dims A/B/C/D measured to the bar extremities (centreline leg + db/2 per corner). The schedule has a Dims column and groups marks by code + length + dims; the inspector shows code, name, bends and pin.
+- Thin-slab cogs: a drawn cog shorter than the standard cog depth is flagged on the bar, the mark (! in the schedule) and as one model warning. In the 200 example every top-bar cog is flagged (standard N12 cog is 169 deep, outside). Scheduled as drawn; question raised for Baji.
+- Cranks: Z-bars at the set-down and the balcony cog + Z now crank at 1:6 or flatter with a ≥300 crank (SRIA TN5 2025), offset one bar alongside the mat. Z-bar cut length 1,232 → 1,630.
+- Stock length: `pieces(a, b, size, odd, exS, exE)` leaves room for end cogs so no cut length exceeds 12 m; beam longitudinal bars and `placeLine` bars (edge bars, trimmers, additional) now split with staggered laps too. `check.js` fails on any bar over 12,000.
+- Example totals moved from 1,452 bars / 75 marks / 5,266 kg to 1,458 / 78 / 5,300 kg (longer cranks, hook steel, splits).
+
+**Check:** `check: OK` · `grammar: OK (62 cases)` · `shapes: OK (126 assertions)` · `smoke: OK`
+
+**Parked:** cog length for top bars in thin slabs (engineer to specify, e.g. "N12 cogs 100 long" or turn the cog horizontal); XREO's shape dialect and whether scheduled dims stop at the outside of a cog (both already in the planning doc); per-shop hook/cog allowance table (research recommends it be editable) — not built yet.
+
+**Next run:** backlog #5 (lap and development lengths by size and grade; Findings 2 has the rule table) or #7 (geometry editing). Take #5 if Baji has answered the lap-engine question, otherwise #7.
+
 ## 2026-11-04 · run 3 (manual, with Baji) · backlog #1–3
 
 **Done:** model inputs panel, callout grammar, callouts drive the mats.

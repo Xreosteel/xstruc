@@ -140,6 +140,8 @@ tbody tr:hover { background: var(--panel-2); }
 tbody tr.on { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: sticky; bottom: 0; background: var(--panel); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; }
+td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.fl { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: color-mix(in srgb, var(--warn) 25%, transparent); color: var(--warn); font-size: 10px; text-align: center; line-height: 14px; font-weight: 600; cursor: help; }
 
 @media (max-width: 1150px) {
   .app { grid-template-columns: 250px minmax(0,1fr); grid-template-rows: auto minmax(460px, 1fr) auto; height: auto; min-height: 100%; }
@@ -246,9 +248,9 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
       <h2>Bar schedule · this pour</h2>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>Mark</th><th>Bar</th><th>Shape</th><th class="num">Length</th><th class="num">Qty</th><th class="num">kg</th></tr></thead>
+          <thead><tr><th>Mark</th><th>Bar</th><th>Shape</th><th>Dims</th><th class="num">Length</th><th class="num">Qty</th><th class="num">kg</th></tr></thead>
           <tbody id="sched"></tbody>
-          <tfoot><tr><td colspan="4">Total</td><td class="num" id="totQty"></td><td class="num" id="totKg"></td></tr></tfoot>
+          <tfoot><tr><td colspan="5">Total</td><td class="num" id="totQty"></td><td class="num" id="totKg"></td></tr></tfoot>
         </table>
       </div>
       <p class="note" id="schednote">Click a row to highlight every bar with that mark. Excludes the columns below (already poured) and bar chairs.</p>
@@ -278,6 +280,57 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
   const EXPLODE = { CL: 0, BM: 0, A: 0, B: 0.3, CH: 0, C: 0.65, D: 0.95, ST: 1.35 };
   const KGM = { N10: 0.632, N12: 0.888, N16: 1.58, N20: 2.47, N24: 3.55, N28: 4.83, N32: 6.31, N36: 7.99, N40: 9.86, R6: 0.222, R10: 0.617, R12: 0.888, R16: 1.58, R20: 2.47 };
   const BAR_SIZES = { N: [10, 12, 16, 20, 24, 28, 32, 36, 40], R: [6, 10, 12, 16, 20, 24], S: [12], W: [4, 5, 6, 8, 10, 12] };
+
+  // ---------- bending geometry ----------
+  // Pin (minimum internal bend) diameters: AS 3600:2018 Cl 17.2.3.2 as printed in SRIA "Bending reinforcement on site" (2016)
+  // and InfraBuild Reinforcing Product Guide 2023 p.41: fitments of R250N bar or 500L wire 3db, fitments of D500N bar 4db, all other bars 5db.
+  // Standard hook/cog: Cl 13.1.2.7 (InfraBuild p.37–38): 180° or 135° bend at that pin plus a straight extension of max(4db, 70);
+  // a 90° cog has the same total bar length as the 180° hook of that size. Values cross-checked against the research note
+  // (planning log, Findings 1; research/01-bar-bending-shape-codes.md): N12 5db hook180 183, cog leg 127, cog depth 169.
+  const PIN_RULE = { main: 5, fitmentN: 4, fitmentR: 3 };
+  function pinDia(type, size, role) { const fp = role === "fitment" ? (type === "R" || type === "W" ? PIN_RULE.fitmentR : PIN_RULE.fitmentN) : PIN_RULE.main; return fp * size; }
+  function bendGeom(type, size, role) {
+    const db = size, dp = pinDia(type, size, role), rc = (dp + db) / 2, ro = dp / 2 + db, e = Math.max(4 * db, 70);
+    const hook180 = Math.PI * rc + e, hook135 = 0.75 * Math.PI * rc + e, cogLeg = hook180 - 0.5 * Math.PI * rc;
+    return { db: db, dp: dp, fp: dp / db, rc: rc, ro: ro, e: e, hook180: hook180, hook135: hook135, cogLeg: cogLeg, cogDepth: ro + cogLeg, hookWidth: dp + 2 * db, role: role };
+  }
+  // Cut length of a bar drawn as a centreline polyline: Σ straight legs, less the corner overshoot at each bend
+  // (2·rc·tan(θ/2) − rc·θ, i.e. the sharp-corner length replaced by the arc), plus undrawn 135° hook ends on fitments
+  // (0.75π·rc + e beyond the tangent point, less the rc of straight leg the polyline already counts to the corner).
+  function cutLength(pts, g, hookEnds) {
+    let len = 0;
+    const segs = [];
+    for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i]; const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], L = Math.hypot(d[0], d[1], d[2]); segs.push({ d: d, L: L }); len += L; }
+    for (let i = 1; i < segs.length; i++) {
+      const u = segs[i - 1], v = segs[i]; if (!u.L || !v.L) continue;
+      const cos = Math.max(-1, Math.min(1, (u.d[0] * v.d[0] + u.d[1] * v.d[1] + u.d[2] * v.d[2]) / (u.L * v.L)));
+      const th = Math.acos(cos); if (th < 1e-4 || th > Math.PI - 1e-4) continue;
+      len -= 2 * g.rc * Math.tan(th / 2) - g.rc * th;
+    }
+    if (hookEnds) len += hookEnds * (g.hook135 - g.rc);
+    return len;
+  }
+  // Shape codes: CIA Z6 core letters (Reinforcement Detailing Handbook ch. 9, via the research note); ZL for cog + crank follows Best Bar's 2024 guide.
+  const SHAPES = { S: "straight", L: "cog one end", LL: "cog both ends", U: "U-bar", CC: "cranked (offset)", ZL: "cog + crank", T: "closed tie, 135° hooks", H: "hook one end", HH: "hook both ends" };
+  // Which code a drawn bar gets, and its bending dimensions measured to the bar extremities (outside), per Australian practice
+  // (TMR Vol 3 Ch 4 Cl 4.5): a centreline leg + db/2 for each bent corner it touches.
+  function classify(b, g) {
+    const n = b.pts.length - 1, segs = [];
+    for (let i = 0; i < n; i++) { const p = b.pts[i], q = b.pts[i + 1]; segs.push(Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2])); }
+    const out = segs.map((s, i) => Math.round(s + (i > 0 ? g.db / 2 : 0) + (i < n - 1 ? g.db / 2 : 0)));
+    const sh = b.shape, flags = [];
+    let code = "S", dims = [];
+    const cogCheck = (legOut, which) => { if (legOut + 0.5 < g.cogDepth) flags.push(which + " cog " + legOut + " is shorter than the AS 3600 standard cog (" + Math.round(g.cogDepth) + " outside) because the slab depth does not allow it"); };
+    if (sh === "straight") { code = "S"; dims = [["A", out[0]]]; }
+    else if (sh === "cogged one end") { const ci = out[0] < out[n - 1] ? 0 : n - 1, mi = ci === 0 ? 1 : 0; code = "L"; dims = [["A", out[mi]], ["C", out[ci]]]; cogCheck(out[ci], "end"); }
+    else if (sh === "cogged both ends") { code = "LL"; dims = [["A", out[1]], ["C", out[0]]]; if (out[n - 1] !== out[0]) dims.push(["C'", out[n - 1]]); cogCheck(Math.min(out[0], out[n - 1]), "end"); }
+    else if (sh === "Z-bar") { code = "CC"; dims = [["A", out[0]], ["B", out[1]], ["C", out[2]], ["D", Math.round(Math.abs(b.pts[0][2] - b.pts[n][2]))]]; }
+    else if (sh === "cog + Z") { code = "ZL"; dims = [["A", out[0]], ["B", out[1]], ["C", out[2]], ["D", out[3]], ["E", Math.round(Math.abs(b.pts[2][2] - b.pts[3][2]))]]; cogCheck(out[0], "edge"); }
+    else if (sh === "closed lig" || sh === "closed tie") { code = "T"; dims = [["A", Math.round(segs[0] + g.db)], ["B", Math.round(segs[1] + g.db)]]; }
+    else if (sh === "L-bar" || sh === "L starter" || sh === "cogged top") { code = "L"; const ci = out[0] < out[n - 1] ? 0 : n - 1, mi = ci === 0 ? 1 : 0; dims = [["A", out[mi]], ["C", out[ci]]]; if (n > 2) dims = out.map((v, i) => [String.fromCharCode(65 + i), v]); }
+    else { code = n <= 1 ? "S" : "V"; dims = out.map((v, i) => [String.fromCharCode(65 + i), v]); }
+    return { code: code, name: SHAPES[code] || sh, dims: dims, dimStr: dims.map(d => d[0] + " " + d[1]).join(" · "), flags: flags };
+  }
   const MESH_CODES = ["SL52", "SL62", "SL72", "SL81", "SL82", "SL92", "SL102", "RL718", "RL818", "RL918", "RL1018", "RL1118", "RL1218", "L8TM", "L11TM", "L12TM"];
   const MAT_LAYERS = ["A", "B", "C", "D"];
   const STOCK = 12000;
@@ -459,17 +512,33 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
     const bars = [], runs = [], chairs = [];
     const polyLen = pts => pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1], p[2] - pts[i - 1][2]) : 0, 0);
     function addRun(r) { r.id = "R" + runs.length; r.bars = []; runs.push(r); return r; }
+    let cogFlagged = 0;
     function addBar(run, o) {
       const b = Object.assign({ id: bars.length, layer: run.layer, run: run, size: run.size, type: run.type || "N", shape: "straight" }, o);
-      b.len = Math.round(polyLen(b.pts) + (b.hooks || 0));
+      b.geom = bendGeom(b.type, b.size, b.lig || b.tie ? "fitment" : "main");
+      b.geomLen = Math.round(polyLen(b.pts));
+      b.len = Math.ceil(cutLength(b.pts, b.geom, b.hookEnds || 0) / 5) * 5;   // scheduled cut length, rounded up to 5 mm
       b.kg = b.len / 1000 * (KGM[b.type + b.size] || 0);
+      const c = classify(b, b.geom);
+      b.code = c.code; b.shapeName = c.name; b.dims = c.dims; b.dimStr = c.dimStr; b.flags = c.flags;
+      if (c.flags.length && !b.existing) cogFlagged++;
       bars.push(b); run.bars.push(b); return b;
     }
-    function pieces(a, b, size, odd) {
-      if (b - a <= STOCK) return [[a, b]];
+    // Split a bar line [a, b] into stock-length pieces with laps. exS / exE = extra steel at the start / end (a cog or hook)
+    // that must also come out of the 12 m stock bar. odd = stagger (split from the far end) for alternate bars.
+    function pieces(a, b, size, odd, exS, exE) {
+      exS = exS || 0; exE = exE || 0;
+      if (b - a + exS + exE <= STOCK) return [[a, b]];
+      if (odd) return pieces(-b, -a, size, false, exE, exS).map(p => [-p[1], -p[0]]).reverse();
       const lap = LAP[size] || LAPLEN, out = [];
-      if (!odd) { let s = a; for (;;) { const e = Math.min(s + STOCK, b); out.push([s, e]); if (e >= b) break; s = e - lap; } }
-      else { let e = b; const t = []; for (;;) { const s = Math.max(e - STOCK, a); t.push([s, e]); if (s <= a) break; e = s + lap; } t.reverse().forEach(p => out.push(p)); }
+      let s = a, first = true;
+      for (;;) {
+        const cap = STOCK - (first ? exS : 0);
+        if (b - s + (first ? exS : 0) + exE <= STOCK) { out.push([s, b]); break; }
+        let e = s + cap;
+        if (e > b - lap - 300) e = b - lap - 300;    // leave a sensible last piece
+        out.push([s, e]); s = e - lap; first = false;
+      }
       return out;
     }
     // split a bar line [a,b] at level changes. Z-type (≤160): stop C short each side. L-type step: the low side runs into the nib.
@@ -500,11 +569,16 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
       const P = (sv, zz) => X ? [sv, p, zz] : [p, sv, zz];
       intervals(X, p, a, b).ivs.forEach(iv => {
         if (iv.e - iv.s < 300) return;
-        const zz = z + iv.o, pts = [P(iv.s, zz), P(iv.e, zz)]; let cogs = 0;
+        const zz = z + iv.o;
         const edgeS = X ? iv.s <= SL.x0 + C + 1 : iv.s <= SL.y0 + C + 1, edgeE = X ? iv.e >= SL.x1 - C - 1 : iv.e >= SL.y1 - C - 1;
-        if (o.cog && F.edges && iv.fs && edgeS) { pts.unshift(P(iv.s, COGZ + iv.o)); cogs++; }
-        if (o.cog && F.edges && iv.fe && edgeE) { pts.push(P(iv.e, COGZ + iv.o)); cogs++; }
-        addBar(run, { pts: pts, shape: cogs === 2 ? "cogged both ends" : cogs ? "cogged one end" : "straight", setout: o.setout, note: (o.note || "") + (cogs ? " Cogged down at the slab edge." : "") + (iv.o ? " Placed at the " + (iv.o > 0 ? "raised step level." : "set-down level.") : "") });
+        const cogS = !!(o.cog && F.edges && iv.fs && edgeS), cogE = !!(o.cog && F.edges && iv.fe && edgeE), cogX = Math.max(0, zz - (COGZ + iv.o));
+        const ps = pieces(iv.s, iv.e, run.size, !!o.odd, cogS ? cogX : 0, cogE ? cogX : 0);
+        ps.forEach((pc, k) => {
+          const pts = [P(pc[0], zz), P(pc[1], zz)]; let cogs = 0;
+          if (cogS && k === 0) { pts.unshift(P(pc[0], COGZ + iv.o)); cogs++; }
+          if (cogE && k === ps.length - 1) { pts.push(P(pc[1], COGZ + iv.o)); cogs++; }
+          addBar(run, { pts: pts, shape: cogs === 2 ? "cogged both ends" : cogs ? "cogged one end" : "straight", lapPrev: k > 0, lapNext: k < ps.length - 1, setout: o.setout, note: (o.note || "") + (cogs ? " Cogged down at the slab edge." : "") + (iv.o ? " Placed at the " + (iv.o > 0 ? "raised step level." : "set-down level.") : "") });
+        });
       });
     }
 
@@ -532,7 +606,8 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
         ivs.forEach(iv => {
           const z = m.z + iv.o;
           minusF(iv.s, iv.e, iv.fs, iv.fe, cuts).forEach(g => {
-            const ps = pieces(g.s, g.e, d, i % 2 === 1);
+            const cogX = m.top && F.edges ? m.z - COGZ : 0;
+            const ps = pieces(g.s, g.e, d, i % 2 === 1, g.fs ? cogX : 0, g.fe ? cogX : 0);
             ps.forEach((pc, k) => {
               const pts = [P(pc[0], z), P(pc[1], z)]; let cogs = 0;
               if (m.top && F.edges && k === 0 && g.fs) { pts.unshift(P(pc[0], COGZ + iv.o)); cogs++; }
@@ -545,7 +620,10 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
         trs.forEach(tr => {
           const z0 = m.z + tr.o0, z1 = m.z + tr.o1, t = tr.t;
           if (!tr.big) {
-            addBar(zrun, { pts: [P(t - Lp, z0), P(t - C, z0), P(t + C, z1), P(t + Lp, z1)], shape: "Z-bar", setout: so(X, p) + " at " + (X ? "x " : "y ") + fmt(t), note: "Z-bar splice across the " + DROP.d + " set-down: laps " + Lp + " with the mat on each side." });
+            // crank at 1:6 or flatter, crank length ≥ 300 (SRIA TN5 2025); bar sits alongside the mat bar (offset one bar + 10)
+            const off = Math.abs(z1 - z0), ck = Math.max(300, 6 * off); cur = p + d + 10;
+            addBar(zrun, { pts: [P(t - ck / 2 - Lp, z0), P(t - ck / 2, z0), P(t + ck / 2, z1), P(t + ck / 2 + Lp, z1)], shape: "Z-bar", setout: so(X, p) + " at " + (X ? "x " : "y ") + fmt(t), note: "Z-bar splice across the " + DROP.d + " set-down: " + Lp + " lap each side of a " + ck + " crank (1:6, SRIA TN5)." });
+            cur = p;
           } else {
             cur = p + 24;
             const sg = tr.up ? 1 : -1, zLo = tr.up ? z0 : z1, zHi = tr.up ? z1 : z0;
@@ -640,7 +718,8 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
       b2.dist = { dir: "Y", at: BALC.y1 - 400, p0: xb[0], p1: xb[xb.length - 1], z: zb2 + 22, frac: 0.12 };
       const t2 = addRun({ layer: "C", size: 12, dir: "Y", kind: "balc", z: zt2, label: "BALC N12-200 T · CANTILEVER", callout: "BALCONY N12-200 TOP: COG AT EDGE, Z AT 50 STEP, 1500 INTO SLAB" });
       const xt = xs(200, 12);
-      xt.forEach(p => addBar(t2, { pts: [[p, BALC.y1 - C, 32], [p, BALC.y1 - C, zt2], [p, BALC.y0 + C, zt2], [p, BALC.y0 - C, Z.C], [p, BALC.y0 - 1800, Z.C]], shape: "cog + Z", setout: so(false, p), note: "Cantilever top bar: cog down at the balcony edge, Z-step up 50 at the slab edge, anchored 1500 back into the floor slab." }));
+      const ckB = Math.max(300, 6 * Math.abs(Z.C - zt2));
+      xt.forEach(p => addBar(t2, { pts: [[p, BALC.y1 - C, 32], [p, BALC.y1 - C, zt2], [p, BALC.y0 + ckB / 2, zt2], [p, BALC.y0 - ckB / 2, Z.C], [p, BALC.y0 - 1800, Z.C]], shape: "cog + Z", setout: so(false, p), note: "Cantilever top bar: cog down at the balcony edge, " + ckB + " crank (1:6) up " + Math.abs(Z.C - zt2) + " at the slab edge, anchored 1500 back into the floor slab." }));
       t2.dist = { dir: "Y", at: BALC.y0 + 650, p0: xt[0], p1: xt[xt.length - 1], z: zt2 + 22, frac: 0.8 };
       const t1 = addRun({ layer: "D", size: 12, dir: "X", kind: "balc", z: zt1, label: "BALC N12-300 · D", callout: "BALCONY N12-300 LAYER D E–W, COGGED BOTH ENDS" });
       const yt = ys(300, 12); yt.forEach(p => addBar(t1, { pts: [[BALC.x0 + C, p, 32], [BALC.x0 + C, p, zt1], [BALC.x1 - C, p, zt1], [BALC.x1 - C, p, 32]], shape: "cogged both ends", setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0], note: "Balcony top distribution bar, cogged down at both free side edges." }));
@@ -662,15 +741,25 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
       const spread = (n, d) => { const e = bm.w / 2 - C - ld - d / 2; return n === 1 ? [0] : Array.from({ length: n }, (_, i) => -e + i * 2 * e / (n - 1)); };
       const zB = soff + C + ld + bm.bot[0] / 2, zT = zChairTop - 20;
       const bot = addRun({ layer: "BM", size: bm.bot[0], dir: bm.dir, kind: "beam", z: zB, label: bm.id + " · " + bm.bot[1] + "N" + bm.bot[0] + " B", callout: bm.id + " " + bm.bot[1] + "N" + bm.bot[0] + " BOTTOM, COGGED ENDS" });
-      spread(bm.bot[1], bm.bot[0]).forEach(tv => addBar(bot, { pts: [P(bm.a + C, tv, zB + 300), P(bm.a + C, tv, zB), P(bm.b - C, tv, zB), P(bm.b - C, tv, zB + 300)], beam: true, shape: "cogged both ends", setout: tv === 0 ? "on beam centreline" : fmt(Math.abs(tv)) + " off beam centreline", note: "Beam bottom bar with standard cogs turned up at both beam ends (cog length nominal, 300)." }));
+      // longitudinal bars: split at the 12 m stock length with staggered laps, cogs on the true ends only
+      const beamLine = (run, tv, i, z, cogDz, size, what) => {
+        const ps = pieces(bm.a + C, bm.b - C, size, i % 2 === 1, 300, 300);
+        ps.forEach((pc, k) => {
+          const pts = [P(pc[0], tv, z), P(pc[1], tv, z)], first = k === 0, last = k === ps.length - 1;
+          if (first) pts.unshift(P(pc[0], tv, z + cogDz)); if (last) pts.push(P(pc[1], tv, z + cogDz));
+          addBar(run, { pts: pts, beam: true, shape: first && last ? "cogged both ends" : first || last ? "cogged one end" : "straight", lapPrev: !first, lapNext: !last,
+            setout: tv === 0 ? "on beam centreline" : fmt(Math.abs(tv)) + " off beam centreline", note: "Beam " + what + " bar; standard cogs (300 nominal) at the beam ends" + (ps.length > 1 ? ", split at 12 m with " + LAPLEN + " staggered laps." : ".") });
+        });
+      };
+      spread(bm.bot[1], bm.bot[0]).forEach((tv, i) => beamLine(bot, tv, i, zB, 300, bm.bot[0], "bottom"));
       bot.tagPos = X ? [bm.a + (bm.b - bm.a) * bm.tagS, bm.at, zB] : [bm.at, bm.a + (bm.b - bm.a) * bm.tagS, zB];
       const top = addRun({ layer: "BM", size: bm.top[0], dir: bm.dir, kind: "beam", z: zT, label: bm.id + " · " + bm.top[1] + "N" + bm.top[0] + " T", callout: bm.id + " " + bm.top[1] + "N" + bm.top[0] + " TOP, COGGED ENDS" });
-      spread(bm.top[1], bm.top[0]).forEach(tv => addBar(top, { pts: [P(bm.a + C, tv, zT - 300), P(bm.a + C, tv, zT), P(bm.b - C, tv, zT), P(bm.b - C, tv, zT - 300)], beam: true, shape: "cogged both ends", setout: tv === 0 ? "on beam centreline" : fmt(Math.abs(tv)) + " off beam centreline", note: "Beam top bar with standard cogs turned down at both beam ends (cog length nominal, 300). The slab mats run over the beam cage." }));
+      spread(bm.top[1], bm.top[0]).forEach((tv, i) => beamLine(top, tv, i, zT, -300, bm.top[0], "top"));
       top.tagPos = X ? [bm.a + (bm.b - bm.a) * (bm.tagS + 0.3), bm.at, zT + 40] : [bm.at, bm.a + (bm.b - bm.a) * (bm.tagS + 0.3), zT + 40];
       const lg = addRun({ layer: "BM", size: ld, type: bm.lig[2], dir: bm.dir, kind: "lig", z: soff + 100, label: bm.id + " · " + bm.lig[2] + ld + " LIGS @" + bm.lig[1], callout: bm.id + " " + bm.lig[2] + ld + " CLOSED LIGS @ " + bm.lig[1] });
       const w = bm.w - 2 * C - ld, zb = soff + C + ld / 2, h = zEdgeT - zb;
       for (let sv = bm.a + 50; sv <= bm.b - 50; sv += bm.lig[1])
-        addBar(lg, { pts: [P(sv, -w / 2, zb), P(sv, w / 2, zb), P(sv, w / 2, zb + h), P(sv, -w / 2, zb + h), P(sv, -w / 2, zb)], hooks: 240, shape: "closed lig", lig: true, setout: X ? so(false, sv) : so(true, sv), note: "Cut length = centreline perimeter plus two 120 hook allowances (placeholder until the shape-code table, backlog #4)." });
+        addBar(lg, { pts: [P(sv, -w / 2, zb), P(sv, w / 2, zb), P(sv, w / 2, zb + h), P(sv, -w / 2, zb + h), P(sv, -w / 2, zb)], hookEnds: 2, shape: "closed lig", lig: true, setout: X ? so(false, sv) : so(true, sv), note: "Closed tie bent on a " + pinDia(bm.lig[2], ld, "fitment") + " pin (" + (bm.lig[2] === "R" ? "3" : "4") + "db, AS 3600 Cl 17.2.3.2) with two 135° hooks of " + Math.round(bendGeom(bm.lig[2], ld, "fitment").hook135) + " each (Cl 13.1.2.7)." });
       lg.tagPos = X ? [bm.a + (bm.b - bm.a) * (bm.tagS + 0.15), bm.at + 260, soff + 150] : [bm.at + 260, bm.a + (bm.b - bm.a) * (bm.tagS + 0.15), soff + 150];
     });
 
@@ -690,7 +779,7 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
         });
         const r = COL / 2 - 40 - 5;
         for (let z = COLB + 100; z <= c.top - 100; z += 200)
-          addBar(ct, { pts: [[c.x - r, c.y - r, z], [c.x + r, c.y - r, z], [c.x + r, c.y + r, z], [c.x - r, c.y + r, z], [c.x - r, c.y - r, z]], hooks: 200, shape: "closed tie", col: c, existing: true, setout: "column " + c.name, note: "Existing column tie, already poured." });
+          addBar(ct, { pts: [[c.x - r, c.y - r, z], [c.x + r, c.y - r, z], [c.x + r, c.y + r, z], [c.x - r, c.y + r, z], [c.x - r, c.y - r, z]], hookEnds: 2, tie: true, shape: "closed tie", col: c, existing: true, setout: "column " + c.name, note: "Existing column tie, already poured." });
       });
       const cl = COLS[COLS.length - 1];
       cv.tagPos = [cl.x + 300, cl.y - 450, -900];
@@ -713,15 +802,16 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
     // ---- bar marks (this pour only) ----
     const sched = bars.filter(b => !b.existing);
     const groups = new Map();
-    sched.forEach(b => { const k = b.type + b.size + "|" + b.len + "|" + b.shape; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
+    sched.forEach(b => { const k = b.type + b.size + "|" + b.code + "|" + b.len + "|" + b.dimStr; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
     const marks = [...groups.values()].sort((A, B) => {
       const a = A[0], b = B[0];
       return (LBY[a.layer].idx - LBY[b.layer].idx) || (b.size - a.size) || (b.len - a.len);
     }).map((list, i) => {
       const m = "A" + (i + 1);
       list.forEach(b => { b.mark = m; });
-      return { mark: m, type: list[0].type, size: list[0].size, shape: list[0].shape, len: list[0].len, qty: list.length, layer: list[0].layer, kg: list.reduce((s, b) => s + b.kg, 0) };
+      return { mark: m, type: list[0].type, size: list[0].size, shape: list[0].shape, code: list[0].code, shapeName: list[0].shapeName, dims: list[0].dims, dimStr: list[0].dimStr, flags: list[0].flags, pin: list[0].geom.dp, len: list[0].len, qty: list.length, layer: list[0].layer, kg: list.reduce((s, b) => s + b.kg, 0) };
     });
+    if (cogFlagged) warnings.push(cogFlagged + " top-bar cogs are shorter than the AS 3600 standard cog because the slab is only " + T + " thick; scheduled as drawn. Confirm the cog length with the engineer.");
     bars.filter(b => b.existing).forEach(b => { b.mark = "EX"; });
     runs.forEach(r => { r.marks = [...new Set(r.bars.map(b => b.mark))]; });
     const kg = sched.reduce((s, b) => s + b.kg, 0);
@@ -999,14 +1089,18 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
     const r = b.run, laps = [];
     if (b.lapPrev) laps.push(M.cfg.lap + " at start");
     if (b.lapNext) laps.push(M.cfg.lap + " at end");
-    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(b.mark) + '</span><b>' + b.type + b.size + " · " + esc(b.shape) + "</b></div>" +
-      '<dl class="kv"><dt>Layer</dt><dd>' + esc(l.name) + "</dd>" +
+    const g = b.geom, bends = b.pts.length - 2 + (b.hookEnds || 0);
+    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(b.mark) + '</span><b>' + b.type + b.size + " · shape " + esc(b.code) + "</b></div>" +
+      '<dl class="kv"><dt>Shape</dt><dd>' + esc(b.code) + " · " + esc(b.shapeName) + (bends > 0 ? " · " + bends + (bends === 1 ? " bend" : " bends") + " on a " + g.dp + " pin (" + g.fp + "db)" : "") + "</dd>" +
+      "<dt>Dims</dt><dd>" + esc(b.dimStr) + "</dd>" +
+      "<dt>Layer</dt><dd>" + esc(l.name) + "</dd>" +
       "<dt>Run</dt><dd>" + esc(r.callout) + "</dd>" +
-      "<dt>Cut length</dt><dd>" + fmt(b.len) + "</dd>" +
+      "<dt>Cut length</dt><dd>" + fmt(b.len) + (b.len !== b.geomLen ? " (drawn " + fmt(b.geomLen) + " along the centreline)" : "") + "</dd>" +
       "<dt>Setout</dt><dd>" + esc(b.setout || "") + "</dd>" +
       (b.lig || b.col ? "" : "<dt>Laps</dt><dd>" + (laps.length ? laps.join(", ") : "none, single length") + "</dd>") +
       "<dt>Mass</dt><dd>" + b.kg.toFixed(2) + " kg</dd></dl>" +
-      (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "");
+      (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "") +
+      b.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("");
   }
   function showRun(r) {
     const l = LBY[r.layer], kg = r.bars.reduce((s, b) => s + b.kg, 0);
@@ -1044,13 +1138,13 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
 
   // ---- schedule ----
   function renderSchedule() {
-    schedEl.innerHTML = M.marks.map(m => '<tr data-mark="' + m.mark + '"><td><span class="dot" style="--c:' + LBY[m.layer].css + '"></span>' + m.mark + "</td><td>" + m.type + m.size + "</td><td>" + esc(m.shape) + '</td><td class="num">' + fmt(m.len) + '</td><td class="num">' + m.qty + '</td><td class="num">' + m.kg.toFixed(1) + "</td></tr>").join("");
+    schedEl.innerHTML = M.marks.map(m => '<tr data-mark="' + m.mark + '"' + (m.flags.length ? ' class="flag"' : "") + '><td><span class="dot" style="--c:' + LBY[m.layer].css + '"></span>' + m.mark + "</td><td>" + m.type + m.size + '</td><td title="' + esc(m.shapeName) + '">' + esc(m.code) + (m.flags.length ? ' <span class="fl" title="' + esc(m.flags[0]) + '">!</span>' : "") + '</td><td class="dims">' + esc(m.dimStr) + '</td><td class="num">' + fmt(m.len) + '</td><td class="num">' + m.qty + '</td><td class="num">' + m.kg.toFixed(1) + "</td></tr>").join("");
     $("totQty").textContent = fmt(M.sched.length);
     $("totKg").textContent = fmt(M.kg);
     $("stBars").textContent = fmt(M.sched.length);
     $("stMarks").textContent = M.marks.length;
     $("stMass").textContent = fmt(M.kg);
-    $("schednote").textContent = "Click a row to highlight every bar with that mark. Excludes the columns below (already poured) and bar chairs. Laps " + M.cfg.lap + " on all bars, " + (STOCK / 1000) + " m stock lengths.";
+    $("schednote").textContent = "Click a row to highlight every bar with that mark. Dims are to the bar extremities; cut lengths include bend deductions and hooks (AS 3600 pins), rounded up to 5. ! = cog shorter than standard. Excludes the columns below and bar chairs. Laps " + M.cfg.lap + ", " + (STOCK / 1000) + " m stock.";
   }
   function markRows() { schedEl.querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", tr.dataset.mark === state.mark)); }
   schedEl.addEventListener("click", e => {
@@ -1063,7 +1157,8 @@ tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: stick
       if (!state.all && ORDER.indexOf(mk.layer) + 1 > state.step) { state.all = true; state.step = NSTEP; }
       apply();
       insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + m + "</span><b>Bar mark " + m + "</b></div>" +
-        '<dl class="kv"><dt>Bar</dt><dd>' + mk.type + mk.size + ", " + esc(mk.shape) + "</dd><dt>Cut length</dt><dd>" + fmt(mk.len) + "</dd><dt>Quantity</dt><dd>" + mk.qty + "</dd><dt>Layer</dt><dd>" + esc(LBY[mk.layer].name) + "</dd><dt>Mass</dt><dd>" + mk.kg.toFixed(1) + " kg</dd></dl>" +
+        '<dl class="kv"><dt>Bar</dt><dd>' + mk.type + mk.size + " · shape " + esc(mk.code) + " (" + esc(mk.shapeName) + ")</dd><dt>Dims</dt><dd>" + esc(mk.dimStr) + "</dd><dt>Pin</dt><dd>" + mk.pin + "</dd><dt>Cut length</dt><dd>" + fmt(mk.len) + "</dd><dt>Quantity</dt><dd>" + mk.qty + "</dd><dt>Layer</dt><dd>" + esc(LBY[mk.layer].name) + "</dd><dt>Mass</dt><dd>" + mk.kg.toFixed(1) + " kg</dd></dl>" +
+        mk.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("") +
         '<p class="note">Every bar with this mark is highlighted. Click the row again to clear.</p>';
     } else { recolor(); showDefault(); }
   });
