@@ -38,9 +38,9 @@ const { chromium } = require("playwright");
   await page.click("#all");
 
   // plan view
-  await page.click("[data-cam=plan]"); await page.waitForTimeout(400);
+  await page.click(".side [data-cam=plan]"); await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(outDir, "smoke-3-plan.png") });
-  await page.click("[data-cam=iso]");
+  await page.click(".side [data-cam=iso]");
 
   // inputs: change spacing and thickness live
   await page.fill("#inCallouts", "N16-200 A E-W\nN12-200 B N-S\nN12-150 C N-S\nN12-150 D E-W\nSL82 T");
@@ -67,8 +67,64 @@ const { chromium } = require("playwright");
   await page.click("#sched tr:nth-child(5)"); await page.waitForTimeout(200);
   console.log("inspector:", (await page.textContent("#inspector")).slice(0, 80).replace(/\s+/g, " "));
 
+  // site mode (tablet fixing view) at 1024 × 768 landscape and portrait
+  const siteRuns = [];
+  for (const vp of [{ width: 1024, height: 768 }, { width: 768, height: 1024 }]) {
+    await page.setViewportSize(vp); await page.click("#all"); await page.waitForTimeout(300);
+    await page.click("#btnSite"); await page.waitForTimeout(600);
+    const r = { vp: vp.width + "x" + vp.height };
+    Object.assign(r, await page.evaluate(() => {
+      const vis = el => !!el && el.offsetParent !== null;
+      const btns = [...document.querySelectorAll("#sitebar button, #sitectl button")].filter(vis);
+      return {
+        on: document.documentElement.classList.contains("site"),
+        sideHidden: !vis(document.querySelector(".side")), inspectHidden: !vis(document.querySelector(".inspect")),
+        barVisible: vis(document.getElementById("sitebar")), chips: document.querySelectorAll("#siteChips .chip-step").length,
+        now: document.getElementById("siteNow").textContent.replace(/\s+/g, " ").trim(),
+        tagPx: Math.min(...[...document.querySelectorAll("#tags .tag:not([hidden])")].map(t => parseFloat(getComputedStyle(t).fontSize)).concat([99])),
+        minBtn: Math.min(...btns.map(b => Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))),
+        stageH: document.querySelector(".stage").clientHeight, stageW: document.querySelector(".stage").clientWidth,
+        overflow: document.documentElement.scrollHeight > window.innerHeight + 2 || document.documentElement.scrollWidth > window.innerWidth + 2
+      };
+    }));
+    await page.click("#siteNext"); await page.waitForTimeout(300);
+    Object.assign(r, await page.evaluate(() => {
+      const M = window.xstruc.model(), st = window.xstruc.state;
+      const b = M.bars.find(x => x.layer === "A" && !x.existing && x.lapNext);
+      window.xstruc.selectBar(b.id);
+      const c = document.getElementById("sitecard");
+      return { step: st.step, all: st.all, cardShown: c.classList.contains("sel") && c.offsetParent !== null, card: c.textContent.replace(/\s+/g, " ").trim().slice(0, 220), cardW: c.getBoundingClientRect().width, cardBottom: Math.round(c.getBoundingClientRect().bottom), stageBottom: Math.round(document.querySelector(".stage").getBoundingClientRect().bottom) };
+    }));
+    await page.screenshot({ path: path.join(outDir, "smoke-6-site-" + vp.width + ".png") });
+    await page.click("#sitecard [data-close]"); await page.waitForTimeout(100);
+    r.cardClosed = await page.$eval("#sitecard", c => !c.classList.contains("sel"));
+    r.panel = await page.$eval("#sitecard", c => c.textContent.replace(/\s+/g, " ").trim().slice(0, 100));
+    // tap a run tag
+    r.runCard = await page.evaluate(() => { const t = document.querySelector("#tags .tag.cur:not([hidden])") || document.querySelector("#tags .tag:not(.bar):not([hidden])"); if (!t) return "no tag"; t.click(); return document.getElementById("sitecard").textContent.replace(/\s+/g, " ").trim().slice(0, 120); });
+    await page.click("#btnSiteExit"); await page.waitForTimeout(300);
+    r.off = await page.evaluate(() => !document.documentElement.classList.contains("site") && document.querySelector(".side").offsetParent !== null);
+    console.log("site:", JSON.stringify(r));
+    siteRuns.push(r);
+  }
+
   await browser.close();
   const problems = [];
+  siteRuns.forEach(r => {
+    const p = m => problems.push("site " + r.vp + ": " + m);
+    if (!r.on || !r.sideHidden || !r.inspectHidden || !r.barVisible) p("site mode did not strip the UI (" + JSON.stringify({ on: r.on, side: r.sideHidden, insp: r.inspectHidden, bar: r.barVisible }) + ")");
+    if (r.chips !== 9) p("expected 9 step chips, got " + r.chips);
+    if (r.tagPx < 18) p("tag font " + r.tagPx + "px < 18");
+    if (r.minBtn < 44) p("smallest touch target " + r.minBtn + "px < 44");
+    if (r.overflow) p("page scrolls at this size");
+    if (r.stageH < 380) p("stage only " + r.stageH + "px tall");
+    if (r.step !== 2 || r.all) p("Next from beam cages should land on layer A (step 2), got " + r.step + "/" + r.all);
+    if (!r.cardShown || !/Cut length/.test(r.card) || !/grid/.test(r.card) || !/lap/i.test(r.card)) p("bar card missing cut length / grid setout / laps: " + r.card);
+    if (r.cardBottom > r.stageBottom) p("bar card overflows the stage");
+    if (!r.cardClosed) p("bar card did not close");
+    if (!/Place now/.test(r.panel)) p("side panel did not return to the run list: " + r.panel);
+    if (!/Callout|Bar lines/.test(r.runCard)) p("run card not shown: " + r.runCard);
+    if (!r.off) p("exit did not restore the full UI");
+  });
   if (errors.length) problems.push("console errors:\n  " + errors.join("\n  "));
   if (+s0.bars.replace(/\D/g, "") < 800) problems.push("default model has too few bars: " + s0.bars);
   if (s0.steps !== 8) problems.push("expected 8 steps, got " + s0.steps);

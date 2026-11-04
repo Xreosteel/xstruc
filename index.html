@@ -158,6 +158,63 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
   .legend, .hud { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* Site mode: the tablet fixing view (backlog #19). One layer at a time in fixing order, big type, 44 px+ targets,
+   no inputs panel. Everything the fixer needs sits in the stage, the bar card and the stepper bar below. */
+.sitebtn { margin-left: 6px; }
+.sitectl { display: flex; gap: 8px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+.sitectl .lv { font-family: var(--mono); font-size: 15px; color: var(--muted); margin-right: 6px; }
+html.site, html.site body { height: 100%; overflow: hidden; }
+html.site .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; min-height: 0; padding-block: 8px; }
+html.site .side, html.site .inspect, html.site .slabline, html.site .stats, html.site .sitebtn, html.site .hud, html.site #tip { display: none !important; }
+html.site .stage { height: auto; order: 0; grid-column: 1; }
+html.site .btn { min-height: 44px; min-width: 44px; padding: 10px 16px; font-size: 17px; }
+.sitebar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: stretch; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.sitebar .big { min-height: 64px; min-width: 132px; font-size: 20px; font-weight: 600; }
+.sitebar .big:disabled { opacity: 0.35; cursor: default; }
+.sitenow { display: grid; align-content: center; gap: 2px; min-width: 0; padding-left: 14px; border-left: 5px solid var(--c, var(--muted)); }
+.sitenow .k { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.sitenow b { font-size: 22px; font-weight: 700; line-height: 1.15; }
+.sitenow small { font-family: var(--mono); font-size: 15px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sitechips { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-step { flex: 1 1 auto; min-height: 44px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 6px 12px; font-size: 16px; font-weight: 600; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; text-align: left; white-space: nowrap; }
+.chip-step .n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 13px; border: 1.5px solid var(--c, var(--muted)); color: var(--c, var(--muted)); }
+.chip-step.done .n { background: color-mix(in srgb, var(--c, var(--muted)) 25%, transparent); }
+.chip-step[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chip-step[aria-pressed="true"] .n { background: var(--c, var(--muted)); color: var(--bg); border-color: var(--c, var(--muted)); }
+html.site .tag { font-size: 18px; line-height: 1.2; padding: 6px 10px 6px 9px; border-left-width: 4px; }
+html.site .tag small { font-size: 13px; }
+html.site .bub { width: 36px; height: 36px; font-size: 17px; }
+html.site .anno { font-size: 14px; padding: 3px 8px; }
+html.site .dimt { font-size: 14px; }
+html.site .steplabel { font-size: 18px; padding: 8px 14px; }
+html.site .legend { font-size: 14px; }
+html.site .legend i { width: 13px; height: 13px; }
+html.site .app { position: relative; grid-template-columns: minmax(0, 1fr) 400px; }
+html.site .sitebar { grid-column: 1 / -1; }
+html.site .stage { grid-row: 2; grid-column: 1; }
+.sitecard { display: none; grid-column: 2; grid-row: 2; min-height: 0; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--c, var(--muted)); border-radius: 8px; padding: 14px 16px 16px; gap: 12px; align-content: start; }
+html.site .sitecard { display: grid; }
+.runlist { display: grid; gap: 6px; }
+.runbtn { display: grid; gap: 2px; text-align: left; min-height: 48px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line); border-left: 4px solid var(--c, var(--muted)); border-radius: 6px; cursor: pointer; min-width: 0; }
+.runbtn:hover { border-color: var(--muted); }
+.runbtn b { font-size: 17px; font-weight: 600; }
+.runbtn small { font-family: var(--mono); font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sitecard .hd { display: flex; align-items: center; gap: 12px; }
+.sitecard .hd .chip { font-family: var(--mono); font-size: 20px; font-weight: 500; padding: 4px 12px; border-radius: 4px; background: color-mix(in srgb, var(--c) 25%, transparent); border: 1px solid var(--c); }
+.sitecard .hd b { font-size: 21px; font-weight: 700; flex: 1; min-width: 0; line-height: 1.2; }
+.sitecard .x { width: 44px; height: 44px; min-width: 44px; border-radius: 50%; display: grid; place-items: center; font-size: 24px; line-height: 1; padding: 0; }
+.sitecard .kv { grid-template-columns: 96px minmax(0, 1fr); gap: 9px 12px; align-items: baseline; }
+.sitecard .kv dt { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.1em; }
+.sitecard .kv dd { font-size: 18px; line-height: 1.3; }
+.sitecard .kv dd.big { font-size: 32px; font-weight: 500; line-height: 1.1; }
+.sitecard .note { font-size: 15px; }
+html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-content: flex-start; max-width: 85%; }
+@media (orientation: portrait) {
+  html.site .app { grid-template-columns: minmax(0, 1fr); }
+  html.site .sitecard { display: none; }
+  html.site .sitecard.sel { display: grid; grid-column: auto; grid-row: auto; position: absolute; left: 16px; right: 16px; bottom: calc(var(--sitebar-h, 200px) + 18px); max-height: 52%; background: rgba(23, 29, 36, 0.97); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); }
+}
 </style>
 
 <div class="app">
@@ -168,6 +225,13 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
       <div><b id="stBars">0</b><small>Bars</small></div>
       <div><b id="stMarks">0</b><small>Bar marks</small></div>
       <div><b id="stMass">0</b><small>Steel kg</small></div>
+    </div>
+    <button class="btn small sitebtn" type="button" id="btnSite" aria-pressed="false" title="Tablet view for fixing: one layer at a time, big type, no inputs">Site mode</button>
+    <div class="sitectl" id="sitectl" hidden>
+      <span class="lv" id="siteFloor"></span>
+      <button class="btn" type="button" data-cam="iso">3D</button>
+      <button class="btn" type="button" data-cam="plan">Plan</button>
+      <button class="btn" type="button" id="btnSiteExit">Exit site mode</button>
     </div>
   </header>
 
@@ -229,6 +293,7 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
       <h2>How to read it</h2>
       <p class="caption">Each tag is one run of bars, written like the placing drawing: <b>count, size, spacing, layer</b>. The tick-ended line under it shows which bars it covers.</p>
       <p class="caption"><b>Plan</b> gives a true top-down floor plan with grids and dimensions. Step through the layers in fixing order: the layer being placed is solid, the ones below are ghosted.</p>
+      <p class="caption"><b>Site mode</b> (top right) is the tablet view for fixing: one layer at a time, big tags, tap a bar for its mark, cut length, setout from the grids and laps.</p>
     </div>
   </aside>
 
@@ -241,6 +306,14 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
     <div class="hud" id="hud"></div>
     <div class="building" id="building" hidden>Rebuilding…</div>
   </main>
+  <div class="sitecard" id="sitecard"></div>
+
+  <nav class="sitebar" id="sitebar" hidden aria-label="Fixing sequence">
+    <button class="btn big" id="sitePrev" type="button">◀ Prev</button>
+    <div class="sitenow" id="siteNow"></div>
+    <button class="btn big" id="siteNext" type="button">Next ▶</button>
+    <div class="sitechips" id="siteChips"></div>
+  </nav>
 
   <section class="inspect" aria-label="Inspector and bar schedule">
     <div class="sec" id="inspector"></div>
@@ -855,7 +928,7 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
   const ORDER = ["BM", "A", "B", "CH", "C", "D", "ST"];
   const NSTEP = ORDER.length;
-  const state = { step: NSTEP, all: true, conc: true, tags: true, ghost: true, explode: false, sel: null, selRun: null, mark: null };
+  const state = { step: NSTEP, all: true, conc: true, tags: true, ghost: true, explode: false, sel: null, selRun: null, mark: null, site: false };
   let M = null, built = null;   // current model and its scene objects
 
   // scene: x = east, y = up, -z = north (so a top-down camera reads north-up)
@@ -1009,11 +1082,19 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
   }
   function renderSteps() {
     stepsEl.innerHTML = "";
+    const chips = $("siteChips"); chips.innerHTML = "";
     stepInfo().forEach((s, i) => {
       const li = document.createElement("li");
       li.innerHTML = '<button type="button" class="step" data-step="' + i + '"' + (s.c ? ' style="--c:' + s.c + '"' : "") + '><span class="n">' + i + '</span><span class="t"><b>' + esc(s.title) + "</b><small>" + esc(s.sub) + "</small></span></button>";
       stepsEl.appendChild(li);
+      const ch = document.createElement("button");
+      ch.type = "button"; ch.className = "chip-step"; ch.dataset.step = i; if (s.c) ch.style.setProperty("--c", s.c);
+      ch.innerHTML = '<span class="n">' + i + "</span><span>" + esc(s.title.replace(/ · .*$/, "")) + "</span>";
+      chips.appendChild(ch);
     });
+    const all = document.createElement("button");
+    all.type = "button"; all.className = "chip-step"; all.dataset.step = "all"; all.innerHTML = '<span class="n">✓</span><span>Finished floor</span>';
+    chips.appendChild(all);
   }
   function apply() {
     if (!built) return;
@@ -1040,7 +1121,23 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
       ? "Showing the finished floor. Press <b>Next</b> to rebuild it in fixing order."
       : state.step === 0 ? "Formwork: " + esc(s.sub) + "."
       : "Placing <b>" + esc(s.title) + "</b> (" + esc(s.sub) + ") on top of what's already fixed.";
+    // site stepper bar
+    $("siteChips").querySelectorAll(".chip-step").forEach(b => {
+      const isAll = b.dataset.step === "all", i = +b.dataset.step;
+      b.setAttribute("aria-pressed", String(isAll ? state.all : !state.all && i === state.step));
+      b.classList.toggle("done", !isAll && (state.all || i < state.step));
+    });
+    const lid = state.all ? null : ORDER[state.step - 1];
+    const labels = lid ? [...new Set(M.runs.filter(r => r.layer === lid && r.label && !r.existing).map(r => r.label))] : [];
+    const what = (labels.length > 4 ? labels.slice(0, 4).concat(["+" + (labels.length - 4) + " more"]) : labels).join(" · ");
+    $("siteNow").style.setProperty("--c", s.c || "var(--muted)");
+    $("siteNow").innerHTML = state.all
+      ? '<span class="k">Finished floor</span><b>All layers placed</b><small>' + fmt(M.sched.length) + " bars · " + M.marks.length + " marks · " + fmt(M.kg) + " kg</small>"
+      : '<span class="k">Step ' + state.step + " of " + NSTEP + (state.step === 0 ? " · before fixing" : " · place now") + "</span><b>" + esc(s.title) + "</b><small>" + esc(what || s.sub) + "</small>";
+    $("sitePrev").disabled = !state.all && state.step === 0;
+    $("siteNext").disabled = state.all;
     if (state.sel && !state.sel.chair && built.layerObj[state.sel.layer].mode === "off") clearSel();
+    if (state.site && !state.sel && !state.selRun) siteDefault();
     recolor();
   }
   function recolor() {
@@ -1113,7 +1210,8 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
       (r.kind === "main" ? '<p class="note">Bar lines longer than 12 m are split with ' + M.cfg.lap + ' staggered laps. Top bars are cogged where they meet a free edge or void. Z-bars splice across a shallow set-down; L-bars each side splice across a deep step.</p>' : "") +
       (r.existing ? '<p class="note">Existing column cage, already poured. Not in this pour\'s schedule.</p>' : "");
   }
-  function clearSel() { state.sel = null; state.selRun = null; if (built) built.barTag.el.hidden = true; }
+  function showCard(on) { $("sitecard").classList.toggle("sel", on); if (!on && state.site) siteDefault(); }
+  function clearSel() { state.sel = null; state.selRun = null; if (built) built.barTag.el.hidden = true; showCard(false); }
   function midPoint(b) {
     const polyLen = pts => pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1], p[2] - pts[i - 1][2]) : 0, 0);
     const total = polyLen(b.pts) / 2; let acc = 0;
@@ -1133,8 +1231,119 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
       bt.el.innerHTML = esc(b.mark) + " · " + b.type + b.size + " · " + fmt(b.len) + "<small>" + esc(b.layer) + " · " + esc(b.shape) + "</small>";
       bt.el.hidden = false;
     } else bt.el.hidden = true;
+    if (state.site) siteCardBar(b);
   }
-  function selectRun(r) { state.sel = null; state.selRun = r; state.mark = null; markRows(); built.barTag.el.hidden = true; showRun(r); recolor(); }
+  function selectRun(r) { state.sel = null; state.selRun = r; state.mark = null; markRows(); built.barTag.el.hidden = true; showRun(r); recolor(); if (state.site) siteCardRun(r); }
+
+  // ---- site mode (tablet fixing view) ----
+  // Setout wording for a fixer with a tape: distances from the nearest grid line, never from the slab edge alone.
+  function gridRef(v, axis) {
+    const G = axis === "x" ? M.GX : M.GY, dirs = axis === "x" ? ["E", "W"] : ["N", "S"];
+    let g = G[0]; G.forEach(q => { if (Math.abs(v - q[1]) < Math.abs(v - g[1])) g = q; });
+    const d = Math.round(v - g[1]);
+    return Math.abs(d) < 5 ? "on grid " + g[0] : fmt(Math.abs(d)) + " " + (d > 0 ? dirs[0] : dirs[1]) + " of grid " + g[0];
+  }
+  // Which way a bar runs in plan, its extent along that way and its line position across it (from the longest leg).
+  function barAxis(b) {
+    const xs = b.pts.map(p => p[0]), ys = b.pts.map(p => p[1]);
+    const dx = Math.max(...xs) - Math.min(...xs), dy = Math.max(...ys) - Math.min(...ys);
+    let best = 0, p = null, X = null;
+    for (let i = 1; i < b.pts.length; i++) { const l = Math.hypot(b.pts[i][0] - b.pts[i - 1][0], b.pts[i][1] - b.pts[i - 1][1]); if (l > best) { best = l; X = Math.abs(b.pts[i][0] - b.pts[i - 1][0]) >= Math.abs(b.pts[i][1] - b.pts[i - 1][1]); p = X ? b.pts[i][1] : b.pts[i][0]; } }
+    if (dx >= 300 && dx > dy * 3) return { X: true, a: Math.min(...xs), b: Math.max(...xs), p: p };
+    if (dy >= 300 && dy > dx * 3) return { X: false, a: Math.min(...ys), b: Math.max(...ys), p: p };
+    return null;
+  }
+  // the side panel when nothing is selected: what to place in this step, one tappable row per run
+  function siteDefault() {
+    const card = $("sitecard"); card.classList.remove("sel");
+    if (!M) return;
+    const s = stepInfo()[state.step], lid = state.all ? null : ORDER[state.step - 1];
+    card.style.setProperty("--c", s.c || "var(--muted)");
+    if (state.all) {
+      card.innerHTML = '<div class="hd"><span class="chip">✓</span><b>Finished floor</b></div>' + siteKV([["Bars", fmt(M.sched.length), "big"], ["Marks", String(M.marks.length)], ["Steel", fmt(M.kg) + " kg"]]) + '<p class="note">Every layer placed. Tap a bar for its mark, cut length, setout and laps.</p>';
+      return;
+    }
+    const runs = lid ? M.runs.filter(r => r.layer === lid && r.label && !r.existing) : [];
+    card.innerHTML = '<div class="hd"><span class="chip">' + state.step + "</span><b>" + esc(s.title) + "</b></div>" +
+      (runs.length ? '<p class="note">Place now, ' + runs.length + (runs.length === 1 ? " run" : " runs") + ':</p><div class="runlist">' + runs.map(r => '<button type="button" class="runbtn" data-run="' + r.id + '" style="--c:' + LBY[r.layer].css + '"><b>' + esc(r.label) + "</b><small>" + esc(r.callout) + "</small></button>").join("") + "</div>" : '<p class="note">' + esc(s.sub) + ".</p>") +
+      '<p class="note">Tap a run for its setout, or a bar in the model for its cut length and laps.</p>';
+  }
+  function siteKV(rows) { return '<dl class="kv">' + rows.map(r => "<dt>" + r[0] + "</dt><dd" + (r[2] ? ' class="' + r[2] + '"' : "") + ">" + r[1] + "</dd>").join("") + "</dl>"; }
+  function siteCardBar(b) {
+    const card = $("sitecard"), l = LBY[b.layer];
+    card.style.setProperty("--c", l.css);
+    if (b.chair) {
+      card.innerHTML = '<div class="hd"><span class="chip">CH</span><b>Bar chair</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' +
+        siteKV([["Height", fmt(b.pts[1][2] - b.pts[0][2]), "big"], ["Spacing", "1,000 both ways, under the top mat"]]);
+      showCard(true); return;
+    }
+    const r = b.run, ax = barAxis(b), rows = [];
+    rows.push(["Cut length", fmt(b.len) + (b.len !== b.geomLen ? ' <small style="font-size:14px;color:var(--muted)">drawn ' + fmt(b.geomLen) + "</small>" : ""), "big"]);
+    rows.push(["Layer", esc(l.name) + (ax ? " · runs " + (ax.X ? "E–W" : "N–S") : "")]);
+    if (ax) {
+      const cross = ax.X ? "y" : "x", along = ax.X ? "x" : "y", ends = ax.X ? ["W", "E"] : ["S", "N"];
+      let line = gridRef(ax.p, cross);
+      if (r.kind === "main" && r.setout) { const q0 = ax.X ? M.SL.y0 : M.SL.x0, i = Math.round((ax.p - (q0 + r.setout.first)) / r.sp) + 1; if (i >= 1 && i <= r.n) line += " · bar line " + i + " of " + r.n + " @ " + r.sp; }
+      rows.push(["Bar line", esc(line)]);
+      rows.push(["Runs", esc(ends[0] + " end " + gridRef(ax.a, along)) + "<br>" + esc(ends[1] + " end " + gridRef(ax.b, along))]);
+      if (!b.lig && !b.col) {
+        const lap = M.cfg.lap, laps = [];
+        if (b.lapPrev) laps.push(fmt(lap) + " lap at the " + ends[0] + " end, lap zone to " + gridRef(ax.a + lap, along));
+        if (b.lapNext) laps.push(fmt(lap) + " lap at the " + ends[1] + " end, lap zone from " + gridRef(ax.b - lap, along));
+        rows.push(["Laps", laps.length ? laps.map(esc).join("<br>") : "none, one length"]);
+      }
+    } else rows.push(["Setout", esc(b.setout || "")]);
+    rows.push(["Shape", esc(b.code) + " · " + esc(b.shapeName) + (b.dimStr ? "<br>" + esc(b.dimStr) : "")]);
+    rows.push(["Run", esc(r.callout)]);
+    card.innerHTML = '<div class="hd"><span class="chip">' + esc(b.mark) + "</span><b>" + b.type + b.size + " · " + esc(b.shapeName) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' +
+      siteKV(rows) +
+      (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "") +
+      b.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("");
+    showCard(true);
+  }
+  function siteCardRun(r) {
+    const card = $("sitecard"), l = LBY[r.layer], rows = [];
+    card.style.setProperty("--c", l.css);
+    rows.push(["Callout", esc(r.callout)]);
+    rows.push(["Layer", esc(l.name)]);
+    if (r.kind === "main" && r.setout) {
+      const X = r.dir === "X", cross = X ? "y" : "x", q0 = X ? M.SL.y0 : M.SL.x0, start = q0 + r.setout.first, end = start + (r.n - 1) * r.sp;
+      rows.push(["Bar lines", r.n + " @ " + r.sp, "big"]);
+      rows.push(["First line", esc(gridRef(start, cross)) + " (" + fmt(r.setout.first) + " from the " + r.setout.edges[0] + " edge)"]);
+      rows.push(["Last line", esc(gridRef(end, cross)) + " (" + fmt(r.setout.last) + " from the " + r.setout.edges[1] + " edge)"]);
+    } else rows.push(["Pieces", String(r.bars.length), "big"]);
+    if (!r.existing) rows.push(["Marks", esc(r.marks.join(", "))], ["Mass", fmt(r.bars.reduce((s, b) => s + b.kg, 0)) + " kg"]);
+    card.innerHTML = '<div class="hd"><span class="chip">' + esc(r.layer) + "</span><b>" + esc(r.label || r.callout) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' + siteKV(rows) +
+      (r.kind === "main" ? '<p class="note">Tap a bar for its cut length, setout and laps.</p>' : "") +
+      (r.existing ? '<p class="note">Existing column cage, already poured.</p>' : "");
+    showCard(true);
+  }
+  $("sitecard").addEventListener("click", e => {
+    if (e.target.closest("[data-close]")) { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); return; }
+    const rb = e.target.closest("[data-run]"); if (rb) { const r = M.runs.find(x => x.id === rb.dataset.run); if (r) selectRun(r); }
+  });
+  $("sitecard").addEventListener("pointerdown", e => e.stopPropagation());
+  function setSite(on) {
+    state.site = on;
+    document.documentElement.classList.toggle("site", on);
+    $("btnSite").setAttribute("aria-pressed", String(on));
+    $("sitectl").hidden = !on; $("sitebar").hidden = !on;
+    if (on) {
+      state.ghost = true; state.tags = true; state.explode = false; state.conc = true;
+      [["tgConc", "conc"], ["tgTags", "tags"], ["tgGhost", "ghost"], ["tgExplode", "explode"]].forEach(p => $(p[0]).setAttribute("aria-pressed", String(state[p[1]])));
+      if (state.all) { state.all = false; state.step = Math.min(1, NSTEP); }
+      if (M) $("siteFloor").textContent = M.cfg.name + " · " + M.T + " THK · laps " + M.cfg.lap;
+      clearSel(); state.mark = null; markRows();
+    } else showCard(false);
+    apply(); resize();
+    if (on) goCam("iso", true);
+    try { if (on) history.replaceState(null, "", location.pathname + location.search + "#site"); else if (location.hash === "#site") history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* sandboxed viewer: fine */ }
+  }
+  $("btnSite").onclick = () => setSite(true);
+  $("btnSiteExit").onclick = () => setSite(false);
+  $("sitePrev").onclick = () => { if (state.all) { state.all = false; state.step = NSTEP; } else state.step = Math.max(0, state.step - 1); apply(); };
+  $("siteNext").onclick = () => { if (state.all) return; if (state.step >= NSTEP) { state.all = true; state.step = NSTEP; } else state.step++; apply(); };
+  $("siteChips").addEventListener("click", e => { const b = e.target.closest(".chip-step"); if (!b) return; if (b.dataset.step === "all") { state.all = true; state.step = NSTEP; } else { state.all = false; state.step = +b.dataset.step; } apply(); });
 
   // ---- schedule ----
   function renderSchedule() {
@@ -1214,14 +1423,30 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
   // ---- cameras (presets scale with the model) ----
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let tween = null;
+  // Slide the camera along its own direction until the whole floor (columns to starters) sits inside the stage
+  // with a margin, whatever the stage's size or aspect (a tablet in portrait, a desktop with the inspector open).
+  function fitCam(p, t) {
+    const dir = p.clone().sub(t); let d = dir.length(); dir.normalize();
+    const bd = built.bounds, corners = [];
+    [bd.cx - bd.w / 2, bd.cx + bd.w / 2].forEach(x => [bd.cy - bd.h / 2, bd.cy + bd.h / 2].forEach(y => [-300, M.T + 1000].forEach(z => corners.push(W(x, y, z)))));
+    const cT = persp.clone(); cT.aspect = view.clientWidth / Math.max(1, view.clientHeight);
+    for (let k = 0; k < 3; k++) {
+      cT.position.copy(t).addScaledVector(dir, d); cT.lookAt(t); cT.updateProjectionMatrix(); cT.updateMatrixWorld();
+      let m = 0; corners.forEach(c => { const v = c.clone().project(cT); m = Math.max(m, Math.abs(v.x), Math.abs(v.y)); });
+      if (m > 0) d *= m / 0.82;
+    }
+    return t.clone().addScaledVector(dir, d);
+  }
   function presets() {
     const bd = built.bounds, c = W(bd.cx, bd.cy, 0), s = Math.max(bd.w, bd.h) / 1000;
-    return {
+    const pr = {
       iso: { p: new THREE.Vector3(c.x - 0.72 * s, 0.6 * s, c.z + 0.78 * s), t: new THREE.Vector3(c.x, -0.3, c.z) },
       side: { p: new THREE.Vector3(c.x, 0.03 * s, c.z + 1.05 * s), t: new THREE.Vector3(c.x, -0.4, c.z) },
       fit: { p: new THREE.Vector3(c.x - 0.62 * s, 0.85 * s, c.z + 0.95 * s), t: new THREE.Vector3(c.x, -0.4, c.z) },
       planC: c
     };
+    ["iso", "side", "fit"].forEach(k => { pr[k].p = fitCam(pr[k].p, pr[k].t); });
+    return pr;
   }
   function setPlan(on) {
     planMode = on; cam = on ? ortho : persp; ctlO.enabled = on; ctlP.enabled = !on;
@@ -1245,6 +1470,7 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
   });
   function resize() {
     const w = view.clientWidth, h = view.clientHeight;
+    if (state.site) document.documentElement.style.setProperty("--sitebar-h", $("sitebar").offsetHeight + "px");
     if (!w || !h) return;
     renderer.setSize(w, h, false);
     persp.aspect = w / h; persp.fov = w < 560 ? 54 : 38; persp.updateProjectionMatrix();
@@ -1337,6 +1563,7 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
     clearSel(); state.mark = null;
     teardown(); buildScene(model); lastGood = cfg;
     renderSteps(); renderSchedule(); showDefault(); slabline(model); apply(); resize();
+    $("siteFloor").textContent = model.cfg.name + " · " + model.T + " THK · laps " + model.cfg.lap;
     if (opts.camera) goCam("iso", true); else if (planMode) goCam("plan");
     return true;
   }
@@ -1357,5 +1584,8 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
   setPlan(false);
   rebuild(DEFAULT_CFG, { example: true, camera: true });
   requestAnimationFrame(frame);
+  if (location.hash === "#site" || /[?&]site\b/.test(location.search)) setSite(true);
+  // test handle for scripts/smoke.js (headless Chromium cannot aim a tap at a 12 mm bar reliably)
+  window.xstruc = { model: () => M, state: state, selectBar: id => { const b = M.bars.find(x => x.id === id); if (b) selectBar(b); return !!b; }, selectRun: id => { const r = M.runs.find(x => x.id === id); if (r) selectRun(r); return !!r; }, setSite: setSite };
 })();
 </script>

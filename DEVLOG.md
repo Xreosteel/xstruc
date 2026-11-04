@@ -2,6 +2,23 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-04 · run 5 (manual, with Baji) · backlog #19 fixing view for a tablet
+
+**Done:** Site mode, the first site-crew feature from `DECISIONS.md`.
+
+- **Site mode** button in the header (and `#site` / `?site` in the URL). The page drops to a header, the stage, a side panel and a stepper bar; no inputs panel, inspector or schedule. All buttons are 44 px or taller; Prev / Next are 64 px; one chip per step plus "Finished floor" so a thumb can jump straight to a layer. Enters at step 1 (beam cages); `Next` after the starters shows the finished floor.
+- **Stage:** tags 18 px, grid bubbles 36 px, annotations 14 px, step label 18 px; current layer solid, layers below ghosted (ghost and tags forced on, explode off). The legend moves to the bottom-left so it never sits under the step label. The 3D / Plan buttons stay in the header.
+- **Side panel (landscape):** "Place now" with one tappable row per run in the layer (label + callout). Tapping a run shows its callout, bar lines, first and last line from the nearest grid with the edge distance in brackets, marks and mass.
+- **Bar card:** tap a bar → mark, size and shape name, cut length (32 px), layer and direction, bar line from the nearest grid plus "line *i* of *n* @ spacing", both ends from the nearest grid, lap zones from a grid ("600 lap at the E end, lap zone from 1,680 E of grid 3"), shape code + dims, run callout, note and flags. Bars without a plan axis (starters, ligs, diagonals) show their setout text instead. In portrait the card is a bottom sheet over the stage. `gridRef(v, axis)` and `barAxis(b)` are viewer helpers for now; #20 should move them into the model so the inspector and `check.js` use them too.
+- **Camera:** `fitCam` slides each preset along its own direction until the floor's bounding box fits the stage with a margin, so the floor fits in portrait, in the narrow landscape stage next to the panel, and on desktop.
+- **Testing:** `window.xstruc` (model, state, selectBar, selectRun, setSite) is a test handle because a headless tap cannot hit a 12 mm bar. `scripts/smoke.js` now enters Site mode at 1024 × 768 and 768 × 1024 and asserts: UI stripped, 9 chips, tag font ≥ 18 px, smallest visible target ≥ 44 px, no page scroll, stage ≥ 380 px tall, Next lands on layer A, the bar card shows cut length / grid setout / laps and stays inside the stage, close returns to the run list, a run tag opens a run card, exit restores the full UI.
+
+**Check:** `check: OK` · `grammar: OK (62 cases)` · `shapes: OK (126 assertions)` · `smoke: OK` (screenshots `smoke-6-site-1024.png`, `smoke-6-site-768.png`)
+
+**Parked:** nothing new. Bars at fit zoom are thin in the headless render (16 mm at 25 m); on a tablet the fixer pinches in. A "bars as thick lines when far" LOD is already #12.
+
+**Next run:** backlog #20 (setout from grids on every bar): move `gridRef` / `barAxis` into the model as `b.grid = {line, from, to, laps}`, show it in the desktop inspector, and assert it in `check.js`.
+
 ## 2026-11-04 · run 4 (manual, with Baji) · backlog #4 shape-code library
 
 **Done:** real bending geometry on every bar, shape codes and bending dimensions on the schedule.

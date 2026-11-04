@@ -11,7 +11,7 @@ See `DECISIONS.md`. The first users are site crews, so items that help a fixer o
 
 ## Phase 1a · site crew first
 
-- [ ] **19. Fixing view for a tablet.** A "Site" mode (button in the header) that strips the UI to the stage plus a big stepper: one layer at a time in fixing order, large type (18 px+ tags, 44 px touch targets), the current layer solid and everything below ghosted, tap a bar for mark, size, cut length, setout from the nearest grid and lap positions, a "next layer" button a thumb can hit, no inputs panel. Must work at 1024 × 768 landscape and portrait; test with the smoke script at those sizes.
+- [x] **19. Fixing view for a tablet.** A "Site" mode (button in the header) that strips the UI to the stage plus a big stepper: one layer at a time in fixing order, large type (18 px+ tags, 44 px touch targets), the current layer solid and everything below ghosted, tap a bar for mark, size, cut length, setout from the nearest grid and lap positions, a "next layer" button a thumb can hit, no inputs panel. Must work at 1024 × 768 landscape and portrait; test with the smoke script at those sizes.
 - [ ] **20. Setout from grids on every bar.** Each bar's inspector and site-view card shows the offset of its first and last bar from the nearest grid lines (not just the slab edge), and the lap positions as distances from a grid, so a fixer can set out with a tape.
 - [ ] **21. Layer direction must be stated.** Per DECISIONS: a mat callout without E-W / N-S is an error in the inputs panel, not a guessed default. Update the example callouts, the hint text, `test-grammar.js` and `check.js`.
 - [ ] **9. Per-layer placing drawing (2D).** A canvas view per layer that reads like a placing drawing: bars as lines, tags with distribution lines, setout dimensions from grids, cogs as ticks. Switch between 3D and the 2D sheet; keep selection in sync. (Moved up from Phase 1b.)
@@ -48,6 +48,8 @@ See `DECISIONS.md`. The first users are site crews, so items that help a fixer o
 - [ ] **18. Callout-to-zone association.** Leader tracing, distribution-line extent, then point-in-polygon, with a confidence score shown on each tag.
 
 ## Done notes
+
+- #19 (2026-11-04): **Site mode** button in the header (also `#site` in the URL). Strips the page to the stage, a side panel and a stepper bar: Prev / Next (64 px) plus one 44 px chip per step and "Finished floor"; one layer at a time, below ghosted, 18 px tags, 36 px grid bubbles. The side panel (landscape) lists the runs to place now, tappable; tapping a bar swaps it for a card with mark, size, shape, cut length, bar line from the nearest grid (and line i of n), both ends from the nearest grids, and lap zones from a grid. Portrait shows the card as a bottom sheet. Camera presets now fit the floor to the stage (`fitCam`) at any aspect. `window.xstruc` test handle; smoke test covers 1024 × 768 and 768 × 1024.
 
 - #4 (2026-11-04): `bendGeom` (pins per AS 3600 Cl 17.2.3.2: 5db main, 4db N fitments, 3db R; hooks/cogs per Cl 13.1.2.7), `cutLength` (bend deductions + 135° hook steel), `classify` → CIA shape codes S/L/LL/CC/ZL/T with dims to bar extremities. Cut lengths rounded up to 5. `pieces()` now keeps cogged bars within the 12 m stock; `placeLine` splits too. Z-bars and the balcony crank at 1:6 (≥300). Short-cog flag + model warning in thin slabs. 126 assertions in `scripts/test-shapes.js`.
 
