@@ -7,7 +7,7 @@ const { loadModel } = require("./model-lib");
 
 let lib;
 try { lib = loadModel(); } catch (e) { fail(e.message); }
-const { buildModel, DEFAULT_CFG, LBY, buildSheet } = lib;
+const { buildModel, DEFAULT_CFG, LBY, buildSheet, barAxis } = lib;
 const fmt = n => Math.round(n).toLocaleString("en-AU");
 const FIX = ["BM", "A", "B", "CH", "C", "D", "ST"];   // fixing order, as the viewer steps through it
 
@@ -170,7 +170,91 @@ function checkSheets(M, problems) {
       if (S.dims.some(d => !M.runs.find(r => r.id === d.run && r.layer === lid))) p("a setout dim belongs to another layer's run");
     } else if (S.dims.length) p("the finished-floor sheet should carry no per-run setout dims");
     if (!S.title[0].includes(lid ? LBY[lid].name.toUpperCase() : "ALL LAYERS") || !/THK · COVER \d+ · LAPS \d+/.test(S.title[1])) p("title " + JSON.stringify(S.title));
+    checkSheetNotes(M, S, lid, sol, p);
   });
+}
+
+// #9b: run tags, distribution lines, lap zones, bar marks and the title strip on a sheet
+function checkSheetNotes(M, S, lid, sol, p) {
+  const B = S.bounds, overlap = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  const inside = r => r.x0 >= B.x0 - 1 && r.x1 <= B.x1 + 1 && r.y0 >= B.y0 - 1 && r.y1 <= B.y1 + 1;
+  const segD = (pts, x, y) => { let bd = Infinity; for (let i = 0; i < Math.max(1, pts.length - 1); i++) { const a = pts[i], b = pts[Math.min(i + 1, pts.length - 1)], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)) : 0; bd = Math.min(bd, Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy)); } return bd; };
+  const outBy = (r, q) => Math.hypot(Math.max(r.x0 - q[0], 0, q[0] - r.x1), Math.max(r.y0 - q[1], 0, q[1] - r.y1));
+  // tags: every labelled run of the active layer with bars on the sheet has exactly one; none on the finished floor
+  const tagged = lid ? M.runs.filter(r => r.layer === lid && r.label && sol.some(it => it.bar.run === r)) : [];
+  if (S.notes.some(n => !n.box || !(n.h > 0) || n.box.x1 - n.box.x0 < n.text.length * 0.6 * n.h)) p("feature notes need a paper-text box");
+  if (!lid && (S.tags.length || S.distLines.length || Object.keys(S.runMarks).length)) p("the finished-floor sheet should carry no run tags or marks");
+  if (S.tags.length !== tagged.length) p(S.tags.length + " tags, " + tagged.length + " labelled runs on this layer");
+  tagged.forEach(r => { if (S.tags.filter(t => t.run === r.id).length !== 1) p("run " + r.id + " (" + r.label + ") should have one tag"); });
+  S.tags.forEach((t, i) => {
+    const r = M.runs.find(q => q.id === t.run), w = "tag " + t.run + " (" + t.text + ")";
+    if (!r || t.text !== r.label) { p(w + ": text is not the run label"); return; }
+    if (t.overlap) p(w + ": no free place found (overlaps another tag)");
+    if (!inside(t.box)) p(w + ": box outside the sheet bounds");
+    S.tags.slice(i + 1).forEach(u => { if (overlap(t.box, u.box)) p(w + " overlaps tag " + u.run); });
+    S.notes.forEach(n => { if (overlap(t.box, n.box)) p(w + " overlaps the note " + n.text); });
+    if (!(t.box.x1 - t.box.x0 >= t.text.length * 0.6 * t.h) || !(t.box.y1 - t.box.y0 >= t.h)) p(w + ": box too small for its text");
+    if (r.dist) {
+      const d = S.distLines.find(x => x.run === r.id), vert = r.dist.dir === "X";
+      if (!d) { p(w + ": no distribution line"); return; }
+      const lo = Math.min(r.dist.p0, r.dist.p1), hi = Math.max(r.dist.p0, r.dist.p1);
+      if (vert ? (d.x0 !== r.dist.at || d.x1 !== r.dist.at || d.y0 !== lo || d.y1 !== hi) : (d.y0 !== r.dist.at || d.y1 !== r.dist.at || d.x0 !== lo || d.x1 !== hi)) p(w + ": distribution line " + JSON.stringify(d) + " differs from r.dist");
+      if (r.grid && d.n !== r.grid.n) p(w + ": distribution line bar count " + d.n + " != " + r.grid.n);
+      const a = t.anchor, onLine = vert ? Math.abs(a[0] - r.dist.at) < 0.01 && a[1] >= lo - 0.01 && a[1] <= hi + 0.01 : Math.abs(a[1] - r.dist.at) < 0.01 && a[0] >= lo - 0.01 && a[0] <= hi + 0.01;
+      if (!onLine) p(w + ": anchor " + JSON.stringify(a) + " is not on its distribution line");
+      const gap = vert ? Math.min(Math.abs(t.box.x0 - r.dist.at), Math.abs(t.box.x1 - r.dist.at)) : Math.min(Math.abs(t.box.y0 - r.dist.at), Math.abs(t.box.y1 - r.dist.at));
+      const crosses = vert ? t.box.x0 < r.dist.at && t.box.x1 > r.dist.at : t.box.y0 < r.dist.at && t.box.y1 > r.dist.at;
+      if (crosses) p(w + ": box sits over its distribution line");
+      if (!t.pushed && (Math.abs(gap - 90) > 1 || t.leader)) p(w + ": an unpushed tag should sit 90 beside its line with no leader (gap " + gap + ")");
+      if (t.pushed && (!t.leader || segD([t.leader[1]], a[0], a[1]) > 0.01 || outBy(t.box, t.leader[0]) > 0.01)) p(w + ": a pushed tag needs a leader from its box to its line");
+    } else {
+      const polys = sol.filter(it => it.bar.run === r).map(it => it.pts);
+      if (Math.min(...polys.map(q => segD(q, t.anchor[0], t.anchor[1]))) > 0.5) p(w + ": anchor is not on one of its bars");
+      const far = outBy(t.box, t.anchor) > 20;
+      if (far !== !!t.leader) p(w + ": leader " + (t.leader ? "drawn" : "missing") + " with the anchor " + Math.round(outBy(t.box, t.anchor)) + " from the box");
+      if (t.leader && (outBy(t.box, t.leader[0]) > 0.01 || t.leader[1] !== t.anchor)) p(w + ": leader does not run from the box to the bars");
+    }
+  });
+  if (S.distLines.length !== S.tags.filter(t => t.dist).length) p("distribution lines " + S.distLines.length + " != dist tags");
+  // lap zones: every lapped ink bar's zones from b.grid.laps, one zone per pair of bars, the lap long, on the bar line
+  let want = 0;
+  sol.forEach(it => {
+    const b = it.bar; if (!b.grid || !b.grid.laps.length) return;
+    const ax = barAxis(b);
+    b.grid.laps.forEach(z => {
+      want++;
+      const a = Math.min(z.a.v, z.b.v), c = Math.max(z.a.v, z.b.v);
+      const hit = S.laps.find(q => q.bars.indexOf(b.id) >= 0 && (ax.X ? q.x0 === a && q.x1 === c && Math.abs(q.y0 - ax.p) < 1 : q.y0 === a && q.y1 === c && Math.abs(q.x0 - ax.p) < 1));
+      if (!hit) p("bar " + b.id + ": lap zone " + z.text + " not on the sheet");
+    });
+  });
+  if (S.laps.reduce((s, z) => s + z.bars.length, 0) !== want) p("lap zones list " + S.laps.reduce((s, z) => s + z.bars.length, 0) + " bar ends, bars have " + want);
+  S.laps.forEach(z => {
+    if (Math.abs(Math.hypot(z.x1 - z.x0, z.y1 - z.y0) - z.len) > 1 || z.text !== fmt(z.len) + " LAP") p("lap zone " + JSON.stringify(z) + " is not its lap long");
+    if (S.solid.indexOf(z.layer) < 0) p("lap zone on a layer not drawn in ink");
+  });
+  if (lid && M.cfg.features.edges && lid === "D" && M.L > 12000 && !S.laps.length) p("layer D should show lap zones on a slab longer than a stock bar");
+  // bar marks: every distinct mark of a run is labelled, labels name their own bar, unflagged labels do not collide
+  Object.keys(S.runMarks).forEach(rid => {
+    const ls = S.runMarks[rid], items = sol.filter(it => it.bar.run.id === rid && !it.point);
+    const marks = [...new Set(items.map(it => it.bar.mark))];
+    marks.forEach(m => { if (!ls.some(l => l.mark === m && l.first)) p("run " + rid + ": mark " + m + " has no label"); });
+    ls.forEach((l, i) => {
+      const b = M.bars[l.bar];
+      if (!b || b.run.id !== rid || b.mark !== l.mark) p("run " + rid + ": label " + l.mark + " names the wrong bar");
+      if (!l.overlap) ls.slice(i + 1).forEach(o => { if (!o.overlap && overlap(l.box, o.box)) p("run " + rid + ": mark labels " + l.mark + " and " + o.mark + " collide"); });
+    });
+  });
+  if (lid) M.runs.filter(r => r.layer === lid && sol.some(it => it.bar.run === r && !it.point)).forEach(r => { if (!S.runMarks[r.id]) p("run " + r.id + " has no mark labels"); });
+  // title strip
+  const st = S.strip;
+  if (!st || st.bars !== sol.length || st.kg !== Math.round(sol.reduce((s, it) => s + it.bar.kg, 0)) || st.cover !== M.C || st.laps !== +M.cfg.lap || st.floor !== M.cfg.name.toUpperCase()) p("title strip " + JSON.stringify(st));
+  else if (lid) {
+    const main = M.runs.find(r => r.layer === lid && r.kind === "main" && r.bars.length);
+    if (main && st.callouts[0] !== main.callout) p("title strip should list the main mat callout first: " + st.callouts[0]);
+    if (st.layer !== LBY[lid].name.toUpperCase()) p("title strip layer " + st.layer);
+    if (st.marks !== new Set(sol.map(it => it.bar.mark)).size) p("title strip mark count " + st.marks);
+  }
 }
 
 const M = checkModel("default example", DEFAULT_CFG, 800);
@@ -178,6 +262,17 @@ checkModel("plain 6 × 4.5 slab", { gridX: [0, 6000], gridY: [0, 4500], callouts
 checkModel("no features at all", { gridX: "0, 8000", gridY: "0, 7000", features: { beams: false, columns: false, drop: false, step: false, balcony: false, openings: false, extras: false, edges: false } }, 60);
 checkModel("two mats only", { callouts: "N16-200 A E-W\nN12-150 D E-W" }, 300);
 checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000, 12000, 18000] }, 1500);
+
+// crowded sheet (#9b): every layer-D tag anchored at one point and a tight D mat with staggered laps; the declutter
+// must push tags out with leaders and keep every tag and every distinct mark, with nothing overprinted
+{
+  const MC = buildModel({ gridX: [0, 7000, 14000, 21000], callouts: "N16-200 A E-W\nN12-200 B N-S\nN12-150 C N-S\nN12-60 D E-W" });
+  MC.runs.filter(r => r.layer === "D" && !r.dist).forEach(r => { r.tagPos = [7000, 4500, 0]; });
+  const SC = buildSheet(MC, ["D"], []), problems = [];
+  checkSheetNotes(MC, SC, "D", SC.bars.filter(it => !it.ghost), m => problems.push("crowded sheet D: " + m));
+  if (SC.tags.filter(t => t.pushed && t.leader).length < 5) problems.push("crowded sheet D: expected at least 5 pushed tags with leaders, got " + SC.tags.filter(t => t.pushed).length);
+  if (problems.length) fail(problems.slice(0, 20).join("\n"));
+}
 
 // error paths must report, not throw
 const bad = buildModel({ callouts: "N13-200 A\nSL82 T\nN12-200 A E-W\nN16-200 A E-W" });

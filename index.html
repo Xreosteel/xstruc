@@ -1031,12 +1031,140 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
         S.dims.push({ measure: X ? "y" : "x", a: g.at, b: g.v, at: r.dist.at, text: fmt(Math.abs(g.d)), grid: g.grid, run: r.id, which: gw[1] });
       });
     });
+    sheetTags(M, S); sheetLaps(S); sheetMarks(S);
     // title lines
     const lname = l => (LBY[l] ? LBY[l].name : l).toUpperCase();
     const mat = S.layer && M.mats[S.layer] ? " · N" + M.mats[S.layer].size + "-" + M.mats[S.layer].sp + (M.mats[S.layer].dir === "X" ? " E–W" : " N–S") : "";
     S.title.push(M.cfg.name.toUpperCase() + " · PLACING SHEET · " + (S.layer ? lname(S.layer) + mat : solid.length ? "ALL LAYERS" : "FORMWORK"));
     S.title.push(M.T + " THK · COVER " + M.C + " · LAPS " + M.cfg.lap + " · " + (S.layer ? S.bars.filter(x => !x.ghost).length + " BARS THIS LAYER" : fmt(M.sched.length) + " BARS") + (ghost.length ? " · BELOW: " + ghost.join(" ") : ""));
+    // title strip (#9b): what a fixer reads before placing the layer. Callouts are the runs' drawing wording, main mat first.
+    const inkBars = S.bars.filter(x => !x.ghost);
+    const layerRuns = S.layer ? M.runs.filter(r => r.layer === S.layer && r.callout && r.bars.some(b => !b.existing)) : [];
+    S.strip = {
+      floor: M.cfg.name.toUpperCase(),
+      layer: S.layer ? lname(S.layer) : solid.length > 1 ? "ALL LAYERS" : solid.length ? lname(solid[0]) : "FORMWORK",
+      callouts: layerRuns.slice().sort((p, q) => (q.kind === "main") - (p.kind === "main")).map(r => r.callout).filter((t, i, a) => a.indexOf(t) === i),
+      cover: M.C, laps: +M.cfg.lap, thickness: M.T, fc: +M.cfg.fc,
+      bars: inkBars.length, marks: inkBars.map(x => x.bar.mark).filter((m, i, a) => m && a.indexOf(m) === i).length,
+      kg: Math.round(inkBars.reduce((s, x) => s + x.bar.kg, 0))
+    };
     return S;
+  }
+
+  // ---------- placing-sheet annotation (backlog #9b) ----------
+  // Text on the sheet is paper text: sized in plan mm so the layout (and the declutter) is fixed at any zoom, like a
+  // drawing at scale. 220 mm tag text is 2.2 mm on paper at 1 : 100. Monospace advance ≈ 0.6 em.
+  const SHEET_TXT = { tag: 220, mark: 150, note: 170, cw: 0.6, pad: 60, gap: 90 };
+  const txtW = (s, h) => s.length * SHEET_TXT.cw * h + 2 * SHEET_TXT.pad;
+  const boxHit = (p, q, m) => p.x0 < q.x1 + m && q.x0 < p.x1 + m && p.y0 < q.y1 + m && q.y0 < p.y1 + m;
+  const boxAt = (cx, cy, w, h) => ({ x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 });
+  const clampV = (v, a, b) => Math.max(a, Math.min(b, v));
+  function nearestOnPolys(polys, x, y) {   // nearest point on a set of plan polylines
+    let best = null, bd = Infinity;
+    polys.forEach(pts => {
+      for (let i = 0; i < Math.max(1, pts.length - 1); i++) {
+        const p = pts[i], q = pts[Math.min(i + 1, pts.length - 1)], dx = q[0] - p[0], dy = q[1] - p[1], L2 = dx * dx + dy * dy;
+        const t = L2 ? clampV(((x - p[0]) * dx + (y - p[1]) * dy) / L2, 0, 1) : 0, px = p[0] + t * dx, py = p[1] + t * dy, d = Math.hypot(x - px, y - py);
+        if (d < bd) { bd = d; best = [px, py]; }
+      }
+    });
+    return best;
+  }
+  // Run tags of the layer being placed. A run with a distribution line gets its tag beside that line, slid along it
+  // to find room; one with a tag anchor (Z-bars, trimmers, extras, beams) starts at that anchor and points a leader at
+  // the nearest of its bars. A tag that cannot sit in its first-choice place is pushed outward and gets a leader to
+  // its line or bars. No tag of the active layer is ever dropped: the last resort is the first choice, flagged overlap.
+  function sheetTags(M, S) {
+    S.tags = []; S.distLines = [];
+    // feature notes are paper text too, and tags keep clear of them
+    S.notes.forEach(n => { n.h = SHEET_TXT.note; n.box = boxAt(n.x, n.y, txtW(n.text, n.h), n.h * 1.4); });
+    if (!S.layer) return;   // the finished floor and the formwork sheet carry no run tags (the 3D view has them)
+    const H = SHEET_TXT.tag, bh = H * 1.5, B = S.bounds, placed = S.notes.map(n => n.box);
+    const inB = r => r.x0 >= B.x0 && r.x1 <= B.x1 && r.y0 >= B.y0 && r.y1 <= B.y1;
+    const free = r => inB(r) && !placed.some(q => boxHit(r, q, 40));
+    const polysOf = r => S.bars.filter(it => !it.ghost && it.bar.run === r).map(it => it.pts);
+    const runs = M.runs.filter(r => r.layer === S.layer && r.label && polysOf(r).length);
+    runs.sort((p, q) => (!!q.dist - !!p.dist) || (q.kind === "main") - (p.kind === "main") || q.bars.length - p.bars.length || p.id.localeCompare(q.id));
+    runs.forEach(r => {
+      const w = txtW(r.label, H), tag = { run: r.id, text: r.label, h: H, layer: r.layer, pushed: false, overlap: false, leader: null };
+      let box = null, anchor = null;
+      if (r.dist) {
+        const vert = r.dist.dir === "X";   // bars E-W: the distribution line runs N-S at x = at
+        const d = r.dist, at = d.at, p0 = Math.min(d.p0, d.p1), p1 = Math.max(d.p0, d.p1);
+        const line = vert ? { x0: at, y0: p0, x1: at, y1: p1 } : { x0: p0, y0: at, x1: p1, y1: at };
+        S.distLines.push({ run: r.id, x0: line.x0, y0: line.y0, x1: line.x1, y1: line.y1, n: r.grid ? r.grid.n : null });
+        const along = t => p0 + clampV(t, 0, 1) * (p1 - p0);
+        const centre = (t, side, push) => vert ? [at + side * (SHEET_TXT.gap + w / 2 + push), along(t)] : [along(t), at + side * (SHEET_TXT.gap + bh / 2 + push)];
+        const ts = [0]; [0.04, 0.08, 0.12, 0.18, 0.25, 0.33, 0.42, 0.5].forEach(k => ts.push(k, -k));
+        const tries = [];
+        ts.forEach(k => [1, -1].forEach(side => tries.push({ t: d.frac + k, side: side, push: 0 })));
+        for (let k = 1; k <= 10; k++) [1, -1].forEach(side => [0, 0.1, -0.1].forEach(dt => tries.push({ t: d.frac + dt, side: side, push: k * bh, pushed: true })));
+        let pick = tries.find(c => { const q = centre(c.t, c.side, c.push); return free(boxAt(q[0], q[1], w, bh)); });
+        if (!pick) { pick = tries[0]; tag.overlap = true; }
+        const q = centre(pick.t, pick.side, pick.push);
+        box = boxAt(q[0], q[1], w, bh);
+        anchor = vert ? [at, along(pick.t)] : [along(pick.t), at];
+        tag.pushed = !!pick.pushed; tag.dist = true;
+        if (tag.pushed) tag.leader = [[clampV(anchor[0], box.x0, box.x1), clampV(anchor[1], box.y0, box.y1)], anchor];
+      } else {
+        const tp = r.tagPos || midOfPolys(polysOf(r)), target = nearestOnPolys(polysOf(r), tp[0], tp[1]);
+        const tries = [[0, 0, false]];
+        for (let k = 1; k <= 8; k++) [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]].forEach(u => tries.push([u[0] * k * (w * 0.55), u[1] * k * bh * 1.1, true]));
+        let pick = tries.find(o => free(boxAt(tp[0] + o[0], tp[1] + o[1], w, bh)));
+        if (!pick) { pick = tries[0]; tag.overlap = true; }
+        box = boxAt(tp[0] + pick[0], tp[1] + pick[1], w, bh); anchor = target; tag.pushed = pick[2]; tag.dist = false;
+        const e = [clampV(target[0], box.x0, box.x1), clampV(target[1], box.y0, box.y1)];
+        if (Math.hypot(e[0] - target[0], e[1] - target[1]) > 20) tag.leader = [e, target];
+      }
+      tag.box = box; tag.x = (box.x0 + box.x1) / 2; tag.y = (box.y0 + box.y1) / 2; tag.anchor = anchor;
+      placed.push(box); S.tags.push(tag);
+    });
+  }
+  function midOfPolys(polys) { const all = [].concat(...polys); return [all.reduce((s, p) => s + p[0], 0) / all.length, all.reduce((s, p) => s + p[1], 0) / all.length]; }
+  // Lap zones of the layer being placed, one per zone (the two lapped bars share it): a segment on the bar line from
+  // b.grid.laps (#20), so the sheet and the inspector give the same zone.
+  function sheetLaps(S) {
+    S.laps = [];
+    const seen = {};
+    S.bars.forEach(it => {
+      const b = it.bar; if (it.ghost || !b.grid || !b.grid.laps.length) return;
+      const ax = barAxis(b); if (!ax) return;
+      b.grid.laps.forEach(z => {
+        const a = Math.min(z.a.v, z.b.v), c = Math.max(z.a.v, z.b.v), key = (ax.X ? "X" : "Y") + "|" + Math.round(ax.p) + "|" + a + "|" + c;
+        if (seen[key]) { if (seen[key].bars.indexOf(b.id) < 0) seen[key].bars.push(b.id); return; }
+        const L = ax.X ? { x0: a, y0: ax.p, x1: c, y1: ax.p } : { x0: ax.p, y0: a, x1: ax.p, y1: c };
+        seen[key] = Object.assign({ dir: ax.X ? "X" : "Y", len: z.len, bars: [b.id], layer: b.layer, run: b.run.id, text: fmt(z.len) + " LAP" }, L);
+        S.laps.push(seen[key]);
+      });
+    });
+  }
+  // Bar marks beside the bars of each run on a one-layer sheet; the viewer shows the selected run's set. Every distinct
+  // mark in a run gets a label (its first bar goes first and slides along the bar to find room); repeats of a mark are
+  // kept only where they do not collide, so a long mat reads "A12 A12 A13 …" along its bars without overprinting.
+  function sheetMarks(S) {
+    S.runMarks = {};
+    if (!S.layer) return;
+    const H = SHEET_TXT.mark, bh = H * 1.4, byRun = {};
+    S.bars.forEach(it => { if (!it.ghost && it.bar.mark && !it.point) (byRun[it.bar.run.id] = byRun[it.bar.run.id] || []).push(it); });
+    Object.keys(byRun).forEach(rid => {
+      const items = byRun[rid], out = [], placed = [], firsts = {}, order = [];
+      items.forEach(it => { if (!firsts[it.bar.mark]) { firsts[it.bar.mark] = true; order.push([it, true]); } });
+      items.forEach(it => { if (order.every(o => o[0] !== it)) order.push([it, false]); });
+      order.forEach(([it, first]) => {
+        let si = 0, sl = -1;   // the bar's longest plan leg carries the label
+        for (let i = 1; i < it.pts.length; i++) { const l = Math.hypot(it.pts[i][0] - it.pts[i - 1][0], it.pts[i][1] - it.pts[i - 1][1]); if (l > sl) { sl = l; si = i; } }
+        const p = it.pts[si - 1], q = it.pts[si], ux = (q[0] - p[0]) / sl, uy = (q[1] - p[1]) / sl, horiz = Math.abs(ux) >= Math.abs(uy);
+        const w = txtW(it.bar.mark, H), off = (horiz ? bh : w) / 2 + it.w + 20;
+        const at = f => { const x = p[0] + ux * sl * f, y = p[1] + uy * sl * f; return horiz ? [x, y + off] : [x + off, y]; };
+        const fr = first ? [0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9] : [0.5];
+        let c = fr.map(at).find(xy => !placed.some(r => boxHit(boxAt(xy[0], xy[1], w, bh), r, 10)));
+        let overlap = false;
+        if (!c) { if (!first) return; c = at(0.5); overlap = true; }
+        const box = boxAt(c[0], c[1], w, bh); placed.push(box);
+        out.push({ bar: it.bar.id, mark: it.bar.mark, x: c[0], y: c[1], h: H, box: box, first: first, overlap: overlap });
+      });
+      S.runMarks[rid] = out;
+    });
   }
   // === MODEL END ===
 
@@ -1556,7 +1684,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
 
   // ---- 2D placing sheet (#9a): draws buildSheet() on a canvas; the build sequence picks the layer ----
   const sheetCv = $("sheet"), sctx = sheetCv.getContext("2d"), stageEl = document.querySelector(".stage");
-  const INK = "#1a1e23", GHOSTC = "#d4cfc4", CONC = "#6e7781", DIMC = "#3f5f80", GRIDC = "#8a94a0", PAPER = "#f3f0e8";
+  const INK = "#1a1e23", LAPC = "rgba(214,120,30,0.28)", GHOSTC = "#d4cfc4", CONC = "#6e7781", DIMC = "#3f5f80", GRIDC = "#8a94a0", PAPER = "#f3f0e8";
   const MONO = '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace', UIF = '"Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif';
   let sheet = null, sheetKey = "", sv = { s: 0.04, tx: 0, ty: 0 };   // sv: px per mm and the pan offset (y north = up the screen)
   const sx = x => sv.tx + x * sv.s, sy = y => sv.ty - y * sv.s;
@@ -1576,8 +1704,10 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     if (!sheet) return;
     const b = sheet.bounds, w = stageEl.clientWidth, h = stageEl.clientHeight;
     if (!w || !h) return;
-    sv.s = Math.min(w / (b.x1 - b.x0), h / (b.y1 - b.y0)) * 0.97;
-    sv.tx = w / 2 - (b.x0 + b.x1) / 2 * sv.s; sv.ty = h / 2 + (b.y0 + b.y1) / 2 * sv.s;
+    // fit between the title band (50 px) and the title strip at the foot
+    const top = 50, foot = stripGeom(w, h).h + SHEET_FOOT, hh = Math.max(50, h - top - foot);
+    sv.s = Math.min(w / (b.x1 - b.x0), hh / (b.y1 - b.y0)) * 0.97;
+    sv.tx = w / 2 - (b.x0 + b.x1) / 2 * sv.s; sv.ty = top + hh / 2 + (b.y0 + b.y1) / 2 * sv.s;
   }
   // rebuild the sheet geometry when the model or the layer selection changed (recolor() draws it)
   function updateSheet(fit) {
@@ -1637,6 +1767,10 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     };
     const lwOf = (w, k) => (w <= 12 ? 1.1 : w <= 16 ? 1.5 : 2) * k;
     sheet.bars.forEach(it => { if (it.ghost) poly(it, GHOSTC, lwOf(it.w, 0.6)); });
+    // lap zones (#9b): a band under the lapped bars; the selected bar's zones stronger
+    const selLaps = state.sel ? sheet.laps.filter(z => z.bars.indexOf(state.sel.id) >= 0) : [];
+    c.lineCap = "butt";
+    sheet.laps.forEach(z => { c.strokeStyle = selLaps.indexOf(z) >= 0 ? "rgba(214,120,30,0.75)" : LAPC; c.lineWidth = Math.max(4, 110 * sv.s); line(z.x0, z.y0, z.x1, z.y1); });
     sheet.chairs.forEach(ch => { c.strokeStyle = ch.ghost ? GHOSTC : INK; c.lineWidth = 1; const X = sx(ch.x), Y = sy(ch.y); c.beginPath(); c.moveTo(X - 4, Y - 4); c.lineTo(X + 4, Y + 4); c.moveTo(X - 4, Y + 4); c.lineTo(X + 4, Y - 4); c.stroke(); });
     const dimmed = (state.mark || state.selRun) ? "rgba(26,30,35,0.22)" : null;
     sheet.bars.forEach(it => {
@@ -1651,18 +1785,68 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     if (selIt) { poly(selIt, "rgba(255,255,255,0.9)", lwOf(selIt.w, 3.2)); poly(selIt, LBY[selIt.layer].css, lwOf(selIt.w, 2)); }
     // setout from the nearest grid to the first and last bar line of each run
     sheet.dims.forEach(d => dim(d, DIMC, true));
-    // feature notes and the title
-    c.font = "500 10.5px " + MONO; c.textAlign = "center"; c.textBaseline = "middle";
-    sheet.notes.forEach(n => {   // paper halo so the note reads over the bars
-      const tw = c.measureText(n.text).width, X = sx(n.x), Y = sy(n.y);
-      c.fillStyle = "rgba(243,240,232,0.85)"; c.fillRect(X - tw / 2 - 3, Y - 7, tw + 6, 14);
-      c.fillStyle = CONC; c.fillText(n.text, X, Y);
+    // paper text (#9b): sized in plan mm, so it scales with the zoom like a drawing; too small to read → box only
+    const ptxt = (text, x, y, hmm, col, weight, maxW) => { const px = hmm * sv.s; if (px < 5) return false; c.font = (weight || 500) + " " + px.toFixed(1) + "px " + MONO; c.fillStyle = col; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(text, sx(x), sy(y), maxW ? maxW * sv.s : undefined); return true; };
+    const selRunId = state.selRun ? state.selRun.id : state.sel && state.sel.run ? state.sel.run.id : null;
+    // feature notes (paper text with a paper halo so they read over the bars)
+    sheet.notes.forEach(n => { c.fillStyle = "rgba(243,240,232,0.85)"; R(n.box); c.fill(); ptxt(n.text, n.x, n.y, n.h, CONC, 500); });
+    // distribution lines: the spread of the run's bar lines, a dot on the first and last bar
+    sheet.distLines.forEach(d => {
+      const on = d.run === selRunId, col = on ? LBY[sheet.layer].css : INK;
+      c.strokeStyle = col; c.fillStyle = col; c.lineWidth = on ? 1.6 : 1; line(d.x0, d.y0, d.x1, d.y1);
+      [[d.x0, d.y0], [d.x1, d.y1]].forEach(p => { c.beginPath(); c.arc(sx(p[0]), sy(p[1]), 3, 0, Math.PI * 2); c.fill(); });
     });
+    // run tags with their leaders; the selected run's tag in the layer colour
+    sheet.tags.forEach(t => {
+      const on = t.run === selRunId, lc = LBY[t.layer].css;
+      if (t.leader) { c.strokeStyle = on ? lc : INK; c.lineWidth = 1; line(t.leader[0][0], t.leader[0][1], t.leader[1][0], t.leader[1][1]); c.fillStyle = on ? lc : INK; c.beginPath(); c.arc(sx(t.leader[1][0]), sy(t.leader[1][1]), 2.5, 0, Math.PI * 2); c.fill(); }
+      const r = t.box; c.fillStyle = on ? lc : "rgba(243,240,232,0.94)"; R(r); c.fill();
+      c.strokeStyle = on ? lc : t.overlap ? "#b3261e" : INK; c.lineWidth = on ? 1.6 : 1; c.stroke();
+      ptxt(t.text, t.x, t.y, t.h, on ? "#fff" : INK, 600, r.x1 - r.x0 - 40);
+    });
+    // bar marks beside the bars of the selected run (or the selected bar's run)
+    const rm = selRunId && sheet.runMarks[selRunId];
+    if (rm) rm.forEach(m => {
+      const r = m.box, on = state.sel && state.sel.id === m.bar;
+      c.fillStyle = on ? LBY[sheet.layer].css : "rgba(243,240,232,0.9)"; R(r); c.fill();
+      ptxt(m.mark, m.x, m.y, m.h, on ? "#fff" : DIMC, m.first ? 700 : 500);
+    });
+    // the selected bar's lap zones, labelled
+    selLaps.forEach(z => { const mx = (z.x0 + z.x1) / 2, my = (z.y0 + z.y1) / 2, o = z.dir === "X" ? [0, -190] : [-260, 0]; ptxt(z.text, mx + o[0], my + o[1], 150, "#9a4f0e", 600); });
+    // the title
     c.fillStyle = "rgba(243,240,232,0.88)"; c.fillRect(0, 0, w, 50);   // title band stays readable when zoomed in
     c.fillStyle = INK; c.textAlign = "left"; c.textBaseline = "top";
     c.font = "700 15px " + UIF; c.fillText(sheet.title[0], 14, 12);
     c.font = "400 12px " + MONO; c.fillStyle = CONC; c.fillText(sheet.title[1], 14, 33);
     c.font = "400 11px " + MONO; c.textAlign = "right"; c.fillText("1 : " + fmt(1 / (sv.s / (96 / 25.4))) + " on this screen · N ↑", w - 14, 12);
+    // title strip (#9b): floor, layer, f'c, cover, laps, count and mass, then the layer's callouts (two columns when
+    // the stage is wide); it sits above the 24 px hint line at the foot of the stage
+    const st = sheet.strip;
+    if (st) {
+      const g = stripGeom(w, h), head = st.floor + " · " + st.layer + " · " + st.thickness + " THK · N" + st.fc + " · COVER " + st.cover + " · LAPS " + st.laps + " · " + fmt(st.bars) + " BARS · " + st.marks + " MARKS · " + fmt(st.kg) + " kg";
+      const y0 = h - SHEET_FOOT - g.h;
+      c.fillStyle = "rgba(243,240,232,0.94)"; c.fillRect(0, y0, w, h - y0);
+      c.strokeStyle = CONC; c.lineWidth = 1; c.beginPath(); c.moveTo(0, y0 + 0.5); c.lineTo(w, y0 + 0.5); c.stroke();
+      c.textAlign = "left"; c.textBaseline = "top"; c.fillStyle = INK; c.font = "600 11.5px " + MONO; c.fillText(head, 14, y0 + 7, w - 28);
+      c.font = "400 11px " + MONO; c.fillStyle = CONC;
+      g.lines.forEach((t, i) => { const col = Math.floor(i / g.rows), row = i % g.rows; c.fillText(t, 14 + col * g.colW, y0 + 24 + row * 15, g.colW - 14); });
+    }
+  }
+  // the strip's size on a w × h stage: callouts in one or two columns, at most a third of the stage high
+  const SHEET_FOOT = 24;
+  function stripGeom(w, h) {
+    const st = sheet && sheet.strip; if (!st) return { h: 0, lines: [], rows: 0, colW: w };
+    const cols = st.callouts.length > 3 && w >= 640 ? 2 : 1, maxRows = Math.max(0, Math.floor((h / 3 - 26) / 15));
+    let lines = st.callouts.slice(), rows = Math.ceil(lines.length / cols);
+    if (rows > maxRows) { rows = maxRows; const cap = rows * cols; if (lines.length > cap) { lines = lines.slice(0, Math.max(0, cap - 1)); if (cap) lines.push("+ " + (st.callouts.length - cap + 1) + " more callouts"); } }
+    return { h: 26 + rows * 15 + 4, lines: lines, rows: Math.max(1, rows), colW: (w - 14) / cols };
+  }
+  // the run tag under the pointer on a one-layer sheet
+  function sheetTagAt(px, py) {
+    if (!sheet || !sheet.tags) return null;
+    const mx = (px - sv.tx) / sv.s, my = (sv.ty - py) / sv.s;
+    for (let i = sheet.tags.length - 1; i >= 0; i--) { const r = sheet.tags[i].box; if (mx >= r.x0 && mx <= r.x1 && my >= r.y0 && my <= r.y1) return M.runs.find(q => q.id === sheet.tags[i].run) || null; }
+    return null;
   }
   // nearest bar of the layer being placed within 7 px of the pointer (chairs too, when they are the step)
   function sheetPick(px, py) {
@@ -1692,6 +1876,8 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       if (sdown.moved) { sv.tx = sdown.tx + (e.clientX - sdown.x); sv.ty = sdown.ty + (e.clientY - sdown.y); drawSheet(); }
       return;
     }
+    const tr = sheetTagAt(e.clientX - rect.left, e.clientY - rect.top);
+    if (tr) { tip.textContent = tr.callout + " · " + tr.bars.length + " bars"; tip.style.left = (e.clientX - rect.left) + "px"; tip.style.top = (e.clientY - rect.top) + "px"; tip.hidden = false; return; }
     const b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
     if (!b) { tip.hidden = true; return; }
     tip.textContent = b.chair ? "Bar chair" : b.mark + " · " + b.type + b.size + " · " + fmt(b.len) + " · " + b.layer;
@@ -1701,7 +1887,9 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     if (!sdown) return;
     const d = sdown; sdown = null; sheetCv.classList.remove("pan");
     if (d.moved) return;
-    const rect = sheetCv.getBoundingClientRect(), b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
+    const rect = sheetCv.getBoundingClientRect(), tr = sheetTagAt(e.clientX - rect.left, e.clientY - rect.top);
+    if (tr) { selectRun(tr); return; }
+    const b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
     if (b) selectBar(b); else { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); }
   });
   sheetCv.addEventListener("pointercancel", () => { sdown = null; sheetCv.classList.remove("pan"); });

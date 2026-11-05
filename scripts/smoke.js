@@ -107,8 +107,24 @@ const { chromium } = require("playwright");
   shA.insp = (await page.textContent("#inspector")).replace(/\s+/g, " ").slice(0, 120);
   console.log("sheet A:", JSON.stringify(shA));
   await page.screenshot({ path: path.join(outDir, "smoke-9-sheet-A.png") });
+  // #9b: click the main mat's tag → the run is selected and its bar marks show; zoom in to read the paper text
+  const tgA = await page.evaluate(() => {
+    const S = window.xstruc.sheet(), t = S.tags.find(x => x.dist && x.text.indexOf("N16-200") >= 0), xy = window.xstruc.sheetXY(t.x, t.y), r = document.getElementById("sheet").getBoundingClientRect();
+    return { tags: S.tags.length, run: t.run, text: t.text, cx: r.left + xy[0], cy: r.top + xy[1], laps: S.laps.length, dl: S.distLines.length, strip: S.strip.callouts.length };
+  });
+  await page.mouse.click(tgA.cx, tgA.cy); await page.waitForTimeout(200);
+  Object.assign(tgA, await page.evaluate(() => { const st = window.xstruc.state; return { selRun: st.selRun && st.selRun.id, marks: (window.xstruc.sheet().runMarks[st.selRun ? st.selRun.id : ""] || []).length }; }));
+  tgA.insp = (await page.textContent("#inspector")).replace(/\s+/g, " ").slice(0, 120);
+  console.log("sheet A tags:", JSON.stringify(tgA));
+  await page.screenshot({ path: path.join(outDir, "smoke-10-sheet-tags-A.png") });
+  await page.mouse.move(tgA.cx, tgA.cy);
+  for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, -300); await page.waitForTimeout(60); }
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: path.join(outDir, "smoke-10-sheet-zoom-A.png") });
+  await page.mouse.click(tgA.cx, tgA.cy, { clickCount: 2 }); await page.waitForTimeout(200);   // double-click: back to fit
+  await page.evaluate(id => window.xstruc.selectBar(id), shA.id);   // the 3D-return checks below follow the clicked bar
   await page.click("#steps .step[data-step='6']"); await page.waitForTimeout(300);   // layer D: cogged top bars
-  const shD = await page.evaluate(() => { const S = window.xstruc.sheet(); return { solid: S.solid.join(""), cogs: S.bars.filter(x => !x.ghost).reduce((s, x) => s + x.cogs.length, 0), selKept: window.xstruc.state.sel && window.xstruc.state.sel.id }; });
+  const shD = await page.evaluate(() => { const S = window.xstruc.sheet(); return { solid: S.solid.join(""), cogs: S.bars.filter(x => !x.ghost).reduce((s, x) => s + x.cogs.length, 0), selKept: window.xstruc.state.sel && window.xstruc.state.sel.id, tags: S.tags.length, laps: S.laps.length, overlap: S.tags.filter(t => t.overlap).length }; });
   console.log("sheet D:", JSON.stringify(shD));
   await page.screenshot({ path: path.join(outDir, "smoke-9-sheet-D.png") });
   await page.click(".side [data-cam=iso]"); await page.waitForTimeout(300);
@@ -182,6 +198,9 @@ const { chromium } = require("playwright");
   if (sh.solid !== "BMABCHCDST" || sh.bars < 1000 || sh.dims !== 0 || !/ALL LAYERS/.test(sh.title)) problems.push("finished-floor sheet wrong: " + JSON.stringify(sh));
   if (shA.solid !== "A" || shA.ghost !== "BM" || shA.ink < 100 || shA.dims < 2 || !/LAYER A/.test(shA.title)) problems.push("layer A sheet wrong: " + JSON.stringify(shA));
   if (shA.sel !== shA.id || !shA.insp.includes(shA.mark)) problems.push("clicking a bar on the sheet did not select it (" + shA.sel + " vs " + shA.id + "): " + shA.insp);
+  if (tgA.tags < 5 || tgA.dl < 1 || tgA.laps < 1 || tgA.strip < 3) problems.push("layer A sheet lacks tags / distribution lines / lap zones / callout strip: " + JSON.stringify(tgA));
+  if (tgA.selRun !== tgA.run || tgA.marks < 5 || !tgA.insp.includes("N16-200")) problems.push("clicking the main mat tag did not select its run and show its marks: " + JSON.stringify(tgA));
+  if (shD.tags < 5 || shD.laps < 1 || shD.overlap) problems.push("layer D sheet tags / lap zones wrong: " + JSON.stringify(shD));
   if (shD.solid !== "D" || shD.cogs < 10) problems.push("layer D sheet should show cog ticks: " + JSON.stringify(shD));
   if (shD.selKept !== shA.id) problems.push("stepping to layer D should keep the selection (not visible, but kept by 3D rules): got " + shD.selKept);
   if (shOff.on || !shOff.view || shOff.canvas || shOff.sel !== shA.id) problems.push("3D button did not restore the stage with the selection kept: " + JSON.stringify(shOff));
