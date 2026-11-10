@@ -103,6 +103,32 @@ const { chromium } = require("playwright");
   await page.click("#btnReset"); await page.waitForTimeout(800);
   const g7 = await stats(); g7.rows = await page.$$eval("#openRows .orow", els => els.length); g7.bDown = await page.inputValue("#inBdown");
 
+  // levels (#7b): the example's set-down and step are rows too; deepen the set-down, add / break / remove one, change the step
+  const levels = () => page.evaluate(() => { const M = window.xstruc.model(); return { drops: M.DROPS.map(d => [d.id, d.d]), step: M.STEP && [M.STEP.x0, M.STEP.y0, M.STEP.rise, M.STEP.nib], z: M.runs.filter(r => r.kind === "z").map(r => r.callout), l: M.runs.filter(r => r.kind === "l").map(r => r.callout) }; });
+  const v0 = await page.evaluate(() => ({ rows: document.querySelectorAll("#dropRows .orow").length, name: document.querySelector("#dropRows .orow input[data-k=name]").value, depth: document.querySelector("#dropRows .orow input[data-k=depth]").value,
+    sx0: document.getElementById("inSx0").value, sy0: document.getElementById("inSy0").value, rise: document.getElementById("inSrise").value, nib: document.getElementById("inSnib").value }));
+  Object.assign(v0, await levels());
+  console.log("level rows:", JSON.stringify(v0));
+  await page.fill("#dropRows .orow:nth-child(1) input[data-k=depth]", "50"); await page.waitForTimeout(700);   // the wet area drops 50 instead of 70: the Z-bars follow (a deeper set-down would need more room from the slab edge and say so)
+  const v1 = await stats(); Object.assign(v1, await levels());
+  console.log("after changing the set-down depth:", JSON.stringify(v1.drops), JSON.stringify(v1.z[0]), v1.bars);
+  await page.click("#btnAddDrop"); await page.waitForTimeout(700);
+  const v2 = await stats(); Object.assign(v2, await levels()); v2.rows = await page.$$eval("#dropRows .orow", els => els.length);
+  console.log("after add set-down:", JSON.stringify(v2.drops), JSON.stringify(v2.errs));
+  await page.fill("#dropRows .orow:nth-child(2) input[data-k=depth]", "300"); await page.waitForTimeout(700);   // too deep for a Z-bar: an error on that row, scene kept
+  const v3 = await stats(); v3.invalid = await page.getAttribute("#dropRows .orow:nth-child(2)", "data-invalid");
+  console.log("after a bad set-down row:", JSON.stringify(v3.errs), "invalid", v3.invalid);
+  await page.fill("#inSrise", "300"); await page.fill("#inSnib", "400"); await page.waitForTimeout(700);   // the step row is still read (the bad set-down row keeps the scene)
+  await page.click("#dropRows .orow:nth-child(2) .del"); await page.waitForTimeout(700);
+  const v4 = await stats(); Object.assign(v4, await levels()); v4.rows = await page.$$eval("#dropRows .orow", els => els.length);
+  console.log("after removing it, with a 300 step on a 400 nib:", JSON.stringify(v4.step), JSON.stringify(v4.l[0]), v4.bars);
+  await page.screenshot({ path: path.join(outDir, "smoke-15-level-rows.png") });
+  await page.fill("#inSrise", "100"); await page.waitForTimeout(700);   // a 100 rise is a set-down, not a step: error on the step fields, scene kept
+  const v5 = await stats(); v5.invalid = await page.getAttribute("#inSrise", "aria-invalid");
+  console.log("after a bad step:", JSON.stringify(v5.errs));
+  await page.click("#btnReset"); await page.waitForTimeout(800);
+  const v6 = await stats(); Object.assign(v6, await levels()); v6.rise = await page.inputValue("#inSrise"); v6.depth = await page.inputValue("#dropRows .orow:nth-child(1) input[data-k=depth]");
+
   // click a schedule row
   await page.click("#sched tr:nth-child(5)"); await page.waitForTimeout(200);
   console.log("inspector:", (await page.textContent("#inspector")).slice(0, 80).replace(/\s+/g, " "));
@@ -334,6 +360,14 @@ const { chromium } = require("playwright");
   if (!g5.balc || g5.balc[0] !== 2400 || g5.balc[1] !== 0 || g5.balc[2] !== "cog" || g5.bars === g4.bars) problems.push("balcony edit did not rebuild (2,400 projection, no set-down, straight cantilever bars): " + JSON.stringify(g5.balc));
   if (!g6.errs.some(e => /^Balcony: too narrow/.test(e)) || g6.invalid !== "true" || g6.bars !== g5.bars) problems.push("an 800 balcony should be an error that keeps the scene: " + JSON.stringify(g6));
   if (g7.rows !== 2 || g7.bDown !== "50" || g7.bars !== s0.bars) problems.push("reset did not restore the example rows: " + JSON.stringify(g7));
+  // levels (#7b)
+  if (v0.rows !== 1 || v0.name !== "WET AREA" || v0.depth !== "70" || v0.sx0 !== "9500" || v0.sy0 !== "4500" || v0.rise !== "200" || v0.nib !== "300" || v0.drops.length !== 1 || v0.z.length !== 4) problems.push("example level rows not pre-filled: " + JSON.stringify(v0));
+  if (!v1.drops || v1.drops[0][1] !== 50 || !/AT 50 SET-DOWN \(WET AREA\)/.test(v1.z[0] || "") || v1.kg === g7.kg || v1.errs.some(e => /^Set-down/.test(e))) problems.push("changing the set-down depth did not rebuild with 50 Z-bars: " + JSON.stringify([v1.drops, v1.z[0], v1.bars, v1.errs]));
+  if (v2.rows !== 2 || v2.drops.length !== 2 || v2.drops[1][0] !== "SET-DOWN 2" || v2.z.length !== 8 || v2.errs.some(e => /^Set-down/.test(e))) problems.push("Add set-down did not add a built row with its own Z-bars: " + JSON.stringify(v2));
+  if (!v3.errs.some(e => /^Set-down 2 \(SET-DOWN 2\): depth must be 10–160/.test(e)) || v3.invalid !== "true" || v3.bars !== v2.bars) problems.push("a bad set-down row should be an error on that row and keep the scene: " + JSON.stringify(v3));
+  if (v4.rows !== 1 || !v4.step || v4.step[2] !== 300 || v4.step[3] !== 400 || !/EACH SIDE OF 300 STEP/.test(v4.l[0] || "") || v4.errs.some(e => /^(Set-down|Step)/.test(e)) || v4.bars === v2.bars) problems.push("removing the bad row / editing the step did not rebuild (300 step on a 400 nib): " + JSON.stringify([v4.rows, v4.step, v4.l[0], v4.errs]));
+  if (!v5.errs.some(e => /^Step: a rise of 160 or less is a shallow set-down/.test(e)) || v5.invalid !== "true" || v5.bars !== v4.bars) problems.push("a 100 step should be an error on the step fields that keeps the scene: " + JSON.stringify(v5));
+  if (v6.rise !== "200" || v6.depth !== "70" || v6.bars !== s0.bars || !v6.step || v6.step[2] !== 200) problems.push("reset did not restore the example level rows: " + JSON.stringify(v6));
   if (problems.length) { console.error("smoke: FAIL\n" + problems.join("\n")); process.exit(1); }
   console.log("smoke: OK (screenshots in " + outDir + ")");
 })().catch(e => { console.error("smoke: FAIL\n" + e.stack); process.exit(1); });

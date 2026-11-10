@@ -361,6 +361,88 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   console.log("  geometry inputs: example rows reproduce the example; job with 3 openings + balcony: bars " + MJ.bars.length + ", marks " + MJ.marks.length + "; 5 bad rows + bad balcony reported, 2 good rows built");
 }
 
+// levels (#7b): set-downs (a list) and the step from cfg; Z-bars follow each set-down, L-bars the step, mats sit at
+// each level; bad rows are reported by row and left out; the example's rows are the example
+{
+  const { exampleGeometry } = lib, problems = [], p = m => problems.push("level inputs: " + m);
+  const EX = exampleGeometry(DEFAULT_CFG);
+  if (EX.setdowns.length !== 1 || EX.setdowns[0].name !== "WET AREA" || EX.setdowns[0].depth !== 70 || EX.setdowns[0].x0 !== 600 || EX.setdowns[0].y1 !== 8200) p("example set-down row " + JSON.stringify(EX.setdowns));
+  if (!EX.step || EX.step.x0 !== 9500 || EX.step.y0 !== 4500 || EX.step.rise !== 200 || EX.step.nib !== 300) p("example step row " + JSON.stringify(EX.step));
+  if (M.DROPS.length !== 1 || M.DROPS[0].id !== "WET AREA" || M.DROPS[0].d !== 70 || !M.STEP || M.STEP.rise !== 200 || M.STEP.x1 !== M.SL.x1) p("example model levels " + JSON.stringify([M.DROPS, M.STEP]));
+  const zEx = M.runs.filter(r => r.kind === "z");
+  if (zEx.length !== 4 || zEx.some(r => r.drop !== M.DROPS[0] || !/AT 70 SET-DOWN \(WET AREA\), LAP 600/.test(r.callout))) p("example Z-bar runs: " + zEx.map(r => r.callout).join(" | "));
+  // a job: two set-downs of different depths and a step off the grid lines
+  const grid = { gridX: [0, 6000, 12000], gridY: [0, 5000, 10000], features: Object.assign({}, DEFAULT_CFG.features, { openings: false, balcony: false, extras: false }) };
+  const job = Object.assign({}, grid, { setdowns: [{ name: "ens", x0: 1000, y0: 6500, x1: 3500, y1: 9000, depth: 50 }, { x0: 10000, y0: 3000, x1: 7500, y1: 1000, depth: 100 }], step: { x0: 8000, y0: 6000, rise: 250, nib: 300 } });
+  const MJ = buildModel(job), SJ = buildSheet(MJ, ["A", "B", "C", "D", "BM", "CH", "ST"], []), lap = +MJ.cfg.lap;
+  if (MJ.errors.length) p("job has errors: " + MJ.errors.join(" | "));
+  if (MJ.DROPS.length !== 2 || MJ.DROPS.map(d => d.id).join(",") !== "ENS,SET-DOWN 2" || MJ.DROPS[1].x0 !== 7500 || MJ.DROPS[1].y1 !== 3000 || MJ.DROPS[1].d !== 100) p("job set-downs " + JSON.stringify(MJ.DROPS));
+  if (!MJ.STEP || MJ.STEP.x0 !== 8000 || MJ.STEP.y0 !== 6000 || MJ.STEP.rise !== 250 || MJ.STEP.nib !== 300 || MJ.STEP.x1 !== MJ.SL.x1 || MJ.STEP.y1 !== MJ.SL.y1) p("job step " + JSON.stringify(MJ.STEP));
+  if (MJ.lvl(2000, 7000) !== -50 || MJ.lvl(8000, 2000) !== -100 || MJ.lvl(9000, 8000) !== 250 || MJ.lvl(5000, 5000) !== 0 || MJ.lvl(11000, 2000) !== 0) p("lvl() does not follow the set-downs and the step");
+  const inR = (r, x, y) => x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1;
+  MJ.DROPS.forEach(dd => {
+    const zr = MJ.runs.filter(r => r.kind === "z" && r.drop === dd);
+    if (zr.length !== 4 || zr.some(r => !r.bars.length || r.callout.indexOf("AT " + dd.d + " SET-DOWN (" + dd.id + ")") < 0)) p(dd.id + ": expected a Z-bar run with bars in each of 4 layers naming the set-down, got " + zr.map(r => r.callout).join(" | "));
+    const ck = Math.max(300, 6 * dd.d);
+    zr.forEach(r => r.bars.forEach(b => {
+      const q = b.pts, X = r.dir === "X", mid = [(q[1][0] + q[2][0]) / 2, (q[1][1] + q[2][1]) / 2];
+      if (q.length !== 4 || b.shape !== "Z-bar" || Math.abs(Math.abs(q[2][2] - q[1][2]) - dd.d) > 0.5) p(dd.id + ": Z-bar " + b.id + " does not drop " + dd.d);
+      const leg = (i, j) => Math.hypot(q[j][0] - q[i][0], q[j][1] - q[i][1]);
+      if (Math.abs(leg(0, 1) - lap) > 0.5 || Math.abs(leg(2, 3) - lap) > 0.5 || Math.abs(leg(1, 2) - ck) > 0.5) p(dd.id + ": Z-bar " + b.id + " legs " + [leg(0, 1), leg(1, 2), leg(2, 3)] + " (want " + lap + " / " + ck + " / " + lap + ")");
+      const onEdge = X ? (Math.abs(mid[0] - dd.x0) < 0.5 || Math.abs(mid[0] - dd.x1) < 0.5) && mid[1] > dd.y0 && mid[1] < dd.y1 : (Math.abs(mid[1] - dd.y0) < 0.5 || Math.abs(mid[1] - dd.y1) < 0.5) && mid[0] > dd.x0 && mid[0] < dd.x1;
+      if (!onEdge) p(dd.id + ": Z-bar " + b.id + " crank is not centred on this set-down's edge: " + JSON.stringify(mid));
+      const lowIn = q[1][2] < q[2][2] ? q[1] : q[2]; if (!inR(dd, lowIn[0] + (X ? Math.sign(q[0][0] - q[3][0]) * -1 : 0), lowIn[1] + (X ? 0 : Math.sign(q[0][1] - q[3][1]) * -1))) p(dd.id + ": Z-bar " + b.id + " has its low leg outside the set-down");
+    }));
+  });
+  // every main bar sits at its layer's level: lowered by the depth inside a set-down, raised by the rise in the step, and never across an edge
+  let inDrop = 0, inStep = 0;
+  MJ.bars.filter(b => b.run.kind === "main").forEach(b => {
+    const q = b.pts, mx = (q[0][0] + q[q.length - 1][0]) / 2, my = (q[0][1] + q[q.length - 1][1]) / 2, z = MJ.Z[b.layer];   // q[1] is on the main leg whether or not the ends are cogged
+    const dd = MJ.DROPS.find(r => inR(r, mx, my)), st = MJ.STEP && mx > MJ.STEP.x0 && my > MJ.STEP.y0;
+    const want = dd ? z - dd.d : st ? z + MJ.STEP.rise : z, where = "main bar " + b.id + " (" + b.run.label + ")";
+    if (Math.abs(q[1][2] - want) > 0.5) p(where + " is at z " + q[1][2] + ", want " + want + (dd ? " in " + dd.id : st ? " in the step" : ""));
+    if (dd) inDrop++; if (st) inStep++;
+    const xs = q.map(v => v[0]), ys = q.map(v => v[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    MJ.DROPS.forEach(r => { const over = x0 < r.x1 - 1 && x1 > r.x0 + 1 && y0 < r.y1 - 1 && y1 > r.y0 + 1, within = x0 >= r.x0 - 1 && x1 <= r.x1 + 1 && y0 >= r.y0 - 1 && y1 <= r.y1 + 1; if (over && !within) p(where + " crosses the edge of " + r.id); });
+    if (MJ.STEP && x1 > MJ.STEP.x0 + 1 && y1 > MJ.STEP.y0 + 1 && !(x0 >= MJ.STEP.x0 - 1 && y0 >= MJ.STEP.y0 - 1) && !(x0 < MJ.STEP.x0 && x1 <= MJ.STEP.x0 + MJ.STEP.nib + 1) && !(y0 < MJ.STEP.y0 && y1 <= MJ.STEP.y0 + MJ.STEP.nib + 1)) p(where + " crosses the step line");
+  });
+  if (inDrop < 40 || inStep < 40) p("expected mat bars inside the set-downs and the step, got " + inDrop + " / " + inStep);
+  const lr = MJ.runs.filter(r => r.kind === "l");
+  if (lr.length !== 4 || lr.some(r => !r.bars.length || !/EACH SIDE OF 250 STEP/.test(r.callout))) p("expected L-bar runs for a 250 step in 4 layers, got " + lr.map(r => r.callout).join(" | "));
+  lr.forEach(r => r.bars.forEach(b => { const q = b.pts; if (q.length !== 3 || Math.abs(Math.abs(q[2][2] - q[1][2]) - 250) > 0.5 || Math.abs(Math.hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]) - (b.note.indexOf("raised") >= 0 ? lap : lap + MJ.C + 40)) > 0.5) p("L-bar " + b.id + " legs: " + JSON.stringify(q)); }));
+  // the sheet and the annotations name each level change
+  if (SJ.concrete.drops.length !== 2 || SJ.concrete.drops[1].id !== "SET DOWN 100" || !SJ.concrete.step || SJ.concrete.step.rect.x0 !== 8000 || SJ.concrete.step.nib !== 300) p("sheet concrete " + JSON.stringify([SJ.concrete.drops, SJ.concrete.step]));
+  ["SET DOWN 50 · ENS", "SET DOWN 100 · SET-DOWN 2", "STEP UP 250"].forEach(t => { if (!SJ.notes.some(n => n.text === t)) p("no sheet note '" + t + "'"); });
+  // bad rows: each reported by its row, left out, the good row and the floor still build
+  const bad = buildModel(Object.assign({}, grid, { step: job.step, setdowns: [
+    { name: "edge", x0: 300, y0: 1000, x1: 2500, y1: 3000, depth: 50 },        // 1 within 780 of the slab edge (Z-bars would poke out)
+    { name: "deep", x0: 7000, y0: 1000, x1: 9500, y1: 3000, depth: 200 },      // 2 deeper than a Z-bar set-down
+    { name: "small", x0: 7000, y0: 1000, x1: 8000, y1: 2000, depth: 50 },      // 3 too small for Z-bars from both edges
+    { name: "beam", x0: 5000, y0: 1000, x1: 7000, y1: 3000, depth: 50 },       // 4 on IB1
+    { name: "step", x0: 9000, y0: 7000, x1: 11000, y1: 9000, depth: 50 },      // 5 in the raised bay
+    { name: "ok", x0: 1000, y0: 6500, x1: 3500, y1: 9000, depth: 50 },         // 6 fine
+    { name: "near", x0: 1000, y0: 4000, x1: 3500, y1: 5700, depth: 50 },       // 7 800 from OK: the Z-bars would overlap
+    { name: "blank", x0: 1000, y0: "", x1: 3000, y1: 3000, depth: 50 }] }));   // 8 a blank field
+  const want = [[1, /at least 780 inside the slab edges/], [2, /depth must be 10–160/], [3, /too small for Z-bar splices.*at least 1,600/], [4, /sits on beam IB1/], [5, /overlaps the step/], [7, /too close to OK.*keep 1,500 clear/], [8, /must all be numbers/]];
+  want.forEach(w => { if (!bad.errors.some(e => e.indexOf("Set-down " + w[0] + " ") === 0 && w[1].test(e))) p("missing error for set-down " + w[0] + " " + w[1] + "; got " + bad.errors.join(" | ")); });
+  if (bad.errors.length !== want.length) p("expected exactly " + want.length + " errors, got " + bad.errors.length + ": " + bad.errors.join(" | "));
+  if (bad.DROPS.map(d => d.id).join(",") !== "OK" || bad.DROPS[0].row !== 5 || !bad.STEP || bad.runs.filter(r => r.kind === "z").length !== 4 || bad.bars.filter(b => b.run.kind === "main").length < 100) p("the good row and the floor should still build: " + JSON.stringify(bad.DROPS.map(d => d.id)));
+  // bad steps: one error each, naming the step; no step is built but the floor is
+  [[{ x0: 8000, y0: 6000, rise: 100, nib: 300 }, /^Step: a rise of 160 or less is a shallow set-down/], [{ x0: 8000, y0: 6000, rise: 700, nib: 300 }, /^Step: rise must be at most 600/],
+   [{ x0: 8000, y0: 6000, rise: 250, nib: 100 }, /^Step: nib must be 160–600/], [{ x0: 200, y0: 6000, rise: 250, nib: 300 }, /^Step: the step line must be at least 1,000 from every slab edge/],
+   [{ x0: 6000, y0: 6000, rise: 250, nib: 300 }, /^Step: its nib sits on beam IB1/], [{ x0: 8000, y0: "", rise: 250, nib: 300 }, /^Step: from x, from y, rise and nib must all be numbers/]].forEach(w => {
+    const ms = buildModel(Object.assign({}, grid, { step: w[0], setdowns: [] }));
+    if (ms.errors.length !== 1 || !w[1].test(ms.errors[0]) || ms.STEP || ms.runs.some(r => r.kind === "l") || ms.bars.filter(b => b.run.kind === "main").length < 100) p("bad step " + JSON.stringify(w[0]) + ": " + ms.errors.join(" | ") + (ms.STEP ? " (step built)" : ""));
+  });
+  // the example's rows on a small grid only warn (the step line would sit on grid 1 / A, the set-down off the slab)
+  const small = buildModel({ gridX: [0, 4000], gridY: [0, 3000] });
+  if (small.errors.length || small.STEP || small.DROPS.length || !small.warnings.some(w => /^Example step left out: the step line must be at least/.test(w)) || !small.warnings.some(w => /^Example set-down wet area left out: must sit at least/.test(w))) p("example levels on a small grid should warn, not error: " + small.errors.concat(small.warnings).join(" | "));
+  const off = buildModel(Object.assign({}, job, { features: Object.assign({}, job.features, { drop: false, step: false }) }));
+  if (off.DROPS.length || off.STEP || off.errors.length || off.runs.some(r => r.kind === "z" || r.kind === "l")) p("feature toggles off should ignore the rows");
+  if (problems.length) fail(problems.slice(0, 20).join("\n"));
+  console.log("  level inputs: example rows reproduce the example; job with 2 set-downs (50, 100) + 250 step: bars " + MJ.bars.length + ", Z-bar runs " + MJ.runs.filter(r => r.kind === "z").length + ", L-bar runs " + lr.length + "; 7 bad rows + 6 bad steps reported, 1 good row built");
+}
+
 // error paths must report, not throw
 const bad = buildModel({ callouts: "N13-200 A\nSL82 T\nN12-200 A E-W\nN16-200 A E-W" });
 if (!bad.errors.some(e => /N13/.test(e)) || !bad.errors.some(e => /mesh/.test(e)) || !bad.errors.some(e => /already defined/.test(e))) fail("expected errors for bad callouts, got: " + bad.errors.join(" | "));
