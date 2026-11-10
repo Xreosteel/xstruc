@@ -298,11 +298,11 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
 {
   const { exampleGeometry, parseGrids } = lib, problems = [], p = m => problems.push("geometry inputs: " + m);
   const EX = exampleGeometry(DEFAULT_CFG);
-  if (EX.openings.length !== 2 || EX.openings[0].name !== "STAIR VOID" || EX.balcony.proj !== 1800 || EX.balcony.thk !== 180 || EX.balcony.down !== 50) p("example rows " + JSON.stringify(EX));
+  if (EX.openings.length !== 2 || EX.openings[0].name !== "STAIR VOID" || EX.balconies.length !== 1 || EX.balconies[0].edge !== "N" || EX.balconies[0].proj !== 1800 || EX.balconies[0].thk !== 180 || EX.balconies[0].down !== 50) p("example rows " + JSON.stringify(EX));
   if (parseGrids(DEFAULT_CFG).SL.x1 !== 14250 || parseGrids({ gridX: "0, 6000", gridY: [0, 4500] }).SL.y1 !== 4750) p("parseGrids slab outline");
   // the panel's pre-filled rows, fed back in explicitly, build the very same floor
   const ME = buildModel(Object.assign({}, DEFAULT_CFG, EX));
-  if (ME.errors.length || ME.bars.length !== M.bars.length || ME.marks.length !== M.marks.length || Math.round(ME.kg) !== Math.round(M.kg) || ME.HOLES.length !== 2 || !ME.BALC) p("explicit example rows differ from the example: " + ME.bars.length + " bars, " + ME.marks.length + " marks, " + Math.round(ME.kg) + " kg, errors " + ME.errors.join(" | "));
+  if (ME.errors.length || ME.bars.length !== M.bars.length || ME.marks.length !== M.marks.length || Math.round(ME.kg) !== Math.round(M.kg) || ME.HOLES.length !== 2 || ME.BALCS.length !== 1) p("explicit example rows differ from the example: " + ME.bars.length + " bars, " + ME.marks.length + " marks, " + Math.round(ME.kg) + " kg, errors " + ME.errors.join(" | "));
   ME.bars.forEach((b, i) => { const a = M.bars[i]; if (!a || a.len !== b.len || a.mark !== b.mark || JSON.stringify(a.pts) !== JSON.stringify(b.pts)) p("bar " + i + " differs between the example and its explicit rows"); });
   // a job: three openings, one big (N16 trimmers extended 600) and two small (N12 extended 500), mats cut at each
   const job = { gridX: [0, 6000, 12000], gridY: [0, 5000, 10000], features: Object.assign({}, DEFAULT_CFG.features, { drop: false, step: false }),
@@ -328,9 +328,10 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   const SJ = buildSheet(MJ, ["A", "B", "C", "D", "BM", "CH", "ST"], []);
   MJ.HOLES.forEach(h => { if (!SJ.notes.some(n => n.text === h.label)) p("no sheet note for " + h.label); if (!SJ.concrete.holes.some(r => r.x0 === h.x0 && r.y1 === h.y1)) p("no sheet outline for " + h.id); });
   if (!MJ.HOLES[1].small || MJ.HOLES[1].label !== "DUCT 600 × 600" || MJ.HOLES[0].small) p("small-opening labels: " + MJ.HOLES.map(h => h.label).join(" / "));
-  // the balcony as entered: 4,000 along the north edge, 2,400 out, 200 thick, no set-down, so the top bar runs straight into the slab
-  const B = MJ.BALC;
-  if (!B || B.x0 !== 1000 || B.x1 !== 5000 || B.y0 !== 10250 || B.y1 !== 12650 || B.top !== 200 || B.bot !== 0) p("balcony geometry " + JSON.stringify(B));
+  // the balcony as entered (the #7a single-object shape, still read as a one-item list on the north edge): 4,000 along the
+  // north edge, 2,400 out, 200 thick, no set-down, so the top bar runs straight into the slab
+  const B = MJ.BALCS[0];
+  if (MJ.BALCS.length !== 1 || !B || B.edge !== "N" || B.x0 !== 1000 || B.x1 !== 5000 || B.y0 !== 10250 || B.y1 !== 12650 || B.top !== 200 || B.bot !== 0) p("balcony geometry " + JSON.stringify(B));
   const cant = MJ.runs.find(r => r.label.indexOf("CANTILEVER") >= 0);
   if (!cant || cant.bars.some(b => b.shape !== "cog" || b.pts.length !== 3) || /Z AT/.test(cant.callout)) p("cantilever bars with no set-down should be cogged and straight: " + (cant && cant.bars[0].shape + " " + cant.callout));
   if (!MJ.bars.filter(b => b.run.kind === "balc").every(b => b.pts.every(q => q[2] >= B.bot && q[2] <= B.top))) p("balcony bars outside the balcony depth");
@@ -349,14 +350,14 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
     balcony: { x0: 1000, x1: 2000, proj: 2400, thk: 200, down: 0 } }));   // too narrow
   const want = [[1, /inside the slab edges/], [3, /sits on beam IB1/], [4, /too close to LIFT/], [5, /too small/], [6, /must all be numbers/]];
   want.forEach(w => { if (!bad.errors.some(e => e.indexOf("Opening " + w[0] + " ") === 0 && w[1].test(e))) p("missing error for opening " + w[0] + " " + w[1] + "; got " + bad.errors.join(" | ")); });
-  if (!bad.errors.some(e => /^Balcony: too narrow/.test(e)) || bad.BALC) p("a 1,000 balcony should be an error and left out");
+  if (!bad.errors.some(e => /^Balcony 1 \(BALCONY\): too narrow/.test(e)) || bad.BALCS.length) p("a 1,000 balcony should be an error and left out: " + bad.errors.join(" | "));
   if (bad.errors.length !== want.length + 1) p("expected exactly " + (want.length + 1) + " errors, got " + bad.errors.length + ": " + bad.errors.join(" | "));
   if (bad.HOLES.map(h => h.id).join(",") !== "LIFT,FINE2" || bad.HOLES[1].row !== 6) p("the good rows should still build: " + bad.HOLES.map(h => h.id + "@" + h.row).join(","));
   if (bad.bars.filter(b => b.run.kind === "main").length < 100 || !bad.runs.some(r => r.kind === "trim" && r.callout.indexOf("OF FINE2 ") >= 0)) p("the floor was not built around the bad rows");
   const small = buildModel({ gridX: [0, 4000], gridY: [0, 3000] });
   if (small.errors.length || !small.warnings.some(w => /^Example opening stair void left out/.test(w)) || !small.warnings.some(w => /^Example balcony left out/.test(w)) || small.HOLES.length !== 1) p("example rows that do not fit a small grid should warn, not error: " + small.errors.concat(small.warnings).join(" | "));
   const off = buildModel(Object.assign({}, job, { features: Object.assign({}, job.features, { openings: false, balcony: false }) }));
-  if (off.HOLES.length || off.BALC || off.errors.length) p("feature toggles off should ignore the rows");
+  if (off.HOLES.length || off.BALCS.length || off.errors.length) p("feature toggles off should ignore the rows");
   if (problems.length) fail(problems.slice(0, 20).join("\n"));
   console.log("  geometry inputs: example rows reproduce the example; job with 3 openings + balcony: bars " + MJ.bars.length + ", marks " + MJ.marks.length + "; 5 bad rows + bad balcony reported, 2 good rows built");
 }
@@ -441,6 +442,104 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   if (off.DROPS.length || off.STEP || off.errors.length || off.runs.some(r => r.kind === "z" || r.kind === "l")) p("feature toggles off should ignore the rows");
   if (problems.length) fail(problems.slice(0, 20).join("\n"));
   console.log("  level inputs: example rows reproduce the example; job with 2 set-downs (50, 100) + 250 step: bars " + MJ.bars.length + ", Z-bar runs " + MJ.runs.filter(r => r.kind === "z").length + ", L-bar runs " + lr.length + "; 7 bad rows + 6 bad steps reported, 1 good row built");
+}
+
+// balconies on any edge (#7c): a list, one per edge here, each built in its own edge frame; the bars of every balcony
+// sit in its rect (the cantilever top bars reach 1,800 back into the slab), run the right way for the edge, cog at the
+// free edges, and the grids / sheet frame the whole pour; bad rows are reported by row and left out
+{
+  const problems = [], p = m => problems.push("balconies: " + m);
+  const feats = Object.assign({}, DEFAULT_CFG.features, { drop: false, step: false, openings: false });
+  const four = [{ name: "north", edge: "N", from: 1000, to: 5000, proj: 2400, thk: 200, down: 0 }, { edge: "s", from: 7000, to: 11000, proj: 1500, thk: 180, down: 50 },
+    { name: "Terrace", edge: "E", from: 2000, to: 6000, proj: 1800, thk: 180, down: 30 }, { edge: "W", from: 6000, to: 9500, proj: 1200, thk: 160, down: 0 }];
+  const job = { gridX: [0, 6000, 12000], gridY: [0, 5000, 10000], features: feats, balconies: four };
+  const MB = checkModel("four balconies", job, 800);   // the general invariants (grid setout on every balcony run, sheets, tags) hold on every edge
+  if (MB.BALCS.length !== 4 || MB.BALCS.map(b => b.id).join(",") !== "NORTH,BALCONY 2,TERRACE,BALCONY 4") p("balcony ids " + MB.BALCS.map(b => b.id).join(","));
+  const SL = MB.SL, want = { N: { root: SL.y1, along: "X", sg: 1 }, S: { root: SL.y0, along: "X", sg: -1 }, E: { root: SL.x1, along: "Y", sg: 1 }, W: { root: SL.x0, along: "Y", sg: -1 } };
+  if (JSON.stringify(MB.EXT) !== JSON.stringify({ x0: SL.x0 - 1200, x1: SL.x1 + 1800, y0: SL.y0 - 1500, y1: SL.y1 + 2400 })) p("EXT should frame the slab and its balconies: " + JSON.stringify(MB.EXT));
+  MB.BALCS.forEach((b, i) => {
+    const w = want[b.edge], row = four[i], where = b.id + " (" + b.edge + ")", X = b.along === "X";
+    if (!w || b.along !== w.along || b.sg !== w.sg || b.root !== w.root || b.tip !== w.root + w.sg * row.proj) return p(where + ": edge frame " + JSON.stringify([b.along, b.sg, b.root, b.tip]));
+    // the rect hangs off the edge: along from..to, out from the slab edge by proj
+    const al = X ? [b.x0, b.x1] : [b.y0, b.y1], ou = X ? [b.y0, b.y1] : [b.x0, b.x1];
+    if (al[0] !== row.from || al[1] !== row.to || Math.min(...ou) !== Math.min(b.root, b.tip) || Math.max(...ou) !== Math.max(b.root, b.tip)) p(where + ": rect " + JSON.stringify([b.x0, b.x1, b.y0, b.y1]));
+    if (b.top !== MB.T - row.down || b.bot !== MB.T - row.down - row.thk) p(where + ": levels " + b.top + " / " + b.bot);
+    const runs = MB.runs.filter(r => r.balc === b), by = l => runs.find(r => r.layer === l && r.kind === "balc");
+    if (runs.length !== 5) p(where + ": expected 5 runs, got " + runs.length);
+    // layer A and D run along the edge, B and the cantilever bars run out from it; all bars inside the balcony's width
+    if (!by("A") || by("A").dir !== b.along || !by("D") || by("D").dir !== b.along) p(where + ": layers A / D should run along the edge");
+    if (!by("B") || by("B").dir === b.along || !by("C") || by("C").dir === b.along) p(where + ": layers B / C should run out from the edge");
+    const inside = (v, lo, hi) => v >= lo - 1 && v <= hi + 1;
+    runs.forEach(r => r.bars.forEach(bar => bar.pts.forEach(q => {
+      const a = X ? q[0] : q[1], o = X ? q[1] : q[0];
+      if (!inside(a, al[0], al[1])) p(where + ": bar " + bar.id + " (" + r.label + ") outside the balcony's width");
+      // out: within the projection, or (cantilever top bars) up to 1,800 back into the slab
+      const t = (o - b.root) * b.sg;
+      if (!(t >= -1800 - 1 && t <= row.proj + 1)) p(where + ": bar " + bar.id + " (" + r.label + ") " + t + " out from the edge");
+      if (r.layer !== "C" && t < -1) p(where + ": " + r.label + " bar reaches into the slab");
+      if (!(q[2] >= Math.min(b.bot, MB.Z.C - 10) - 1 && q[2] <= Math.max(b.top, MB.Z.C) + 1)) p(where + ": bar " + bar.id + " outside the balcony depth");
+    })));
+    // cantilever bars: cog at the free edge (first leg vertical at proj − cover), back leg ends 1,800 inside the slab; cranked when the mats do not line up
+    const cant = by("C");
+    cant.bars.forEach(bar => {
+      const tipT = ((X ? bar.pts[0][1] : bar.pts[0][0]) - b.root) * b.sg, last = bar.pts[bar.pts.length - 1], backT = ((X ? last[1] : last[0]) - b.root) * b.sg;
+      if (Math.abs(tipT - (row.proj - MB.C)) > 0.5 || bar.pts[0][2] >= bar.pts[1][2] || Math.abs(backT + 1800) > 0.5) p(where + ": cantilever bar " + bar.id + " tip / back " + tipT + " / " + backT);
+      if (last[2] !== MB.Z.C) p(where + ": cantilever bar " + bar.id + " does not finish at the layer C level");
+    });
+    const dz = Math.abs(MB.Z.C - (b.top - MB.C - 18));
+    if ((dz < 2) !== (cant.bars[0].shape === "cog") || (dz >= 2) !== /Z AT/.test(cant.callout)) p(where + ": crank " + dz + " vs shape " + cant.bars[0].shape + " / " + cant.callout);
+    // layer D distribution bars cog down at both side edges, edge bars on the three free edges top and bottom
+    by("D").bars.forEach(bar => { if (bar.pts.length !== 4 || bar.pts[0][2] >= bar.pts[1][2] || bar.pts[3][2] >= bar.pts[2][2]) p(where + ": layer D bar " + bar.id + " should cog at both ends"); });
+    const eb = runs.find(r => r.kind === "edge"); if (!eb || eb.bars.length !== 6) p(where + ": expected 6 edge bars");
+    const sideNames = X ? ["west", "east"] : ["south", "north"];
+    if (eb && (!eb.bars.some(bar => bar.setout === "balcony " + sideNames[0] + " edge") || !eb.bars.some(bar => bar.setout === "balcony " + sideNames[1] + " edge") || eb.bars.filter(bar => bar.setout === "balcony outer edge").length !== 2)) p(where + ": edge bar setouts " + eb.bars.map(bar => bar.setout).join(", "));
+    // setout from the grid along the edge for the bars across the projection
+    const g = { N: ["N of grid C", 10000], S: ["S of grid A", 0], E: ["E of grid 3", 12000], W: ["W of grid 1", 0] }[b.edge];
+    if (!by("A").bars.every(bar => bar.setout === fmt(Math.abs((X ? bar.pts[0][1] : bar.pts[0][0]) - g[1])) + " " + g[0])) p(where + ": layer A setout '" + by("A").bars[0].setout + "' should read from the edge grid (" + g[0] + ")");
+    // several balconies: tags and callouts carry the balcony's name; the plain example keeps BALC / BALCONY
+    if (b.plain || runs.some(r => r.label.indexOf(b.id) !== 0 || r.callout.indexOf(b.id) !== 0)) p(where + ": labels should carry the name: " + runs.map(r => r.label).join(" / "));
+    if (b.label !== b.id + " " + row.thk + " THK" + (row.down ? " · SET DOWN " + row.down : "")) p(where + ": note label " + b.label);
+    // chairs in every balcony
+    if (!MB.chairs.some(c => c.pts[0][0] > b.x0 && c.pts[0][0] < b.x1 && c.pts[0][1] > b.y0 && c.pts[0][1] < b.y1 && c.pts[0][2] === b.bot)) p(where + ": no chairs in the balcony");
+  });
+  // the sheet frames the whole pour: bounds, grid lines and bubbles reach past every balcony, one outline and one note per balcony
+  const SB = buildSheet(MB, ["A", "B", "C", "D", "BM", "CH", "ST"], []);
+  if (SB.bounds.x0 !== MB.EXT.x0 - 1700 || SB.bounds.y0 !== MB.EXT.y0 - 1700 || SB.bounds.x1 !== MB.EXT.x1 + 1700 || SB.bounds.y1 !== MB.EXT.y1 + 1700) p("sheet bounds " + JSON.stringify(SB.bounds));
+  if (!SB.grids.x.every(g => g.a < MB.EXT.y0 && g.b > MB.EXT.y1) || !SB.grids.y.every(g => g.a < MB.EXT.x0 && g.b > MB.EXT.x1)) p("grid lines should run past the balconies");
+  if (!SB.gridDims.every(d => d.measure === "x" ? d.at < MB.EXT.y0 : d.at < MB.EXT.x0)) p("dimension strings should sit outside the south / west balconies");
+  if (SB.concrete.balconies.length !== 4 || !SB.concrete.balconies.some(r => r.id === "TERRACE" && r.x0 === SL.x1)) p("sheet outlines " + JSON.stringify(SB.concrete.balconies.map(r => r.id)));
+  MB.BALCS.forEach(b => { if (!SB.notes.some(n => n.text === b.label && n.x > b.x0 && n.x < b.x1 && n.y > b.y0 && n.y < b.y1)) p("no sheet note inside " + b.id); });
+  // the one-layer sheets of a four-balcony floor still place every tag
+  ["A", "B", "C", "D"].forEach(l => { const S1 = buildSheet(MB, [l], []); if (S1.tags.filter(t => t.overlap).length) p("layer " + l + " sheet has overlapping tags"); });
+  // the example's balcony, entered as a list row on the north edge, is the example (plain names, BALC tags)
+  const EXB = lib.exampleGeometry(DEFAULT_CFG).balconies[0], ME = buildModel(Object.assign({}, DEFAULT_CFG, { balconies: [EXB] }));
+  if (ME.errors.length || ME.bars.length !== M.bars.length || Math.round(ME.kg) !== Math.round(M.kg) || !ME.BALCS[0].plain || ME.BALCS[0].label !== "BALCONY 180 THK · SET DOWN 50" || !ME.runs.some(r => r.label === "BALC N12-300 · A")) p("the example's balcony as a list row differs from the example: " + ME.errors.join(" | "));
+  // the same balcony turned to each other edge keeps its bar count and mass (the same bars, turned)
+  const turned = ["S", "E", "W"].map(e => buildModel(Object.assign({}, job, { balconies: [Object.assign({}, four[0], { edge: e, from: 1000, to: 5000 })] })));
+  const base = buildModel(Object.assign({}, job, { balconies: [four[0]] })), balcKg = m => m.bars.filter(b => b.run.balc).reduce((s, b) => s + b.kg, 0), balcN = m => m.bars.filter(b => b.run.balc).length;
+  turned.forEach((m, i) => { if (m.errors.length || balcN(m) !== balcN(base) || Math.abs(balcKg(m) - balcKg(base)) > 0.5) p("the north balcony turned to " + ["S", "E", "W"][i] + " should carry the same bars: " + balcN(m) + " / " + balcKg(m).toFixed(1) + " vs " + balcN(base) + " / " + balcKg(base).toFixed(1) + " " + m.errors.join(" | ")); });
+  // bad rows: reported by row number and left out, the good rows and the floor still build
+  const bad = buildModel(Object.assign({}, job, { balconies: [
+    { edge: "Q", from: 0, to: 3000, proj: 1500, thk: 180, down: 0 },             // 1 no such edge
+    { edge: "N", from: 1000, to: 5000, proj: 2400, thk: 200, down: 0 },          // 2 fine
+    { edge: "N", from: 5200, to: 8000, proj: 1500, thk: 180, down: 0 },          // 3 200 from row 2
+    { edge: "E", from: 8000, to: 10250, proj: 1500, thk: 180, down: 0 },         // 4 fine (to the NE corner)
+    { edge: "N", from: 10000, to: 12250, proj: 1500, thk: 180, down: 0 },        // 5 meets row 4 at the corner
+    { edge: "W", from: -500, to: 3000, proj: 1500, thk: 180, down: 0 },          // 6 off the slab
+    { edge: "S", from: 1000, to: 5000, proj: 4500, thk: 180, down: 0 },          // 7 too far out
+    { edge: "S", from: 6000, to: "", proj: 1500, thk: 180, down: 0 },            // 8 a blank field
+    { edge: "w", from: 4000, to: 9000, proj: 1200, thk: 160, down: 20 }] }));    // 9 fine
+  const wantB = [[1, /edge must be N, S, E or W/], [3, /too close to BALCONY 2/], [5, /too close to BALCONY 4/], [6, /must sit on the slab's west edge, between -250 and 10,250 \(y, from grid A\)/], [7, /projection must be 500–4,000/], [8, /must all be numbers/]];
+  wantB.forEach(w => { if (!bad.errors.some(e => e.indexOf("Balcony " + w[0] + " ") === 0 && w[1].test(e))) p("missing error for balcony " + w[0] + " " + w[1] + "; got " + bad.errors.join(" | ")); });
+  if (bad.errors.length !== wantB.length) p("expected exactly " + wantB.length + " errors, got " + bad.errors.length + ": " + bad.errors.join(" | "));
+  if (bad.BALCS.map(b => b.id + "@" + b.row).join(",") !== "BALCONY 2@1,BALCONY 4@3,BALCONY 9@8") p("the good rows should still build: " + bad.BALCS.map(b => b.id + "@" + b.row).join(","));
+  if (bad.bars.filter(b => b.run.kind === "main").length < 100) p("the floor was not built around the bad rows");
+  // the step blocks the north edge east of its corner and the east edge north of it
+  const stepped = buildModel({ gridX: [0, 6000, 12000], gridY: [0, 5000, 10000], features: Object.assign({}, feats, { step: true }), step: { x0: 7000, y0: 6000, rise: 200, nib: 300 },
+    balconies: [{ edge: "N", from: 1000, to: 5000, proj: 1500, thk: 180, down: 0 }, { edge: "N", from: 5500, to: 9000, proj: 1500, thk: 180, down: 0 }, { edge: "E", from: 500, to: 4500, proj: 1500, thk: 180, down: 0 }, { edge: "E", from: 5000, to: 9000, proj: 1500, thk: 180, down: 0 }, { edge: "S", from: 6500, to: 9500, proj: 1500, thk: 180, down: 0 }] });
+  if (!stepped.errors.some(e => /^Balcony 2 .*keep it west of x 7,000/.test(e)) || !stepped.errors.some(e => /^Balcony 4 .*keep it south of y 6,000/.test(e)) || stepped.errors.length !== 2 || stepped.BALCS.length !== 3) p("step / balcony conflicts: " + stepped.errors.join(" | ") + " built " + stepped.BALCS.length);
+  if (problems.length) fail(problems.slice(0, 20).join("\n"));
+  console.log("  balconies: four edges built (bars " + MB.bars.length + ", balcony runs " + MB.runs.filter(r => r.balc).length + "); the north balcony turned to S / E / W keeps its bars; 6 bad rows reported, 3 good rows built; step conflicts on N and E");
 }
 
 // error paths must report, not throw
