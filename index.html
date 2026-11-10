@@ -220,6 +220,20 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   html.site .sitecard { display: none; }
   html.site .sitecard.sel { display: grid; grid-column: auto; grid-row: auto; position: absolute; left: 16px; right: 16px; bottom: calc(var(--sitebar-h, 200px) + 18px); max-height: 52%; background: rgba(23, 29, 36, 0.97); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); }
 }
+.sitectl .btn[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.markchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.markchip { min-height: 44px; min-width: 44px; padding: 6px 14px; font-family: var(--mono); font-size: 17px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.markchip[aria-pressed="true"] { background: var(--c, var(--fg)); color: #fff; border-color: var(--c, var(--fg)); }
+
+/* Print (backlog #9c): the placing sheet alone, on A3 landscape with 10 mm margins. html.print is set by beforeprint
+   (or the Print sheet button) so the canvas can be redrawn at a standard drawing scale before the page is captured. */
+@page { size: A3 landscape; margin: 10mm; }
+html.print, html.print body { height: auto; overflow: visible; background: #fff; color: #000; }
+html.print .app { display: block; height: auto; padding: 0; }
+html.print .top, html.print .side, html.print .inspect, html.print .sitebar, html.print .sitecard, html.print .hud, html.print #tip, html.print .legend, html.print .steplabel, html.print .building { display: none !important; }
+html.print .stage { position: relative; width: 400mm; height: 277mm; min-height: 0; border: 0; border-radius: 0; background: #fff; overflow: hidden; break-inside: avoid; }
+html.print #sheet { background: #fff; }
+@media print { html, body { background: #fff !important; } html:not(.print) .stage { display: none; } html:not(.print) body::before { content: "X Struc: open the 2D placing sheet (or press Print sheet) to print a layer."; display: block; padding: 20mm; font: 14pt sans-serif; } }
 </style>
 
 <div class="app">
@@ -236,6 +250,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       <span class="lv" id="siteFloor"></span>
       <button class="btn" type="button" data-cam="iso">3D</button>
       <button class="btn" type="button" data-cam="plan">Plan</button>
+      <button class="btn" type="button" id="btnSiteSheet" aria-pressed="false" title="This layer as a 2D placing sheet: pinch to zoom, tap a bar or a tag">Sheet</button>
       <button class="btn" type="button" id="btnSiteExit">Exit site mode</button>
     </div>
   </header>
@@ -288,6 +303,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
         <button class="btn" type="button" data-cam="fit">Fit</button>
       </div>
       <button class="btn" type="button" id="tgSheet" aria-pressed="false" title="Draw the current layer as a 2D placing sheet: bars as lines, cogs as ticks, setout from the grids">2D placing sheet</button>
+      <button class="btn small" type="button" id="btnPrint" title="Print the current layer's placing sheet on A3 landscape at a standard scale (Ctrl/Cmd+P does the same)">Print sheet · A3</button>
       <div class="toggles">
         <button class="btn" type="button" id="tgConc" aria-pressed="true">Concrete</button>
         <button class="btn" type="button" id="tgTags" aria-pressed="true">Tags &amp; notes</button>
@@ -299,7 +315,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       <h2>How to read it</h2>
       <p class="caption">Each tag is one run of bars, written like the placing drawing: <b>count, size, spacing, layer</b>. The tick-ended line under it shows which bars it covers.</p>
       <p class="caption"><b>Plan</b> gives a true top-down floor plan with grids and dimensions. Step through the layers in fixing order: the layer being placed is solid, the ones below are ghosted.</p>
-      <p class="caption"><b>2D placing sheet</b> draws the current layer as a placing drawing: bars as lines, cogs as ticks, grids with dimension strings, and the first and last bar line dimensioned from the nearest grid. Drag to pan, scroll to zoom, double-click to fit, click a bar for its details.</p>
+      <p class="caption"><b>2D placing sheet</b> draws the current layer as a placing drawing: bars as lines, cogs as ticks, grids with dimension strings, and the first and last bar line dimensioned from the nearest grid. Drag to pan, scroll or pinch to zoom, double-click to fit, click a bar for its details. A schedule row highlights that mark on the sheet with its labels. <b>Print sheet</b> puts the layer on A3 landscape at a standard scale.</p>
       <p class="caption"><b>Site mode</b> (top right) is the tablet view for fixing: one layer at a time, big tags, tap a bar for its mark, cut length, setout from the grids and laps.</p>
     </div>
   </aside>
@@ -1166,6 +1182,24 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       S.runMarks[rid] = out;
     });
   }
+  // ---------- sheet on site and in print (backlog #9c) ----------
+  // The labels of one bar mark across every run of a one-layer sheet (the schedule-mark highlight draws these).
+  function sheetMarksFor(S, mark) {
+    const out = [];
+    Object.keys(S.runMarks || {}).forEach(rid => S.runMarks[rid].forEach(m => { if (m.mark === mark) out.push(m); }));
+    return out;
+  }
+  // Paper sizes (ISO 216, mm) and the drawing scales a placing sheet is printed at: the preferred scales of
+  // AS 1100.101 / ISO 5455 (1:1, 1:2, 1:5 series) plus the 1:25 / 1:75 / 1:125 / 1:150 that reo drawings commonly use.
+  const PAPER_MM = { A4: { w: 297, h: 210 }, A3: { w: 420, h: 297 }, A2: { w: 594, h: 420 }, A1: { w: 841, h: 594 } };
+  const PRINT_SCALES = [10, 20, 25, 50, 75, 100, 125, 150, 200, 250, 500, 1000];
+  // Largest standard scale (smallest denominator) at which the sheet bounds fit a drawable area of dw × dh mm of paper.
+  // Returns { den, fits }: den is the last scale in the list when nothing fits (fits = false), so the sheet still prints.
+  function sheetPrintScale(bounds, dw, dh) {
+    const need = Math.max((bounds.x1 - bounds.x0) / Math.max(1, dw), (bounds.y1 - bounds.y0) / Math.max(1, dh));
+    const den = PRINT_SCALES.find(d => d >= need);
+    return den ? { den: den, fits: true } : { den: PRINT_SCALES[PRINT_SCALES.length - 1], fits: false };
+  }
   // === MODEL END ===
 
   // =============== VIEWER ===============
@@ -1410,7 +1444,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     $("sitePrev").disabled = !state.all && state.step === 0;
     $("siteNext").disabled = state.all;
     if (state.sel && !state.sel.chair && built.layerObj[state.sel.layer].mode === "off") clearSel();
-    if (state.site && !state.sel && !state.selRun) siteDefault();
+    if (state.site && !state.sel && !state.selRun && !state.mark) siteDefault();
     if (state.sheet) updateSheet();
     recolor();
   }
@@ -1573,14 +1607,26 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       rows.push(["Bar lines", r.n + " @ " + r.sp, "big"]);
       rows.push(...runGridRows(r));
     } else rows.push(["Pieces", String(r.bars.length), "big"]);
-    if (!r.existing) rows.push(["Marks", esc(r.marks.join(", "))], ["Mass", fmt(r.bars.reduce((s, b) => s + b.kg, 0)) + " kg"]);
+    // marks are tappable (#9c): one tap highlights every bar with that mark in the model and on the sheet
+    if (!r.existing) rows.push(["Marks", '<div class="markchips">' + r.marks.map(m => '<button type="button" class="markchip" data-mark="' + esc(m) + '">' + esc(m) + "</button>").join("") + "</div>"], ["Mass", fmt(r.bars.reduce((s, b) => s + b.kg, 0)) + " kg"]);
     card.innerHTML = '<div class="hd"><span class="chip">' + esc(r.layer) + "</span><b>" + esc(r.label || r.callout) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' + siteKV(rows) +
-      (r.kind === "main" ? '<p class="note">Tap a bar for its cut length, setout and laps.</p>' : "") +
+      (r.kind === "main" ? '<p class="note">Tap a bar for its cut length, setout and laps, or a mark to see where its bars go.</p>' : "") +
       (r.existing ? '<p class="note">Existing column cage, already poured.</p>' : "");
     showCard(true);
   }
+  // the card for a highlighted bar mark (site mode); the desktop shows the same in the inspector
+  function siteCardMark(mk) {
+    const card = $("sitecard"), l = LBY[mk.layer];
+    card.style.setProperty("--c", l.css);
+    card.innerHTML = '<div class="hd"><span class="chip">' + esc(mk.mark) + "</span><b>" + mk.type + mk.size + " · " + esc(mk.shapeName) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' +
+      siteKV([["Cut length", fmt(mk.len), "big"], ["Quantity", mk.qty + " bars"], ["Shape", esc(mk.code) + (mk.dimStr ? "<br>" + esc(mk.dimStr) : "")], ["Pin", String(mk.pin)], ["Layer", esc(l.name)], ["Mass", mk.kg.toFixed(1) + " kg"]]) +
+      mk.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("") +
+      '<p class="note">Every bar with this mark is highlighted' + (state.sheet ? " and labelled on the sheet" : "") + ". Tap × to clear.</p>";
+    showCard(true);
+  }
   $("sitecard").addEventListener("click", e => {
-    if (e.target.closest("[data-close]")) { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); return; }
+    if (e.target.closest("[data-close]")) { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); if (state.site) siteDefault(); return; }
+    const mc = e.target.closest("[data-mark]"); if (mc) { highlightMark(mc.dataset.mark); return; }
     const rb = e.target.closest("[data-run]"); if (rb) { const r = M.runs.find(x => x.id === rb.dataset.run); if (r) selectRun(r); }
   });
   $("sitecard").addEventListener("pointerdown", e => e.stopPropagation());
@@ -1590,7 +1636,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     $("btnSite").setAttribute("aria-pressed", String(on));
     $("sitectl").hidden = !on; $("sitebar").hidden = !on;
     if (on) {
-      if (state.sheet) setSheet(false);   // the sheet joins site mode with #9c
+      // the sheet stays up in site mode (#9c): the Sheet chip in the header toggles it, the stepper picks the layer
       state.ghost = true; state.tags = true; state.explode = false; state.conc = true;
       [["tgConc", "conc"], ["tgTags", "tags"], ["tgGhost", "ghost"], ["tgExplode", "explode"]].forEach(p => $(p[0]).setAttribute("aria-pressed", String(state[p[1]])));
       if (state.all) { state.all = false; state.step = Math.min(1, NSTEP); }
@@ -1598,7 +1644,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
       clearSel(); state.mark = null; markRows();
     } else showCard(false);
     apply(); resize();
-    if (on) goCam("iso", true);
+    if (on && !state.sheet) goCam("iso", true);
     try { if (on) history.replaceState(null, "", location.pathname + location.search + "#site"); else if (location.hash === "#site") history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* sandboxed viewer: fine */ }
   }
   $("btnSite").onclick = () => setSite(true);
@@ -1618,21 +1664,25 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     $("schednote").textContent = "Click a row to highlight every bar with that mark. Dims are to the bar extremities; cut lengths include bend deductions and hooks (AS 3600 pins), rounded up to 5. ! = cog shorter than standard. Excludes the columns below and bar chairs. Laps " + M.cfg.lap + ", " + (STOCK / 1000) + " m stock.";
   }
   function markRows() { schedEl.querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", tr.dataset.mark === state.mark)); }
-  schedEl.addEventListener("click", e => {
-    const tr = e.target.closest("tr"); if (!tr) return;
-    const m = tr.dataset.mark;
+  // highlight every bar of one mark (schedule row on the desktop, mark chip on the site card); a second call clears it.
+  // In 3D a mark on a layer not yet placed shows the finished floor; on the sheet it steps to the mark's own layer, so
+  // the one-layer sheet carries the mark's labels (#9c).
+  function highlightMark(m) {
     state.mark = state.mark === m ? null : m; state.sel = null; state.selRun = null; built.barTag.el.hidden = true;
     markRows();
     if (state.mark) {
-      const mk = M.marks.find(x => x.mark === m), l = LBY[mk.layer];
-      if (!state.all && ORDER.indexOf(mk.layer) + 1 > state.step) { state.all = true; state.step = NSTEP; }
+      const mk = M.marks.find(x => x.mark === m), l = LBY[mk.layer], li = ORDER.indexOf(mk.layer) + 1;
+      if (state.sheet && li > 0) { state.all = false; state.step = li; }
+      else if (!state.all && li > state.step) { state.all = true; state.step = NSTEP; }
       apply();
       insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + m + "</span><b>Bar mark " + m + "</b></div>" +
         '<dl class="kv"><dt>Bar</dt><dd>' + mk.type + mk.size + " · shape " + esc(mk.code) + " (" + esc(mk.shapeName) + ")</dd><dt>Dims</dt><dd>" + esc(mk.dimStr) + "</dd><dt>Pin</dt><dd>" + mk.pin + "</dd><dt>Cut length</dt><dd>" + fmt(mk.len) + "</dd><dt>Quantity</dt><dd>" + mk.qty + "</dd><dt>Layer</dt><dd>" + esc(LBY[mk.layer].name) + "</dd><dt>Mass</dt><dd>" + mk.kg.toFixed(1) + " kg</dd></dl>" +
         mk.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("") +
-        '<p class="note">Every bar with this mark is highlighted. Click the row again to clear.</p>';
-    } else { recolor(); showDefault(); }
-  });
+        '<p class="note">Every bar with this mark is highlighted' + (state.sheet ? " and labelled on the sheet" : "") + ". Click the row again to clear.</p>";
+      if (state.site) siteCardMark(mk);
+    } else { recolor(); showDefault(); if (state.site) siteDefault(); }
+  }
+  schedEl.addEventListener("click", e => { const tr = e.target.closest("tr"); if (tr) highlightMark(tr.dataset.mark); });
 
   // ---- stepper + toggles ----
   stepsEl.addEventListener("click", e => { const b = e.target.closest(".step"); if (!b) return; state.step = +b.dataset.step; state.all = false; apply(); });
@@ -1688,6 +1738,10 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   const MONO = '"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace', UIF = '"Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif';
   let sheet = null, sheetKey = "", sv = { s: 0.04, tx: 0, ty: 0 };   // sv: px per mm and the pan offset (y north = up the screen)
   const sx = x => sv.tx + x * sv.s, sy = y => sv.ty - y * sv.s;
+  // print (#9c): while html.print is set the sheet is drawn at a standard scale on A3 paper; paper is white in print
+  let printing = null;   // { den, paper, fits, wasSheet } while printing
+  const PX_MM = 96 / 25.4;   // CSS px per mm of paper
+  const paper = () => printing ? "#ffffff" : PAPER, halo = a => printing ? "rgba(255,255,255," + a + ")" : "rgba(243,240,232," + a + ")";
   // a placing sheet is one layer: the step's layer in ink, the layers already fixed below it faint (Ghost below on) or
   // left off (Ghost below off); the finished floor draws every layer in its colour
   function sheetLayers() {
@@ -1695,8 +1749,9 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     const cur = ORDER[state.step - 1];
     return { solid: cur ? [cur] : [], ghost: state.ghost ? ORDER.slice(0, Math.max(0, state.step - 1)) : [] };
   }
+  const sheetDpr = () => printing ? 2.5 : Math.min(window.devicePixelRatio || 1, 2);   // print: ~240 dpi ink
   function sheetSize() {
-    const w = stageEl.clientWidth, h = stageEl.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = stageEl.clientWidth, h = stageEl.clientHeight, dpr = sheetDpr();
     if (sheetCv.width !== Math.round(w * dpr) || sheetCv.height !== Math.round(h * dpr)) { sheetCv.width = Math.round(w * dpr); sheetCv.height = Math.round(h * dpr); return true; }
     return false;
   }
@@ -1705,8 +1760,12 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     const b = sheet.bounds, w = stageEl.clientWidth, h = stageEl.clientHeight;
     if (!w || !h) return;
     // fit between the title band (50 px) and the title strip at the foot
-    const top = 50, foot = stripGeom(w, h).h + SHEET_FOOT, hh = Math.max(50, h - top - foot);
-    sv.s = Math.min(w / (b.x1 - b.x0), hh / (b.y1 - b.y0)) * 0.97;
+    const top = 50, foot = stripGeom(w, h).h + sheetFoot(), hh = Math.max(50, h - top - foot);
+    if (printing) {   // a standard drawing scale that fits the paper, centred in the drawable area
+      const ps = sheetPrintScale(b, (w - 2 * PX_MM * 5) / PX_MM, (hh - 2 * PX_MM * 5) / PX_MM);
+      printing.den = ps.den; printing.fits = ps.fits;
+      sv.s = PX_MM / ps.den;
+    } else sv.s = Math.min(w / (b.x1 - b.x0), hh / (b.y1 - b.y0)) * 0.97;
     sv.tx = w / 2 - (b.x0 + b.x1) / 2 * sv.s; sv.ty = top + hh / 2 + (b.y0 + b.y1) / 2 * sv.s;
   }
   // rebuild the sheet geometry when the model or the layer selection changed (recolor() draws it)
@@ -1719,9 +1778,9 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   function drawSheet() {
     if (!sheet || !state.sheet) return;
     sheetSize();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = stageEl.clientWidth, h = stageEl.clientHeight, c = sctx;
+    const dpr = sheetDpr(), w = stageEl.clientWidth, h = stageEl.clientHeight, c = sctx;
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.fillStyle = PAPER; c.fillRect(0, 0, w, h);
+    c.fillStyle = paper(); c.fillRect(0, 0, w, h);
     c.lineJoin = "round"; c.lineCap = "butt";
     const R = r => { c.beginPath(); c.rect(sx(r.x0), sy(r.y1), (r.x1 - r.x0) * sv.s, (r.y1 - r.y0) * sv.s); };
     const line = (x0, y0, x1, y1) => { c.beginPath(); c.moveTo(sx(x0), sy(y0)); c.lineTo(sx(x1), sy(y1)); c.stroke(); };
@@ -1741,7 +1800,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     sheet.grids.x.forEach(g => line(g.v, g.a, g.v, g.b));
     sheet.grids.y.forEach(g => line(g.a, g.v, g.b, g.v));
     c.setLineDash([]);
-    const bub = (x, y, name) => { const r = 11; c.beginPath(); c.arc(sx(x), sy(y), r, 0, Math.PI * 2); c.fillStyle = PAPER; c.fill(); c.strokeStyle = INK; c.lineWidth = 1.2; c.stroke(); c.fillStyle = INK; c.font = "600 12px " + UIF; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(name, sx(x), sy(y) + 0.5); };
+    const bub = (x, y, name) => { const r = 11; c.beginPath(); c.arc(sx(x), sy(y), r, 0, Math.PI * 2); c.fillStyle = paper(); c.fill(); c.strokeStyle = INK; c.lineWidth = 1.2; c.stroke(); c.fillStyle = INK; c.font = "600 12px " + UIF; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(name, sx(x), sy(y) + 0.5); };
     sheet.grids.x.forEach(g => g.bub.forEach(y => bub(g.v, y, g.name)));
     sheet.grids.y.forEach(g => g.bub.forEach(x => bub(x, g.v, g.name)));
     const dim = (d, col, strong) => {   // dimension line with oblique ticks and the number beside it
@@ -1789,7 +1848,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     const ptxt = (text, x, y, hmm, col, weight, maxW) => { const px = hmm * sv.s; if (px < 5) return false; c.font = (weight || 500) + " " + px.toFixed(1) + "px " + MONO; c.fillStyle = col; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(text, sx(x), sy(y), maxW ? maxW * sv.s : undefined); return true; };
     const selRunId = state.selRun ? state.selRun.id : state.sel && state.sel.run ? state.sel.run.id : null;
     // feature notes (paper text with a paper halo so they read over the bars)
-    sheet.notes.forEach(n => { c.fillStyle = "rgba(243,240,232,0.85)"; R(n.box); c.fill(); ptxt(n.text, n.x, n.y, n.h, CONC, 500); });
+    sheet.notes.forEach(n => { c.fillStyle = halo(0.85); R(n.box); c.fill(); ptxt(n.text, n.x, n.y, n.h, CONC, 500); });
     // distribution lines: the spread of the run's bar lines, a dot on the first and last bar
     sheet.distLines.forEach(d => {
       const on = d.run === selRunId, col = on ? LBY[sheet.layer].css : INK;
@@ -1800,32 +1859,42 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     sheet.tags.forEach(t => {
       const on = t.run === selRunId, lc = LBY[t.layer].css;
       if (t.leader) { c.strokeStyle = on ? lc : INK; c.lineWidth = 1; line(t.leader[0][0], t.leader[0][1], t.leader[1][0], t.leader[1][1]); c.fillStyle = on ? lc : INK; c.beginPath(); c.arc(sx(t.leader[1][0]), sy(t.leader[1][1]), 2.5, 0, Math.PI * 2); c.fill(); }
-      const r = t.box; c.fillStyle = on ? lc : "rgba(243,240,232,0.94)"; R(r); c.fill();
+      const r = t.box; c.fillStyle = on ? lc : halo(0.94); R(r); c.fill();
       c.strokeStyle = on ? lc : t.overlap ? "#b3261e" : INK; c.lineWidth = on ? 1.6 : 1; c.stroke();
       ptxt(t.text, t.x, t.y, t.h, on ? "#fff" : INK, 600, r.x1 - r.x0 - 40);
     });
-    // bar marks beside the bars of the selected run (or the selected bar's run)
-    const rm = selRunId && sheet.runMarks[selRunId];
+    // bar marks beside the bars of the selected run (or the selected bar's run); with a schedule mark highlighted,
+    // the labels of that mark across every run of the layer instead (#9c), filled in the layer colour
+    const rm = state.mark ? sheetMarksFor(sheet, state.mark) : selRunId && sheet.runMarks[selRunId];
+    drawnMarks = rm ? rm.length : 0;
     if (rm) rm.forEach(m => {
-      const r = m.box, on = state.sel && state.sel.id === m.bar;
-      c.fillStyle = on ? LBY[sheet.layer].css : "rgba(243,240,232,0.9)"; R(r); c.fill();
-      ptxt(m.mark, m.x, m.y, m.h, on ? "#fff" : DIMC, m.first ? 700 : 500);
+      const r = m.box, on = (state.sel && state.sel.id === m.bar) || (state.mark && m.mark === state.mark);
+      c.fillStyle = on ? LBY[sheet.layer].css : halo(0.9); R(r); c.fill();
+      ptxt(m.mark, m.x, m.y, m.h, on ? "#fff" : DIMC, m.first || state.mark ? 700 : 500);
     });
     // the selected bar's lap zones, labelled
     selLaps.forEach(z => { const mx = (z.x0 + z.x1) / 2, my = (z.y0 + z.y1) / 2, o = z.dir === "X" ? [0, -190] : [-260, 0]; ptxt(z.text, mx + o[0], my + o[1], 150, "#9a4f0e", 600); });
     // the title
-    c.fillStyle = "rgba(243,240,232,0.88)"; c.fillRect(0, 0, w, 50);   // title band stays readable when zoomed in
+    c.fillStyle = halo(0.88); c.fillRect(0, 0, w, 50);   // title band stays readable when zoomed in
     c.fillStyle = INK; c.textAlign = "left"; c.textBaseline = "top";
-    c.font = "700 15px " + UIF; c.fillText(sheet.title[0], 14, 12);
-    c.font = "400 12px " + MONO; c.fillStyle = CONC; c.fillText(sheet.title[1], 14, 33);
-    c.font = "400 11px " + MONO; c.textAlign = "right"; c.fillText("1 : " + fmt(1 / (sv.s / (96 / 25.4))) + " on this screen · N ↑", w - 14, 12);
+    const scaleTxt = printing ? "SCALE 1 : " + printing.den + " @ " + printing.paper + (printing.fits ? "" : " (DOES NOT FIT)") + " · N ↑" : "1 : " + fmt(1 / (sv.s / PX_MM)) + " on this screen · N ↑";
+    c.font = "400 11px " + MONO; const scaleW = c.measureText(scaleTxt).width;
+    c.font = "700 15px " + UIF; const titleW = c.measureText(sheet.title[0]).width;
+    const narrow = 14 + titleW + 16 + scaleW > w - 14;   // a narrow stage (tablet): the scale note drops to the second line
+    c.fillText(sheet.title[0], 14, 12, w - 28);
+    c.font = "400 12px " + MONO; c.fillStyle = CONC;
+    const mkHi = state.mark && sheet.layer ? M.marks.find(x => x.mark === state.mark) : null;
+    c.fillText(sheet.title[1] + (mkHi ? " · MARK " + mkHi.mark + " HIGHLIGHTED: " + mkHi.qty + " × " + mkHi.type + mkHi.size + " · " + fmt(mkHi.len) + " LG" : ""), 14, 33, w - 28 - (narrow ? scaleW + 16 : 0));
+    c.font = "400 11px " + MONO; c.textAlign = "right";
+    c.fillText(scaleTxt, w - 14, narrow ? 33 : 12);
+    if (printing) { c.font = "400 10px " + MONO; c.fillStyle = CONC; c.fillText("X STRUC · " + (M.cfg.example ? "EXAMPLE FLOOR" : "CUSTOM FLOOR") + " · PRINTED " + new Date().toISOString().slice(0, 10), w - 14, 30); }
     // title strip (#9b): floor, layer, f'c, cover, laps, count and mass, then the layer's callouts (two columns when
     // the stage is wide); it sits above the 24 px hint line at the foot of the stage
     const st = sheet.strip;
     if (st) {
       const g = stripGeom(w, h), head = st.floor + " · " + st.layer + " · " + st.thickness + " THK · N" + st.fc + " · COVER " + st.cover + " · LAPS " + st.laps + " · " + fmt(st.bars) + " BARS · " + st.marks + " MARKS · " + fmt(st.kg) + " kg";
-      const y0 = h - SHEET_FOOT - g.h;
-      c.fillStyle = "rgba(243,240,232,0.94)"; c.fillRect(0, y0, w, h - y0);
+      const y0 = h - sheetFoot() - g.h;
+      c.fillStyle = halo(0.94); c.fillRect(0, y0, w, h - y0);
       c.strokeStyle = CONC; c.lineWidth = 1; c.beginPath(); c.moveTo(0, y0 + 0.5); c.lineTo(w, y0 + 0.5); c.stroke();
       c.textAlign = "left"; c.textBaseline = "top"; c.fillStyle = INK; c.font = "600 11.5px " + MONO; c.fillText(head, 14, y0 + 7, w - 28);
       c.font = "400 11px " + MONO; c.fillStyle = CONC;
@@ -1833,25 +1902,32 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     }
   }
   // the strip's size on a w × h stage: callouts in one or two columns, at most a third of the stage high
-  const SHEET_FOOT = 24;
+  let drawnMarks = 0;   // mark labels drawn on the last frame (test handle)
+  const sheetFoot = () => (state.site || printing) ? 6 : 24;   // room for the hint line at the foot of the desktop stage
   function stripGeom(w, h) {
     const st = sheet && sheet.strip; if (!st) return { h: 0, lines: [], rows: 0, colW: w };
-    const cols = st.callouts.length > 3 && w >= 640 ? 2 : 1, maxRows = Math.max(0, Math.floor((h / 3 - 26) / 15));
+    // on a tablet (site mode) the strip keeps to a sixth of the stage: the run list beside the sheet carries the callouts
+    const cols = st.callouts.length > 3 && w >= 640 ? 2 : 1, maxRows = Math.max(0, Math.floor((h / (state.site ? 6 : 3) - 26) / 15));
     let lines = st.callouts.slice(), rows = Math.ceil(lines.length / cols);
     if (rows > maxRows) { rows = maxRows; const cap = rows * cols; if (lines.length > cap) { lines = lines.slice(0, Math.max(0, cap - 1)); if (cap) lines.push("+ " + (st.callouts.length - cap + 1) + " more callouts"); } }
     return { h: 26 + rows * 15 + 4, lines: lines, rows: Math.max(1, rows), colW: (w - 14) / cols };
   }
   // the run tag under the pointer on a one-layer sheet
+  // a tag's hit box grows to at least 44 px on a tablet (site mode), so a thumb can land on it
   function sheetTagAt(px, py) {
     if (!sheet || !sheet.tags) return null;
-    const mx = (px - sv.tx) / sv.s, my = (sv.ty - py) / sv.s;
-    for (let i = sheet.tags.length - 1; i >= 0; i--) { const r = sheet.tags[i].box; if (mx >= r.x0 && mx <= r.x1 && my >= r.y0 && my <= r.y1) return M.runs.find(q => q.id === sheet.tags[i].run) || null; }
+    const mx = (px - sv.tx) / sv.s, my = (sv.ty - py) / sv.s, min = (state.site ? 44 : 0) / sv.s;
+    for (let i = sheet.tags.length - 1; i >= 0; i--) {
+      const r = sheet.tags[i].box, gx = Math.max(0, (min - (r.x1 - r.x0)) / 2), gy = Math.max(0, (min - (r.y1 - r.y0)) / 2);
+      if (mx >= r.x0 - gx && mx <= r.x1 + gx && my >= r.y0 - gy && my <= r.y1 + gy) return M.runs.find(q => q.id === sheet.tags[i].run) || null;
+    }
     return null;
   }
-  // nearest bar of the layer being placed within 7 px of the pointer (chairs too, when they are the step)
+  // nearest bar of the layer being placed within 7 px of the pointer (22 px, a 44 px target, in site mode); chairs too
+  // when they are the step
   function sheetPick(px, py) {
     if (!sheet) return null;
-    const mx = (px - sv.tx) / sv.s, my = (sv.ty - py) / sv.s, tol = 7 / sv.s;
+    const mx = (px - sv.tx) / sv.s, my = (sv.ty - py) / sv.s, tol = (state.site ? 22 : 7) / sv.s;
     let best = null, bd = tol;
     const segD = (p, q) => { const dx = q[0] - p[0], dy = q[1] - p[1], L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((mx - p[0]) * dx + (my - p[1]) * dy) / L2)) : 0; return Math.hypot(mx - (p[0] + t * dx), my - (p[1] + t * dy)); };
     sheet.bars.forEach(it => { if (it.ghost) return; for (let i = 0; i < Math.max(1, it.pts.length - 1); i++) { const d = segD(it.pts[i], it.pts[Math.min(i + 1, it.pts.length - 1)]); if (d < bd) { bd = d; best = it.bar; } } });
@@ -1861,16 +1937,35 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   function setSheet(on) {
     state.sheet = on;
     stageEl.classList.toggle("sheet", on);
-    $("tgSheet").setAttribute("aria-pressed", String(on));
+    $("tgSheet").setAttribute("aria-pressed", String(on)); $("btnSiteSheet").setAttribute("aria-pressed", String(on));
     view.hidden = on; tagsEl.hidden = on; sheetCv.hidden = !on; $("steplabel").hidden = on; tip.hidden = true;
-    $("hud").textContent = on ? "2D placing sheet · drag to pan · scroll to zoom · double-click to fit · click a bar" : planMode ? "Plan view · drag to pan · scroll to zoom · click a bar or tag" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag";
+    $("hud").textContent = on ? "2D placing sheet · drag to pan · scroll or pinch to zoom · double-click to fit · click a bar" : planMode ? "Plan view · drag to pan · scroll to zoom · click a bar or tag" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag";
     if (on) { sheetSize(); updateSheet(true); drawSheet(); } else resize();
   }
   $("tgSheet").onclick = () => setSheet(!state.sheet);
-  let sdown = null;
-  sheetCv.addEventListener("pointerdown", e => { sdown = { x: e.clientX, y: e.clientY, tx: sv.tx, ty: sv.ty, moved: false }; sheetCv.setPointerCapture(e.pointerId); });
+  $("btnSiteSheet").onclick = () => setSheet(!state.sheet);
+  // one finger (or the mouse) pans and taps; two fingers pinch-zoom about their midpoint (#9c)
+  let sdown = null, pinch = null;
+  const fingers = new Map();
+  const pinchGeom = () => { const p = [...fingers.values()]; return { d: Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y), mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2 }; };
+  const zoomAt = (px, py, s1) => { s1 = Math.max(0.004, Math.min(2, s1)); const kk = s1 / sv.s; sv.tx = px - (px - sv.tx) * kk; sv.ty = py - (py - sv.ty) * kk; sv.s = s1; };
+  sheetCv.addEventListener("pointerdown", e => {
+    try { sheetCv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (fingers.size === 2) { const g = pinchGeom(); pinch = { d0: g.d, s0: sv.s, mx: g.mx, my: g.my }; sdown = null; sheetCv.classList.add("pan"); tip.hidden = true; return; }
+    if (fingers.size > 2) return;
+    sdown = { x: e.clientX, y: e.clientY, tx: sv.tx, ty: sv.ty, moved: false };
+  });
   sheetCv.addEventListener("pointermove", e => {
     const rect = sheetCv.getBoundingClientRect();
+    if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch) {
+      if (fingers.size < 2) return;
+      const g = pinchGeom();
+      zoomAt(g.mx - rect.left, g.my - rect.top, pinch.s0 * g.d / Math.max(1, pinch.d0));
+      sv.tx += g.mx - pinch.mx; sv.ty += g.my - pinch.my; pinch.mx = g.mx; pinch.my = g.my;
+      drawSheet(); return;
+    }
     if (sdown) {
       if (!sdown.moved && Math.hypot(e.clientX - sdown.x, e.clientY - sdown.y) > 4) { sdown.moved = true; sheetCv.classList.add("pan"); tip.hidden = true; }
       if (sdown.moved) { sv.tx = sdown.tx + (e.clientX - sdown.x); sv.ty = sdown.ty + (e.clientY - sdown.y); drawSheet(); }
@@ -1883,7 +1978,9 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     tip.textContent = b.chair ? "Bar chair" : b.mark + " · " + b.type + b.size + " · " + fmt(b.len) + " · " + b.layer;
     tip.style.left = (e.clientX - rect.left) + "px"; tip.style.top = (e.clientY - rect.top) + "px"; tip.hidden = false;
   });
+  const liftFinger = e => { fingers.delete(e.pointerId); if (pinch && fingers.size < 2) { pinch = null; sheetCv.classList.remove("pan"); return true; } return false; };
   sheetCv.addEventListener("pointerup", e => {
+    if (liftFinger(e)) return;   // the end of a pinch is not a tap
     if (!sdown) return;
     const d = sdown; sdown = null; sheetCv.classList.remove("pan");
     if (d.moved) return;
@@ -1892,15 +1989,37 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
     const b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
     if (b) selectBar(b); else { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); }
   });
-  sheetCv.addEventListener("pointercancel", () => { sdown = null; sheetCv.classList.remove("pan"); });
+  sheetCv.addEventListener("pointercancel", e => { liftFinger(e); sdown = null; sheetCv.classList.remove("pan"); });
   sheetCv.addEventListener("pointerleave", () => { tip.hidden = true; });
   sheetCv.addEventListener("wheel", e => {
     e.preventDefault();
-    const rect = sheetCv.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
-    const k = Math.exp(-e.deltaY * 0.0015), s1 = Math.max(0.004, Math.min(2, sv.s * k)), kk = s1 / sv.s;
-    sv.tx = px - (px - sv.tx) * kk; sv.ty = py - (py - sv.ty) * kk; sv.s = s1; drawSheet();
+    const rect = sheetCv.getBoundingClientRect();
+    zoomAt(e.clientX - rect.left, e.clientY - rect.top, sv.s * Math.exp(-e.deltaY * 0.0015)); drawSheet();
   }, { passive: false });
   sheetCv.addEventListener("dblclick", () => { sheetFit(); drawSheet(); });
+
+  // ---- print (#9c): the current layer's sheet alone on A3 landscape at a standard scale ----
+  // beforeprint sets html.print, the stage takes the paper size (print CSS), the sheet is redrawn at the scale that
+  // fits, and afterprint puts everything back. The Print sheet button calls window.print() (no window.open, no
+  // download); where printing is blocked (a sandboxed viewer) nothing happens and Ctrl/Cmd+P is the fallback.
+  function printPrep(on) {
+    if (on) {
+      if (printing) return;
+      printing = { den: 0, paper: "A3", fits: true, wasSheet: state.sheet };
+      document.documentElement.classList.add("print");
+      if (!state.sheet) setSheet(true);
+      sheetSize(); sheetFit(); drawSheet();
+    } else {
+      if (!printing) return;
+      const was = printing.wasSheet; printing = null;
+      document.documentElement.classList.remove("print");
+      if (!was) setSheet(false); else { sheetSize(); sheetFit(); drawSheet(); }
+    }
+  }
+  window.addEventListener("beforeprint", () => printPrep(true));
+  window.addEventListener("afterprint", () => printPrep(false));
+  if (window.matchMedia) { const pm = window.matchMedia("print"); (pm.addEventListener ? pm.addEventListener.bind(pm, "change") : pm.addListener.bind(pm))(e => printPrep(e.matches)); }
+  $("btnPrint").onclick = () => { if (!state.sheet) setSheet(true); try { window.print(); } catch (err) { /* printing blocked here; the print CSS still applies to Ctrl/Cmd+P */ } };
 
   // ---- cameras (presets scale with the model) ----
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2074,6 +2193,7 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
   if (location.hash === "#site" || /[?&]site\b/.test(location.search)) setSite(true);
   // test handle for scripts/smoke.js (headless Chromium cannot aim a tap at a 12 mm bar reliably)
   window.xstruc = { model: () => M, state: state, selectBar: id => { const b = M.bars.find(x => x.id === id); if (b) selectBar(b); return !!b; }, selectRun: id => { const r = M.runs.find(x => x.id === id); if (r) selectRun(r); return !!r; }, setSite: setSite,
-    sheet: () => sheet, setSheet: setSheet, sheetXY: (x, y) => [sx(x), sy(y)] };
+    sheet: () => sheet, setSheet: setSheet, sheetXY: (x, y) => [sx(x), sy(y)], sheetScale: () => sv.s, drawnMarks: () => drawnMarks,
+    highlightMark: highlightMark, printPrep: printPrep, printing: () => printing };
 })();
 </script>

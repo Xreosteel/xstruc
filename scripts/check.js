@@ -7,7 +7,7 @@ const { loadModel } = require("./model-lib");
 
 let lib;
 try { lib = loadModel(); } catch (e) { fail(e.message); }
-const { buildModel, DEFAULT_CFG, LBY, buildSheet, barAxis } = lib;
+const { buildModel, DEFAULT_CFG, LBY, buildSheet, barAxis, sheetMarksFor, sheetPrintScale, PRINT_SCALES } = lib;
 const fmt = n => Math.round(n).toLocaleString("en-AU");
 const FIX = ["BM", "A", "B", "CH", "C", "D", "ST"];   // fixing order, as the viewer steps through it
 
@@ -246,6 +246,25 @@ function checkSheetNotes(M, S, lid, sol, p) {
     });
   });
   if (lid) M.runs.filter(r => r.layer === lid && sol.some(it => it.bar.run === r && !it.point)).forEach(r => { if (!S.runMarks[r.id]) p("run " + r.id + " has no mark labels"); });
+  // #9c: the schedule-mark highlight draws sheetMarksFor(S, mark): every mark of the layer has at least one label, every
+  // label names a bar of that mark on this sheet, and the finished floor (no run tags) has none
+  if (lid) {
+    [...new Set(sol.filter(it => !it.point && it.bar.mark).map(it => it.bar.mark))].forEach(mk => {
+      const ls = sheetMarksFor(S, mk);
+      if (!ls.length) p("mark " + mk + " has no label for the schedule highlight");
+      if (ls.some(l => l.mark !== mk || !sol.some(it => it.bar.id === l.bar && it.bar.mark === mk))) p("mark " + mk + ": a highlight label names a bar of another mark or layer");
+    });
+    if (sheetMarksFor(S, "no-such-mark").length) p("labels returned for a mark that is not on the sheet");
+  } else if (sheetMarksFor(S, sol[0] && sol[0].bar.mark).length) p("the finished-floor sheet should carry no mark labels");
+  // #9c: print scale — a standard denominator at which the bounds fit the drawable area of A3 and A4 landscape with
+  // 10 mm margins, a 13 mm title band and a 24 mm title strip; the next larger scale must not fit (largest that fits)
+  [["A3", 400 - 10, 277 - 13 - 24 - 10], ["A4", 277 - 10, 190 - 13 - 24 - 10]].forEach(([paper, dw, dh]) => {
+    const ps = sheetPrintScale(B, dw, dh), bw = (B.x1 - B.x0) / ps.den, bh = (B.y1 - B.y0) / ps.den, i = PRINT_SCALES.indexOf(ps.den);
+    if (i < 0) p(paper + ": print scale 1:" + ps.den + " is not a standard scale");
+    if (ps.fits && (bw > dw + 1e-9 || bh > dh + 1e-9)) p(paper + ": 1:" + ps.den + " does not fit " + dw + " × " + dh + " mm (" + bw.toFixed(1) + " × " + bh.toFixed(1) + ")");
+    if (ps.fits && i > 0 && (B.x1 - B.x0) / PRINT_SCALES[i - 1] <= dw && (B.y1 - B.y0) / PRINT_SCALES[i - 1] <= dh) p(paper + ": 1:" + PRINT_SCALES[i - 1] + " would also fit; the scale should be the largest that fits");
+    if (!ps.fits && paper === "A3") p("A3: the sheet does not fit even at 1:" + ps.den);
+  });
   // title strip
   const st = S.strip;
   if (!st || st.bars !== sol.length || st.kg !== Math.round(sol.reduce((s, it) => s + it.bar.kg, 0)) || st.cover !== M.C || st.laps !== +M.cfg.lap || st.floor !== M.cfg.name.toUpperCase()) p("title strip " + JSON.stringify(st));

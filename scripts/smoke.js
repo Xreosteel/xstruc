@@ -127,9 +127,42 @@ const { chromium } = require("playwright");
   const shD = await page.evaluate(() => { const S = window.xstruc.sheet(); return { solid: S.solid.join(""), cogs: S.bars.filter(x => !x.ghost).reduce((s, x) => s + x.cogs.length, 0), selKept: window.xstruc.state.sel && window.xstruc.state.sel.id, tags: S.tags.length, laps: S.laps.length, overlap: S.tags.filter(t => t.overlap).length }; });
   console.log("sheet D:", JSON.stringify(shD));
   await page.screenshot({ path: path.join(outDir, "smoke-9-sheet-D.png") });
+  // #9c: a schedule row highlights its mark on the sheet: the sheet steps to the mark's layer and labels every bar of it
+  const mkHi = await page.evaluate(() => {
+    const M = window.xstruc.model(), mk = M.marks.find(m => m.layer === "C" && m.qty >= 4), st = window.xstruc.state;
+    document.querySelector("#sched tr[data-mark='" + mk.mark + "']").click();
+    const S = window.xstruc.sheet(), labels = S.runMarks ? Object.values(S.runMarks).flat().filter(l => l.mark === mk.mark) : [];
+    return { mark: mk.mark, qty: mk.qty, layer: mk.layer, step: st.step, all: st.all, sheetLayer: S.layer, mark_state: st.mark, labels: labels.length, drawn: window.xstruc.drawnMarks(), insp: document.getElementById("inspector").textContent.replace(/\s+/g, " ").slice(0, 400) };
+  });
+  console.log("sheet mark highlight:", JSON.stringify(mkHi));
+  await page.screenshot({ path: path.join(outDir, "smoke-11-sheet-mark.png") });
+  await page.click("#sched tr[data-mark='" + mkHi.mark + "']"); await page.waitForTimeout(100);   // clear the highlight
+  await page.evaluate(id => window.xstruc.selectBar(id), shA.id);   // the 3D-return checks below follow the clicked bar
+  await page.click("#steps .step[data-step='6']"); await page.waitForTimeout(300);
   await page.click(".side [data-cam=iso]"); await page.waitForTimeout(300);
   const shOff = await page.evaluate(() => ({ on: window.xstruc.state.sheet, view: document.getElementById("view").offsetParent !== null, canvas: document.getElementById("sheet").offsetParent !== null, sel: window.xstruc.state.sel && window.xstruc.state.sel.id }));
   console.log("sheet off:", JSON.stringify(shOff));
+  await page.click("#all");
+
+  // #9c: print layout — the sheet alone at a standard scale on A3 landscape; printPrep is what beforeprint calls
+  await page.click("#steps .step[data-step='2']"); await page.waitForTimeout(200);   // layer A, 3D view
+  const pr = await page.evaluate(() => {
+    const wasSheet = window.xstruc.state.sheet;
+    window.xstruc.printPrep(true);
+    const st = document.querySelector(".stage"), S = window.xstruc.sheet(), p = window.xstruc.printing(), s = window.xstruc.sheetScale(), pxmm = 96 / 25.4;
+    const vis = el => !!el && el.offsetParent !== null;
+    return { wasSheet: wasSheet, on: window.xstruc.state.sheet, cls: document.documentElement.classList.contains("print"), stageW: st.clientWidth, stageH: st.clientHeight, den: p && p.den, fits: p && p.fits, paper: p && p.paper,
+      scaleOK: Math.abs(s - pxmm / p.den) < 1e-9, drawnW: (S.bounds.x1 - S.bounds.x0) * s, drawnH: (S.bounds.y1 - S.bounds.y0) * s, layer: S.layer,
+      hidden: [".top", ".side", ".inspect", "#hud", ".legend"].map(q => !vis(document.querySelector(q))).every(Boolean), canvasPx: document.getElementById("sheet").width };
+  });
+  console.log("print layout:", JSON.stringify(pr));
+  await page.locator(".stage").screenshot({ path: path.join(outDir, "smoke-12-print-A3.png") });
+  // Chromium's PDF capture also fires beforeprint / afterprint: the printed page is the real test of the layout
+  await page.evaluate(() => window.xstruc.printPrep(false));
+  const pdfPath = path.join(outDir, "smoke-12-print-A3.pdf");
+  await page.pdf({ path: pdfPath, format: "A3", landscape: true, printBackground: true, preferCSSPageSize: true });
+  const prOff = await page.evaluate(() => ({ on: window.xstruc.state.sheet, cls: document.documentElement.classList.contains("print"), printing: !!window.xstruc.printing(), stageW: document.querySelector(".stage").clientWidth, view: document.getElementById("view").offsetParent !== null }));
+  console.log("print off:", JSON.stringify(prOff), "pdf bytes:", fs.statSync(pdfPath).size);
   await page.click("#all");
 
   // site mode (tablet fixing view) at 1024 × 768 landscape and portrait
@@ -166,6 +199,34 @@ const { chromium } = require("playwright");
     r.panel = await page.$eval("#sitecard", c => c.textContent.replace(/\s+/g, " ").trim().slice(0, 100));
     // tap a run tag
     r.runCard = await page.evaluate(() => { const t = document.querySelector("#tags .tag.cur:not([hidden])") || document.querySelector("#tags .tag:not(.bar):not([hidden])"); if (!t) return "no tag"; t.click(); return document.getElementById("sitecard").textContent.replace(/\s+/g, " ").trim().slice(0, 120); });
+    // #9c: the Sheet chip shows this layer's placing sheet; a tap on a bar opens its card; two fingers pinch-zoom
+    await page.click("#sitecard [data-close]"); await page.waitForTimeout(100);
+    await page.click("#btnSiteSheet"); await page.waitForTimeout(400);
+    const sh = await page.evaluate(() => {
+      const S = window.xstruc.sheet(), cv = document.getElementById("sheet"), rect = cv.getBoundingClientRect(), btn = document.getElementById("btnSiteSheet").getBoundingClientRect();
+      const it = S.bars.find(x => !x.ghost && x.bar.run.kind === "main" && x.bar.line === 3 && !x.bar.lapPrev), p = it.pts, mid = [(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2], xy = window.xstruc.sheetXY(mid[0], mid[1]);
+      return { on: window.xstruc.state.sheet, canvas: cv.offsetParent !== null, view: document.getElementById("view").offsetParent !== null, solid: S.solid.join(""), ghost: S.ghost.join(""), tags: S.tags.length, pressed: document.getElementById("btnSiteSheet").getAttribute("aria-pressed"), btnPx: Math.min(btn.width, btn.height),
+        cw: cv.clientWidth, ch: cv.clientHeight, id: it.bar.id, mark: it.bar.mark, cx: rect.left + xy[0], cy: rect.top + xy[1], s0: window.xstruc.sheetScale() };
+    });
+    await page.mouse.click(sh.cx + 9, sh.cy); await page.waitForTimeout(200);   // along the bar (at fit zoom the next bar line is only ~4 px away on a tablet; a fixer pinches in first)
+    sh.sel = await page.evaluate(() => window.xstruc.state.sel && window.xstruc.state.sel.id);
+    sh.card = await page.$eval("#sitecard", c => (c.classList.contains("sel") && c.offsetParent !== null ? "shown: " : "hidden: ") + c.textContent.replace(/\s+/g, " ").trim().slice(0, 120));
+    await page.screenshot({ path: path.join(outDir, "smoke-13-site-sheet-" + vp.width + ".png") });
+    // pinch: two synthetic touch pointers move apart to twice their distance about the stage centre
+    sh.pinch = await page.evaluate(() => {
+      const cv = document.getElementById("sheet"), r = cv.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, s0 = window.xstruc.sheetScale();
+      const ev = (type, id, x, y) => cv.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: "touch", isPrimary: id === 1, clientX: x, clientY: y, bubbles: true, buttons: 1 }));
+      ev("pointerdown", 1, cx - 60, cy); ev("pointerdown", 2, cx + 60, cy);
+      for (let k = 1; k <= 6; k++) { ev("pointermove", 1, cx - 60 - 10 * k, cy); ev("pointermove", 2, cx + 60 + 10 * k, cy); }
+      ev("pointerup", 1, cx - 120, cy); ev("pointerup", 2, cx + 120, cy);
+      return { ratio: window.xstruc.sheetScale() / s0, selKept: window.xstruc.state.sel && window.xstruc.state.sel.id };
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: path.join(outDir, "smoke-13-site-pinch-" + vp.width + ".png") });
+    await page.click("#sitectl [data-cam=iso]"); await page.waitForTimeout(300);   // the 3D chip leaves the sheet
+    sh.off = await page.evaluate(() => !window.xstruc.state.sheet && document.getElementById("view").offsetParent !== null && document.getElementById("btnSiteSheet").getAttribute("aria-pressed") === "false");
+    r.sheet = sh;
+    console.log("site sheet:", JSON.stringify(sh));
     await page.click("#btnSiteExit"); await page.waitForTimeout(300);
     r.off = await page.evaluate(() => !document.documentElement.classList.contains("site") && document.querySelector(".side").offsetParent !== null);
     console.log("site:", JSON.stringify(r));
@@ -189,7 +250,25 @@ const { chromium } = require("playwright");
     if (!/Place now/.test(r.panel)) p("side panel did not return to the run list: " + r.panel);
     if (!/Callout|Bar lines/.test(r.runCard)) p("run card not shown: " + r.runCard);
     if (!r.off) p("exit did not restore the full UI");
+    const s = r.sheet;
+    if (!s.on || !s.canvas || s.view || s.pressed !== "true" || s.solid !== "A" || s.ghost !== "BM" || s.tags < 5) p("Sheet chip did not show the layer A sheet: " + JSON.stringify(s));
+    if (s.btnPx < 44) p("Sheet chip is " + s.btnPx + "px < 44");
+    if (s.cw < 500 || s.ch < 300) p("site sheet canvas only " + s.cw + " × " + s.ch);
+    if (s.sel !== s.id || !/^shown: /.test(s.card) || !/Cut length/.test(s.card)) p("tapping a bar on the site sheet did not open its card (" + s.sel + " vs " + s.id + "): " + s.card);
+    if (!(s.pinch.ratio > 1.8 && s.pinch.ratio < 2.2) || s.pinch.selKept !== s.id) p("pinch did not zoom ×2 about the fingers (" + s.pinch.ratio + ") or lost the selection");
+    if (!s.off) p("3D chip did not leave the sheet");
   });
+  // #9c: schedule-mark highlight on the sheet and the print layout
+  if (mkHi.all || mkHi.step !== 5 || mkHi.sheetLayer !== mkHi.layer || mkHi.mark_state !== mkHi.mark) problems.push("a schedule row should step the sheet to the mark's layer: " + JSON.stringify(mkHi));
+  if (mkHi.labels < 1 || mkHi.drawn !== mkHi.labels || !mkHi.insp.includes("Bar mark " + mkHi.mark) || !/labelled on the sheet/.test(mkHi.insp)) problems.push("mark highlight did not draw the mark's labels on the sheet: " + JSON.stringify(mkHi));
+  const pxmm = 96 / 25.4;
+  if (pr.wasSheet || !pr.on || !pr.cls || !pr.hidden) problems.push("print prep did not switch to the sheet alone: " + JSON.stringify(pr));
+  if (Math.abs(pr.stageW - 400 * pxmm) > 3 || Math.abs(pr.stageH - 277 * pxmm) > 3) problems.push("print stage is not A3 landscape less 10 mm margins (" + pr.stageW + " × " + pr.stageH + " px)");
+  if (pr.paper !== "A3" || !pr.fits || ![10, 20, 25, 50, 75, 100, 125, 150, 200, 250, 500, 1000].includes(pr.den) || !pr.scaleOK) problems.push("print scale is not a standard scale that fits: " + JSON.stringify(pr));
+  if (pr.drawnW > pr.stageW || pr.drawnH > pr.stageH - 50) problems.push("printed sheet overflows the page at 1:" + pr.den);
+  if (pr.layer !== "A" || pr.canvasPx < 2 * pr.stageW) problems.push("print should draw the current layer at ≥ 2× resolution: " + JSON.stringify(pr));
+  if (prOff.on || prOff.cls || prOff.printing || !prOff.view || prOff.stageW > 400 * pxmm - 100) problems.push("after printing the stage was not restored: " + JSON.stringify(prOff));
+  if (fs.statSync(pdfPath).size < 20000) problems.push("printed PDF is suspiciously small");
   if (!/Bar line ?(?:[\d,]+ [NS] of|on) grid [A-Z] · bar line \d+ of \d+ @ \d+/.test(insp.bar) || !/Runs ?W end [\d,]+ [EW] of grid \d/.test(insp.bar) || !/lap zone [\d,]+ [EW] of grid (\d) to [\d,]+ [EW] of grid \1/.test(insp.bar)) problems.push("desktop inspector lacks grid setout / lap zone: " + insp.bar.slice(0, 300));
   if (!/First line ?[\d,]+ [EW] of grid \d \(/.test(insp.run) || !/Last line/.test(insp.run)) problems.push("run inspector lacks first/last line from grids: " + insp.run.slice(0, 200));
   siteRuns.forEach(r => { if (!/lap zone [\d,]+ [EW] of grid \d to/.test(r.card)) problems.push("site " + r.vp + ": bar card lap zone is not from a grid: " + r.card); });
