@@ -71,6 +71,38 @@ const { chromium } = require("playwright");
   const s4 = await stats();
   console.log("reset:", JSON.stringify(s4));
 
+  // geometry editing (#7a): the example's openings and balcony are rows in the panel; edit, add, break and remove rows
+  const g0 = await page.evaluate(() => ({ rows: document.querySelectorAll("#openRows .orow").length, names: [...document.querySelectorAll("#openRows .orow input[data-k=name]")].map(e => e.value),
+    x0: document.querySelector("#openRows .orow:nth-child(2) input[data-k=x0]").value, bProj: document.getElementById("inBproj").value, bDown: document.getElementById("inBdown").value, holes: window.xstruc.model().HOLES.length }));
+  console.log("geometry rows:", JSON.stringify(g0));
+  await page.fill("#openRows .orow:nth-child(2) input[data-k=x1]", "4200");   // the 600 riser becomes a 1,200 × 600 duct
+  await page.fill("#openRows .orow:nth-child(2) input[data-k=name]", "duct");
+  await page.waitForTimeout(700);
+  const g1 = await stats();
+  g1.hole = await page.evaluate(() => { const h = window.xstruc.model().HOLES[1]; return h && [h.id, h.x1 - h.x0, h.label]; });
+  console.log("after widening the riser:", JSON.stringify(g1.hole), g1.bars);
+  await page.click("#btnAddOpen"); await page.waitForTimeout(700);
+  const g2 = await stats();
+  g2.rows = await page.$$eval("#openRows .orow", els => els.length); g2.holes = await page.evaluate(() => window.xstruc.model().HOLES.map(h => h.id));
+  console.log("after add:", JSON.stringify(g2.holes), JSON.stringify(g2.errs));
+  await page.fill("#openRows .orow:nth-child(3) input[data-k=x0]", "-100");   // outside the slab: an error on that row, scene kept
+  await page.waitForTimeout(700);
+  const g3 = await stats();
+  g3.invalid = await page.getAttribute("#openRows .orow:nth-child(3)", "data-invalid"); g3.open = await page.$eval("#inputs", el => el.open);
+  console.log("after a bad row:", JSON.stringify(g3.errs), "invalid", g3.invalid);
+  await page.screenshot({ path: path.join(outDir, "smoke-14-geometry-rows.png") });
+  await page.click("#openRows .orow:nth-child(3) .del"); await page.waitForTimeout(700);
+  const g4 = await stats(); g4.rows = await page.$$eval("#openRows .orow", els => els.length);
+  await page.fill("#inBproj", "2400"); await page.fill("#inBdown", "0"); await page.waitForTimeout(700);
+  const g5 = await stats();
+  g5.balc = await page.evaluate(() => { const M = window.xstruc.model(), r = M.runs.find(x => x.label.indexOf("CANTILEVER") >= 0); return [M.BALC.proj, M.BALC.down, r.bars[0].shape, r.bars.length]; });
+  console.log("after balcony edit:", JSON.stringify(g5.balc), g5.bars);
+  await page.fill("#inBx1", "5000"); await page.waitForTimeout(700);   // 4,200 to 5,000 = 800 wide: an error, scene kept
+  const g6 = await stats(); g6.invalid = await page.getAttribute("#inBx1", "aria-invalid");
+  console.log("after a bad balcony:", JSON.stringify(g6.errs));
+  await page.click("#btnReset"); await page.waitForTimeout(800);
+  const g7 = await stats(); g7.rows = await page.$$eval("#openRows .orow", els => els.length); g7.bDown = await page.inputValue("#inBdown");
+
   // click a schedule row
   await page.click("#sched tr:nth-child(5)"); await page.waitForTimeout(200);
   console.log("inspector:", (await page.textContent("#inspector")).slice(0, 80).replace(/\s+/g, " "));
@@ -293,6 +325,15 @@ const { chromium } = require("playwright");
   if (s2.kg === s0.kg) problems.push("editing inputs did not rebuild the model");
   if (+s3.bars.replace(/\D/g, "") > 400) problems.push("plain slab has too many bars: " + s3.bars);
   if (s4.bars !== s0.bars) problems.push("reset did not restore the example (" + s4.bars + " vs " + s0.bars + ")");
+  // geometry editing (#7a)
+  if (g0.rows !== 2 || g0.names.join() !== "STAIR VOID,RISER" || g0.x0 !== "3000" || g0.bProj !== "1800" || g0.bDown !== "50" || g0.holes !== 2) problems.push("example geometry rows not pre-filled: " + JSON.stringify(g0));
+  if (!g1.hole || g1.hole[0] !== "DUCT" || g1.hole[1] !== 1200 || g1.hole[2] !== "DUCT 1,200 × 600" || g1.bars === s4.bars || g1.errs.some(e => /^Opening/.test(e))) problems.push("editing the riser row did not rebuild as a 1,200 duct: " + JSON.stringify([g1.hole, g1.bars, g1.errs]));
+  if (g2.rows !== 3 || g2.holes.join() !== "STAIR VOID,DUCT,OPENING 3" || g2.errs.some(e => /^Opening/.test(e))) problems.push("Add opening did not add a built row: " + JSON.stringify(g2));
+  if (!g3.errs.some(e => /^Opening 3 \(OPENING 3\): must sit at least 300 inside/.test(e)) || g3.invalid !== "true" || !g3.open || g3.bars !== g2.bars) problems.push("a bad row should be an error on that row and keep the scene: " + JSON.stringify(g3));
+  if (g4.rows !== 2 || g4.errs.some(e => /^Opening/.test(e)) || g4.bars !== g2.bars && g4.bars !== g1.bars) problems.push("removing the bad row did not rebuild cleanly: " + JSON.stringify(g4));
+  if (!g5.balc || g5.balc[0] !== 2400 || g5.balc[1] !== 0 || g5.balc[2] !== "cog" || g5.bars === g4.bars) problems.push("balcony edit did not rebuild (2,400 projection, no set-down, straight cantilever bars): " + JSON.stringify(g5.balc));
+  if (!g6.errs.some(e => /^Balcony: too narrow/.test(e)) || g6.invalid !== "true" || g6.bars !== g5.bars) problems.push("an 800 balcony should be an error that keeps the scene: " + JSON.stringify(g6));
+  if (g7.rows !== 2 || g7.bDown !== "50" || g7.bars !== s0.bars) problems.push("reset did not restore the example rows: " + JSON.stringify(g7));
   if (problems.length) { console.error("smoke: FAIL\n" + problems.join("\n")); process.exit(1); }
   console.log("smoke: OK (screenshots in " + outDir + ")");
 })().catch(e => { console.error("smoke: FAIL\n" + e.stack); process.exit(1); });

@@ -75,7 +75,22 @@ details.sec:not([open]) { gap: 0; }
 .feats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
 .feats label { display: flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
 .feats input { accent-color: var(--fg); width: 15px; height: 15px; margin: 0; }
-.rowbtns { display: flex; gap: 6px; }
+.rowbtns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* Geometry lists (#7a): openings and the balcony as editable rows */
+.geom { border: 1px solid var(--line); border-radius: 5px; padding: 8px; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.geom legend { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 0 4px; }
+.geom:disabled { opacity: 0.45; }
+.geom .hint { font-size: 11.5px; }
+#openRows { display: grid; gap: 8px; }
+#openRows:empty::before { content: "No openings. Add one to cut the mats and trim it."; font-size: 12px; color: var(--muted); }
+.orow { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 4px 6px; align-items: end; padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
+.orow:last-child { padding-bottom: 0; border-bottom: 0; }
+.orow .nums { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.orow .nums input { padding: 6px 5px; font-size: 12.5px; }
+.orow .del { padding: 0; height: 30px; line-height: 1; font-size: 18px; color: var(--muted); }
+.orow .del:hover { color: var(--bad); border-color: var(--bad); }
+.orow[data-invalid="true"] input { border-color: var(--bad); }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 6px; }
 
 /* Stepper */
 .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
@@ -279,6 +294,23 @@ html.print #sheet { background: #fff; }
         <label><input type="checkbox" data-feat="extras" checked> Extra bars</label>
         <label><input type="checkbox" data-feat="edges" checked> Edge bars + cogs</label>
       </div>
+      <fieldset class="geom" id="geomOpen">
+        <legend>Openings · mm from grid 1 / grid A</legend>
+        <div id="openRows"></div>
+        <div class="rowbtns"><button class="btn small" type="button" id="btnAddOpen">+ Add opening</button><span class="hint" id="openHint">Trimmers each side T&amp;B follow the opening size.</span></div>
+      </fieldset>
+      <fieldset class="geom" id="geomBalc">
+        <legend>Balcony · north edge: from / to, projection, thickness, set-down</legend>
+        <div class="grid2">
+          <div class="field"><label for="inBx0">From x mm</label><input id="inBx0" type="number" step="50" inputmode="numeric"></div>
+          <div class="field"><label for="inBx1">To x mm</label><input id="inBx1" type="number" step="50" inputmode="numeric"></div>
+        </div>
+        <div class="grid3">
+          <div class="field"><label for="inBproj">Out mm</label><input id="inBproj" type="number" min="500" max="4000" step="50" inputmode="numeric"></div>
+          <div class="field"><label for="inBthk">Thk mm</label><input id="inBthk" type="number" min="100" max="500" step="10" inputmode="numeric"></div>
+          <div class="field"><label for="inBdown">Set-down</label><input id="inBdown" type="number" min="0" max="400" step="10" inputmode="numeric"></div>
+        </div>
+      </fieldset>
       <div class="rowbtns">
         <button class="btn small" type="button" id="btnReset">Reset to Level 1 example</button>
         <button class="btn small" type="button" id="btnPlain">Plain slab</button>
@@ -569,23 +601,47 @@ html.print #sheet { background: #fff; }
     return (words[direction] || direction) + " is a wall or beam direction; a slab mat runs E-W or N-S.";
   }
 
+  // ---------- grids and the example geometry ----------
+  // Grid lines in mm from grid 1 (E–W) and grid A (N–S), cleaned and sorted, and the slab outline (grids + overhang).
+  function parseGrids(cfg) {
+    const OV = +cfg.overhang || 250;
+    const num = v => (typeof v === "number" ? [v] : String(v).split(/[\s,;]+/)).map(Number).filter(n => isFinite(n));
+    const clean = arr => { const a = [...new Set(arr.map(n => Math.round(n)))].sort((p, q) => p - q); return a.length ? a : [0]; };
+    const gx = clean(Array.isArray(cfg.gridX) ? cfg.gridX : num(cfg.gridX)), gy = clean(Array.isArray(cfg.gridY) ? cfg.gridY : num(cfg.gridY));
+    return { gx: gx, gy: gy, OV: OV, SL: { x0: gx[0] - OV, x1: gx[gx.length - 1] + OV, y0: gy[0] - OV, y1: gy[gy.length - 1] + OV } };
+  }
+  // The Level 1 example's openings and balcony, derived from the grids (backlog #7a). A config that carries its own
+  // cfg.openings (array) or cfg.balcony (object) is a real job and those are built as entered; a config without them
+  // gets these. The inputs panel shows them as its starting rows, so editing one row turns the example into a job.
+  //   opening: { name, x0, y0, x1, y1 }  mm from grid 1 / grid A
+  //   balcony: { x0, x1, proj, thk, down }  along the north slab edge: from / to (mm from grid 1), projection north,
+  //            slab thickness and set-down of its top below the main slab top (7c will add the edge choice)
+  function exampleGeometry(cfg) {
+    cfg = Object.assign({}, DEFAULT_CFG, cfg || {});
+    const G = parseGrids(cfg), gx = G.gx, gy = G.gy, SL = G.SL, nX = gx.length, nY = gy.length;
+    const openings = [
+      { name: "STAIR VOID", x0: gx[nX - 1] - 3200, y0: gy[0] + 900, x1: gx[nX - 1] - 600, y1: gy[0] + 3100 },
+      { name: "RISER", x0: gx[0] + 3000, y0: gy[0] + 2000, x1: gx[0] + 3600, y1: gy[0] + 2600 }
+    ];
+    const bx0 = Math.max(SL.x0 + 500, gx[Math.min(1, nX - 1)] - 800);
+    const balcony = { x0: bx0, x1: Math.min(bx0 + 5000, SL.x1 - 500), proj: 1800, thk: 180, down: 50 };
+    return { openings: openings, balcony: balcony };
+  }
+
   // ---------- model builder ----------
   function buildModel(cfg) {
     cfg = Object.assign({}, DEFAULT_CFG, cfg || {});
     cfg.features = Object.assign({}, DEFAULT_CFG.features, cfg.features || {});
     const F = cfg.features, errors = [], warnings = [];
-    const T = +cfg.thickness, C = +cfg.cover, OV = +cfg.overhang || 250;
+    const T = +cfg.thickness, C = +cfg.cover;
     const LAPLEN = +cfg.lap;
     const LAP = {}; [6, 10, 12, 16, 20, 24, 28, 32, 36, 40].forEach(d => { LAP[d] = LAPLEN; });
 
     // grids
-    const num = v => (typeof v === "number" ? [v] : String(v).split(/[\s,;]+/)).map(Number).filter(n => isFinite(n));
-    const clean = arr => { const a = [...new Set(arr.map(n => Math.round(n)))].sort((p, q) => p - q); return a.length ? a : [0]; };
-    const gx = clean(Array.isArray(cfg.gridX) ? cfg.gridX : num(cfg.gridX)), gy = clean(Array.isArray(cfg.gridY) ? cfg.gridY : num(cfg.gridY));
+    const G = parseGrids(cfg), gx = G.gx, gy = G.gy, OV = G.OV, SL = G.SL;
     if (gx.length < 2 || gy.length < 2) errors.push("Need at least two grid lines in each direction.");
     const GX = gx.map((v, i) => [String(i + 1), v]);
     const GY = gy.map((v, i) => [String.fromCharCode(65 + i), v]);
-    const SL = { x0: gx[0] - OV, x1: gx[gx.length - 1] + OV, y0: gy[0] - OV, y1: gy[gy.length - 1] + OV };
     const L = SL.x1 - SL.x0, Wd = SL.y1 - SL.y0;
     if (L < 2000 || Wd < 2000) errors.push("Slab is too small (" + fmt(L) + " × " + fmt(Wd) + "): widen the grids.");
     if (L > 60000 || Wd > 60000) errors.push("Slab is too large for one pour model (" + fmt(L) + " × " + fmt(Wd) + ").");
@@ -603,7 +659,7 @@ html.print #sheet { background: #fff; }
       if (p.error) { errors.push(where + p.error + "."); return; }
       if (p.kind === "thickness") { warnings.push(where + "slab thickness is set in its own field; line ignored."); return; }
       if (p.kind === "mesh") { errors.push(where + "mesh is not supported yet (backlog #6); use N bars for the mats."); return; }
-      if (p.role) { warnings.push(where + "additional/" + p.role + " bars from callouts come with backlog #7; the example extras are controlled by the Extra bars toggle."); return; }
+      if (p.role) { warnings.push(where + "additional/" + p.role + " bars are not read from callouts yet; the example extras are controlled by the Extra bars toggle."); return; }
       if (!p.layer || MAT_LAYERS.indexOf(p.layer) < 0) { errors.push(where + "say which layer this mat is: A, B, C or D."); return; }
       if (!p.spacing) { errors.push(where + "no spacing found (write N12-200 or N12 @ 200)."); return; }
       if (p.type !== "N") { errors.push(where + "mats must be N (D500N) bars."); return; }
@@ -642,14 +698,48 @@ html.print #sheet { background: #fff; }
     if (F.step && nX >= 3 && nY >= 3) STEP = { x0: gx[nX - 2], x1: SL.x1, y0: gy[nY - 2], y1: SL.y1, rise: 200, nib: 300 };
     let DROP = null;
     if (F.drop) { const d = { x0: gx[0] + 600, x1: gx[0] + 3800, y0: gy[nY - 1] - 3700, y1: gy[nY - 1] - 800, d: 70 }; if (inside(d) && clearOfBeams(d) && !(STEP && overlaps(d, STEP))) DROP = d; else warnings.push("Set-down left out: it does not fit this grid."); }
+    // openings and balcony (#7a): from cfg.openings / cfg.balcony when given (a job: a bad row is an error and that row is
+    // left out while the rest builds, as for a bad callout line), else the grid-derived example (a misfit is only a warning)
+    const EX = exampleGeometry(cfg);
+    const explicitO = Array.isArray(cfg.openings), explicitB = !!cfg.balcony && typeof cfg.balcony === "object";
+    const grow = (r, m) => ({ x0: r.x0 - m, x1: r.x1 + m, y0: r.y0 - m, y1: r.y1 + m });
+    const numv = v => (v === "" || v == null || typeof v === "boolean") ? NaN : Number(v);   // a blank field is not 0
     const HOLES = [];
     if (F.openings) {
-      const sv = { id: "STAIR VOID", x0: gx[nX - 1] - 3200, x1: gx[nX - 1] - 600, y0: gy[0] + 900, y1: gy[0] + 3100 };
-      const rs = { id: "RISER 600 × 600", x0: gx[0] + 3000, x1: gx[0] + 3600, y0: gy[0] + 2000, y1: gy[0] + 2600 };
-      [sv, rs].forEach(h => { if (inside(h) && clearOfBeams(h) && !(STEP && overlaps(h, STEP)) && !(DROP && overlaps(h, DROP))) HOLES.push(h); else warnings.push(h.id.toLowerCase() + " left out: it does not fit this grid."); });
+      (explicitO ? cfg.openings : EX.openings).forEach((o, i) => {
+        const name = String(o && o.name != null ? o.name : "").trim().toUpperCase().slice(0, 24) || "OPENING " + (i + 1);
+        const say = msg => explicitO ? errors.push("Opening " + (i + 1) + " (" + name + "): " + msg) : warnings.push("Example opening " + name.toLowerCase() + " left out: " + msg);
+        const v = [o.x0, o.y0, o.x1, o.y1].map(numv);
+        if (v.some(n => !isFinite(n))) return say("x0, y0, x1 and y1 must all be numbers, mm from grid 1 / grid A.");
+        const h = { id: name, row: i, x0: Math.min(v[0], v[2]), x1: Math.max(v[0], v[2]), y0: Math.min(v[1], v[3]), y1: Math.max(v[1], v[3]) };
+        if (h.x1 - h.x0 < 300 || h.y1 - h.y0 < 300) return say("too small to trim; make each side at least 300.");
+        if (!inside(h)) return say("must sit at least 300 inside the slab edges (slab " + fmt(SL.x0) + " to " + fmt(SL.x1) + " E–W, " + fmt(SL.y0) + " to " + fmt(SL.y1) + " N–S).");
+        const bm = BEAMS.find(b => overlaps(h, beamRect(b))); if (bm) return say("sits on beam " + bm.id + ".");
+        if (STEP && overlaps(h, STEP)) return say("overlaps the step.");
+        if (DROP && overlaps(h, DROP)) return say("overlaps the set-down.");
+        const near = HOLES.find(q => overlaps(grow(h, 300), q)); if (near) return say("too close to " + near.id + "; keep 300 between openings so the trimmers fit.");
+        // small openings (under 1,000 N–S) carry their size in the note, placed just south of the hole
+        h.small = h.y1 - h.y0 < 1000; h.label = h.small ? name + " " + fmt(h.x1 - h.x0) + " × " + fmt(h.y1 - h.y0) : name;
+        HOLES.push(h);
+      });
     }
     let BALC = null;
-    if (F.balcony) { const b = { x0: Math.max(SL.x0 + 500, gx[Math.min(1, nX - 1)] - 800), y0: SL.y1, y1: SL.y1 + 1800, top: 150, bot: -30 }; b.x1 = Math.min(b.x0 + 5000, SL.x1 - 500); if (b.x1 - b.x0 >= 1500) BALC = b; else warnings.push("Balcony left out: slab too narrow."); }
+    if (F.balcony) {
+      const b = explicitB ? cfg.balcony : EX.balcony;
+      const say = msg => explicitB ? errors.push("Balcony: " + msg) : warnings.push("Example balcony left out: " + msg);
+      const v = [b.x0, b.x1, b.proj, b.thk, b.down].map(numv);
+      if (v.some(n => !isFinite(n))) say("from, to, projection, thickness and set-down must all be numbers.");
+      else {
+        const x0 = Math.min(v[0], v[1]), x1 = Math.max(v[0], v[1]), proj = v[2], thk = v[3], down = v[4];
+        if (x1 - x0 < 1500) say("too narrow; a balcony needs at least 1,500 along the slab edge.");
+        else if (x0 < SL.x0 || x1 > SL.x1) say("must sit on the slab's north edge, between " + fmt(SL.x0) + " and " + fmt(SL.x1) + ".");
+        else if (!(proj >= 500 && proj <= 4000)) say("projection must be 500–4,000.");
+        else if (!(thk >= 2 * C + 40 && thk <= 500)) say("thickness must be at least 2 × cover + 40 (" + (2 * C + 40) + ") and at most 500.");
+        else if (!(down >= 0 && down <= T - 100)) say("set-down must be 0–" + (T - 100) + " (slab thickness less 100).");
+        else if (STEP && x1 > STEP.x0) say("runs along the step; keep it west of grid " + GX[nX - 2][0] + " (" + fmt(STEP.x0) + ").");
+        else BALC = { x0: x0, x1: x1, y0: SL.y1, y1: SL.y1 + proj, top: T - down, bot: T - down - thk, proj: proj, thk: thk, down: down };
+      }
+    }
     const COLB = -1500, COL = 400, PROJ = 950;
     const lvl = (x, y) => (STEP && x > STEP.x0 && y > STEP.y0) ? STEP.rise : (DROP && x > DROP.x0 && x < DROP.x1 && y > DROP.y0 && y < DROP.y1) ? -DROP.d : 0;
     const COLS = [];
@@ -858,13 +948,18 @@ html.print #sheet { background: #fff; }
         run.tagPos = t.X ? [(h.x0 + h.x1) / 2, t.layer === "A" ? h.y1 + 300 : h.y0 - 300, t.z + 22] : [t.layer === "B" ? h.x0 - 360 : h.x1 + 360, (h.y0 + h.y1) / 2, t.z + 22];
       });
     }
-    HOLES.forEach(h => addTrims(h, h.id.replace(/ \d.*$/, ""), h.id.indexOf("STAIR") === 0 ? 16 : 12, 12, h.id.indexOf("STAIR") === 0 ? 600 : 500));
+    // Trimmer size follows the opening size (the Level 1 example's values, not a standard: 2-N16 extended 600 past each
+    // corner at openings 1,500 or more across, 2-N12 extended 500 at smaller ones). Asked Baji whether this is his
+    // office's rule or should be a per-opening input (planning doc, Questions for Baji, 2026-11-10).
+    HOLES.forEach(h => { const big = Math.max(h.x1 - h.x0, h.y1 - h.y0) >= 1500; addTrims(h, h.id, big ? 16 : 12, 12, big ? 600 : 500); });
 
-    // ---- balcony (cantilever, set down 50) ----
+    // ---- balcony (cantilever off the north edge, set down BALC.down) ----
     if (BALC) (function () {
       const xs = (sp, d) => { const n = Math.floor((BALC.x1 - BALC.x0 - 2 * C - d) / sp) + 1, st = BALC.x0 + (BALC.x1 - BALC.x0 - (n - 1) * sp) / 2; return Array.from({ length: n }, (_, i) => st + i * sp); };
       const ys = (sp, d) => { const n = Math.floor((BALC.y1 - BALC.y0 - 2 * C - d) / sp) + 1, st = BALC.y0 + (BALC.y1 - BALC.y0 - (n - 1) * sp) / 2; return Array.from({ length: n }, (_, i) => st + i * sp); };
       const zb1 = BALC.bot + C + 6, zb2 = zb1 + 12, zt1 = BALC.top - C - 6, zt2 = zt1 - 12;
+      const zCog = zb2 + 14, zEdgeTop = zt2 - 12, zEdgeBot = zb2 + 20;   // cogs stop just above the balcony's bottom mat; edge bars sit inside the mats
+      const stepTxt = BALC.down ? "Z AT " + BALC.down + " STEP, " : "";
       const lines = (r, arr, sp) => { r.n = arr.length; r.sp = sp; runSetout(r, r.dir === "X", arr[0], arr[arr.length - 1]); };
       const b1 = addRun({ layer: "A", size: 12, dir: "X", kind: "balc", z: zb1, label: "BALC N12-300 · A", callout: "BALCONY N12-300 LAYER A E–W" });
       const yb = ys(300, 12); lines(b1, yb, 300); yb.forEach((p, i) => addBar(b1, { pts: [[BALC.x0 + C, p, zb1], [BALC.x1 - C, p, zb1]], line: i + 1, setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0] }));
@@ -872,22 +967,23 @@ html.print #sheet { background: #fff; }
       const b2 = addRun({ layer: "B", size: 12, dir: "Y", kind: "balc", z: zb2, label: "BALC N12-300 · B", callout: "BALCONY N12-300 LAYER B N–S" });
       const xb = xs(300, 12); lines(b2, xb, 300); xb.forEach((p, i) => addBar(b2, { pts: [[p, BALC.y0 + C, zb2], [p, BALC.y1 - C, zb2]], line: i + 1, setout: so(false, p) }));
       b2.dist = { dir: "Y", at: BALC.y1 - 400, p0: xb[0], p1: xb[xb.length - 1], z: zb2 + 22, frac: 0.12 };
-      const t2 = addRun({ layer: "C", size: 12, dir: "Y", kind: "balc", z: zt2, label: "BALC N12-200 T · CANTILEVER", callout: "BALCONY N12-200 TOP: COG AT EDGE, Z AT 50 STEP, 1500 INTO SLAB" });
+      const t2 = addRun({ layer: "C", size: 12, dir: "Y", kind: "balc", z: zt2, label: "BALC N12-200 T · CANTILEVER", callout: "BALCONY N12-200 TOP: COG AT EDGE, " + stepTxt + "1500 INTO SLAB" });
       const xt = xs(200, 12); lines(t2, xt, 200);
-      const ckB = Math.max(300, 6 * Math.abs(Z.C - zt2));
-      xt.forEach((p, i) => addBar(t2, { pts: [[p, BALC.y1 - C, 32], [p, BALC.y1 - C, zt2], [p, BALC.y0 + ckB / 2, zt2], [p, BALC.y0 - ckB / 2, Z.C], [p, BALC.y0 - 1800, Z.C]], shape: "cog + Z", line: i + 1, setout: so(false, p), note: "Cantilever top bar: cog down at the balcony edge, " + ckB + " crank (1:6) up " + Math.abs(Z.C - zt2) + " at the slab edge, anchored 1500 back into the floor slab." }));
+      const dzB = Math.abs(Z.C - zt2), ckB = Math.max(300, 6 * dzB);   // crank 1:6 or flatter, 300 minimum (SRIA TN5, DECISIONS.md); no crank when the balcony top mat lines up with layer C
+      const back = p => dzB < 2 ? [[p, BALC.y0 - 1800, zt2]] : [[p, BALC.y0 + ckB / 2, zt2], [p, BALC.y0 - ckB / 2, Z.C], [p, BALC.y0 - 1800, Z.C]];
+      xt.forEach((p, i) => addBar(t2, { pts: [[p, BALC.y1 - C, zCog], [p, BALC.y1 - C, zt2]].concat(back(p)), shape: dzB < 2 ? "cog" : "cog + Z", line: i + 1, setout: so(false, p), note: "Cantilever top bar: cog down at the balcony edge, " + (dzB < 2 ? "straight on," : ckB + " crank (1:6) " + (Z.C > zt2 ? "up " : "down ") + dzB + " at the slab edge,") + " anchored 1500 back into the floor slab." }));
       t2.dist = { dir: "Y", at: BALC.y0 + 650, p0: xt[0], p1: xt[xt.length - 1], z: zt2 + 22, frac: 0.8 };
       const t1 = addRun({ layer: "D", size: 12, dir: "X", kind: "balc", z: zt1, label: "BALC N12-300 · D", callout: "BALCONY N12-300 LAYER D E–W, COGGED BOTH ENDS" });
-      const yt = ys(300, 12); lines(t1, yt, 300); yt.forEach((p, i) => addBar(t1, { pts: [[BALC.x0 + C, p, 32], [BALC.x0 + C, p, zt1], [BALC.x1 - C, p, zt1], [BALC.x1 - C, p, 32]], shape: "cogged both ends", line: i + 1, setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0], note: "Balcony top distribution bar, cogged down at both free side edges." }));
+      const yt = ys(300, 12); lines(t1, yt, 300); yt.forEach((p, i) => addBar(t1, { pts: [[BALC.x0 + C, p, zCog], [BALC.x0 + C, p, zt1], [BALC.x1 - C, p, zt1], [BALC.x1 - C, p, zCog]], shape: "cogged both ends", line: i + 1, setout: fmt(p - gy[nY - 1]) + " N of grid " + GY[nY - 1][0], note: "Balcony top distribution bar, cogged down at both free side edges." }));
       t1.dist = { dir: "X", at: BALC.x0 + (BALC.x1 - BALC.x0) * 0.64, p0: yt[0], p1: yt[yt.length - 1], z: zt1 + 22, frac: 0.5 };
-      const be = addRun({ layer: "D", size: 12, dir: "X", kind: "edge", z: 90, label: "BALC N12 EDGE BARS T&B", callout: "BALCONY N12 EDGE BARS TOP AND BOTTOM, 3 FREE EDGES" });
+      const be = addRun({ layer: "D", size: 12, dir: "X", kind: "edge", z: zEdgeTop, label: "BALC N12 EDGE BARS T&B", callout: "BALCONY N12 EDGE BARS TOP AND BOTTOM, 3 FREE EDGES" });
       const o2 = C + 12;
-      [90, 38].forEach(z => {
+      [zEdgeTop, zEdgeBot].forEach(z => {
         addBar(be, { pts: [[BALC.x0 + o2, BALC.y1 - o2, z], [BALC.x1 - o2, BALC.y1 - o2, z]], setout: "balcony outer edge", note: "Edge bar along the balcony's free edge, inside the cogs." });
         addBar(be, { pts: [[BALC.x0 + o2, BALC.y0 + o2, z], [BALC.x0 + o2, BALC.y1 - o2, z]], setout: "balcony west edge", note: "Edge bar along the balcony's free edge, inside the cogs." });
         addBar(be, { pts: [[BALC.x1 - o2, BALC.y0 + o2, z], [BALC.x1 - o2, BALC.y1 - o2, z]], setout: "balcony east edge", note: "Edge bar along the balcony's free edge, inside the cogs." });
       });
-      be.tagPos = [BALC.x0 + 1500, BALC.y1 - o2, 110];
+      be.tagPos = [BALC.x0 + 1500, BALC.y1 - o2, zt1 - 4];
     })();
 
     // ---- beams ----
@@ -1012,8 +1108,8 @@ html.print #sheet { background: #fff; }
     S.notes.push({ x: (SL.x0 + SL.x1) / 2, y: SL.y0 + M.W * 0.72, text: M.cfg.name.toUpperCase() + " · " + M.T + " THK SLAB" });
     if (M.DROP) S.notes.push({ x: (M.DROP.x0 + M.DROP.x1) / 2, y: (M.DROP.y0 + M.DROP.y1) / 2, text: "SET DOWN " + M.DROP.d + " · WET AREA" });
     if (M.STEP) S.notes.push({ x: (M.STEP.x0 + M.STEP.x1) / 2, y: (M.STEP.y0 + M.STEP.y1) / 2, text: "STEP UP " + M.STEP.rise });
-    if (M.BALC) S.notes.push({ x: (M.BALC.x0 + M.BALC.x1) / 2, y: M.BALC.y1 - 500, text: "BALCONY " + (M.BALC.top - M.BALC.bot) + " THK · SET DOWN 50" });
-    M.HOLES.forEach(h => S.notes.push({ x: (h.x0 + h.x1) / 2, y: h.id.indexOf("RISER") === 0 ? h.y0 - 250 : (h.y0 + h.y1) / 2, text: h.id }));
+    if (M.BALC) S.notes.push({ x: (M.BALC.x0 + M.BALC.x1) / 2, y: M.BALC.y1 - 500, text: "BALCONY " + M.BALC.thk + " THK" + (M.BALC.down ? " · SET DOWN " + M.BALC.down : "") });
+    M.HOLES.forEach(h => S.notes.push({ x: (h.x0 + h.x1) / 2, y: h.small ? h.y0 - 250 : (h.y0 + h.y1) / 2, text: h.label }));
     M.BEAMS.forEach(bm => S.notes.push({ x: bm.dir === "X" ? bm.a + (bm.b - bm.a) * 0.52 : bm.at + 520, y: bm.dir === "X" ? bm.at : bm.a + (bm.b - bm.a) * 0.36, text: bm.id + " " + bm.D + " × " + bm.w }));
     // bars: plan polyline (vertical legs collapse to their point); a near-vertical leg at either end is a cog or hook,
     // drawn as a tick of the leg's height, perpendicular to the bar, as on a placing drawing
@@ -1353,8 +1449,8 @@ html.print #sheet { background: #fff; }
     const ann = [[M.cfg.name.toUpperCase() + " · " + T + " THK SLAB", (M.SL.x0 + M.SL.x1) / 2, M.SL.y0 + M.W * 0.72, T + 6]];
     if (M.DROP) ann.push(["SET DOWN " + M.DROP.d + " · WET AREA", (M.DROP.x0 + M.DROP.x1) / 2, (M.DROP.y0 + M.DROP.y1) / 2, T - M.DROP.d + 6]);
     if (M.STEP) ann.push(["STEP UP " + M.STEP.rise, (M.STEP.x0 + M.STEP.x1) / 2, (M.STEP.y0 + M.STEP.y1) / 2, M.STEP.rise + T + 6]);
-    if (M.BALC) ann.push(["BALCONY " + (M.BALC.top - M.BALC.bot) + " THK · SET DOWN 50", (M.BALC.x0 + M.BALC.x1) / 2, M.BALC.y1 - 500, M.BALC.top + 6]);
-    M.HOLES.forEach(h => ann.push([h.id, (h.x0 + h.x1) / 2, h.id.indexOf("RISER") === 0 ? h.y0 - 250 : (h.y0 + h.y1) / 2, T + 6]));
+    if (M.BALC) ann.push(["BALCONY " + M.BALC.thk + " THK" + (M.BALC.down ? " · SET DOWN " + M.BALC.down : ""), (M.BALC.x0 + M.BALC.x1) / 2, M.BALC.y1 - 500, M.BALC.top + 6]);
+    M.HOLES.forEach(h => ann.push([h.label, (h.x0 + h.x1) / 2, h.small ? h.y0 - 250 : (h.y0 + h.y1) / 2, T + 6]));
     M.BEAMS.forEach(bm => ann.push([bm.id + " " + bm.D + " × " + bm.w, bm.dir === "X" ? bm.a + (bm.b - bm.a) * 0.52 : bm.at + 520, bm.dir === "X" ? bm.at : bm.a + (bm.b - bm.a) * 0.36, T + 6]));
     ann.forEach(a => mkLabel(esc(a[0]), "anno", W(a[1], a[2], a[3]), { kind: "anno", center: true }));
     const barTag = mkLabel("", "tag bar", new THREE.Vector3(), { kind: "barTag" });
@@ -1477,10 +1573,10 @@ html.print #sheet { background: #fff; }
     if (M.DROP) rows += "<dt>Set-down</dt><dd>" + fmt(M.DROP.x1 - M.DROP.x0) + " × " + fmt(M.DROP.y1 - M.DROP.y0) + " down " + M.DROP.d + ": mats stop at the step, Z-bar splices T&amp;B</dd>";
     if (M.STEP) rows += "<dt>Step</dt><dd>NE bay up " + M.STEP.rise + " on a " + M.STEP.nib + " nib: L-bars each side, top and bottom</dd>";
     if (f.extras) rows += "<dt>Extras</dt><dd>N16 over columns, N16 mid-span, N16 over IB1, 2-N12 diagonals at opening corners</dd>";
-    if (M.BALC) rows += "<dt>Balcony</dt><dd>" + fmt(M.BALC.x1 - M.BALC.x0) + " × " + fmt(M.BALC.y1 - M.BALC.y0) + " cantilever, " + (M.BALC.top - M.BALC.bot) + " THK, down 50; N12-200 top with cog + Z, 1500 into slab</dd>";
+    if (M.BALC) rows += "<dt>Balcony</dt><dd>" + fmt(M.BALC.x1 - M.BALC.x0) + " × " + fmt(M.BALC.y1 - M.BALC.y0) + " cantilever, " + M.BALC.thk + " THK" + (M.BALC.down ? ", down " + M.BALC.down : "") + "; N12-200 top with cog" + (M.BALC.down ? " + Z" : "") + ", 1500 into slab</dd>";
     if (M.BEAMS.length) rows += "<dt>Beams</dt><dd>" + [...new Set(M.BEAMS.map(b => b.id + " " + b.D + " × " + b.w + ": " + b.bot[1] + "N" + b.bot[0] + " B, " + b.top[1] + "N" + b.top[0] + " T, " + b.lig[2] + b.lig[0] + " ligs @" + b.lig[1]))].join(" · ") + "</dd>";
     if (M.COLS.length) rows += "<dt>Columns</dt><dd>" + M.COLS.length + " × 400 × 400 below; 8N24 starters project " + M.PROJ + "</dd>";
-    if (M.HOLES.length) rows += "<dt>Voids</dt><dd>" + M.HOLES.map(h => h.id.replace(/ \d.*$/, "").toLowerCase() + " " + fmt(h.x1 - h.x0) + " × " + fmt(h.y1 - h.y0)).join(", ") + ", 2-bar trimmers each side T&amp;B</dd>";
+    if (M.HOLES.length) rows += "<dt>Voids</dt><dd>" + M.HOLES.map(h => h.id.toLowerCase() + " " + fmt(h.x1 - h.x0) + " × " + fmt(h.y1 - h.y0)).join(", ") + ", 2-bar trimmers each side T&amp;B</dd>";
     insp.innerHTML = '<h2>Inspector</h2><div class="insp-title"><b>' + esc(M.cfg.name) + ' floor' + (M.cfg === DEFAULT_CFG || M.cfg.example ? " · example" : "") + '</b></div><dl class="kv">' + rows + "</dl>" +
       '<p class="note">Click any bar or tag in the model to see its mark, shape, cut length, setout and laps.</p>';
   }
@@ -2132,22 +2228,55 @@ html.print #sheet { background: #fff; }
   // ---- inputs panel ----
   const IN = { gridX: $("inGridX"), gridY: $("inGridY"), thk: $("inThk"), cover: $("inCover"), fc: $("inFc"), lap: $("inLap"), callouts: $("inCallouts") };
   const featBoxes = [...document.querySelectorAll("#feats input[data-feat]")];
+  // geometry lists (#7a): openings rows and the balcony row; the example's rows come from exampleGeometry(cfg)
+  const GEO = { rows: $("openRows"), fsOpen: $("geomOpen"), fsBalc: $("geomBalc"), x0: $("inBx0"), x1: $("inBx1"), proj: $("inBproj"), thk: $("inBthk"), down: $("inBdown") };
+  const BALC_KEYS = ["x0", "x1", "proj", "thk", "down"];
+  function openRow(o) {
+    const row = document.createElement("div"); row.className = "orow";
+    row.innerHTML = '<div class="field"><label>Name</label><input type="text" data-k="name" maxlength="24" spellcheck="false" autocomplete="off" placeholder="OPENING"></div>' +
+      '<button class="btn small del" type="button" aria-label="Remove opening" title="Remove opening">×</button>' +
+      '<div class="nums">' + ["x0", "y0", "x1", "y1"].map(k => '<div class="field"><label>' + k + '</label><input type="number" step="10" inputmode="numeric" data-k="' + k + '" aria-label="Opening ' + k + ' mm"></div>').join("") + "</div>";
+    row.querySelectorAll("input").forEach(el => { el.value = o[el.dataset.k] == null ? "" : o[el.dataset.k]; el.addEventListener("input", scheduleRebuild); });
+    row.querySelector(".del").onclick = () => { row.remove(); scheduleRebuild(); };
+    return row;
+  }
+  function fillGeom(cfg) {
+    const EX = exampleGeometry(cfg);
+    const ops = Array.isArray(cfg.openings) ? cfg.openings : EX.openings, b = cfg.balcony && typeof cfg.balcony === "object" ? cfg.balcony : EX.balcony;
+    GEO.rows.innerHTML = ""; ops.forEach(o => GEO.rows.appendChild(openRow(o)));
+    BALC_KEYS.forEach(k => { GEO[k].value = b[k] == null ? "" : b[k]; });
+    syncGeomEnabled();
+  }
+  function syncGeomEnabled() {
+    const f = {}; featBoxes.forEach(b => { f[b.dataset.feat] = b.checked; });
+    GEO.fsOpen.disabled = !f.openings; GEO.fsBalc.disabled = !f.balcony;
+  }
+  const numOf = el => el.value.trim() === "" ? NaN : +el.value;
+  function readGeom() {
+    const openings = [...GEO.rows.querySelectorAll(".orow")].map(r => { const o = {}; r.querySelectorAll("input").forEach(el => { o[el.dataset.k] = el.type === "number" ? numOf(el) : el.value; }); return o; });
+    const balcony = {}; BALC_KEYS.forEach(k => { balcony[k] = numOf(GEO[k]); });
+    return { openings: openings, balcony: balcony };
+  }
   function fillInputs(cfg) {
     IN.gridX.value = cfg.gridX.join(", "); IN.gridY.value = cfg.gridY.join(", ");
     IN.thk.value = cfg.thickness; IN.cover.value = cfg.cover; IN.fc.value = cfg.fc; IN.lap.value = cfg.lap;
     IN.callouts.value = cfg.callouts;
     featBoxes.forEach(b => { b.checked = !!cfg.features[b.dataset.feat]; });
+    fillGeom(cfg);
   }
   function readInputs() {
     const features = {}; featBoxes.forEach(b => { features[b.dataset.feat] = b.checked; });
-    return { name: "Level 1", gridX: IN.gridX.value, gridY: IN.gridY.value, thickness: +IN.thk.value, cover: +IN.cover.value, fc: +IN.fc.value, lap: +IN.lap.value, callouts: IN.callouts.value, features: features, scheme: "ABCD" };
+    return Object.assign({ name: "Level 1", gridX: IN.gridX.value, gridY: IN.gridY.value, thickness: +IN.thk.value, cover: +IN.cover.value, fc: +IN.fc.value, lap: +IN.lap.value, callouts: IN.callouts.value, features: features, scheme: "ABCD" }, readGeom());
   }
   function showErrors(model) {
     const ul = $("inErrs"); ul.innerHTML = "";
     model.errors.forEach(e => { const li = document.createElement("li"); li.textContent = e; ul.appendChild(li); });
     model.warnings.forEach(e => { const li = document.createElement("li"); li.className = "warn"; li.textContent = e; ul.appendChild(li); });
     IN.callouts.setAttribute("aria-invalid", String(model.errors.some(e => /^Line \d/.test(e))));
-    [[IN.gridX, /grid/i], [IN.gridY, /grid/i], [IN.thk, /thickness|thin/i], [IN.cover, /cover/i], [IN.lap, /lap/i]].forEach(p => p[0].setAttribute("aria-invalid", String(model.errors.some(e => p[1].test(e) && !/^Line \d/.test(e)))));
+    const plain = model.errors.filter(e => !/^(Line \d|Opening \d|Balcony:)/.test(e));
+    [[IN.gridX, /grid/i], [IN.gridY, /grid/i], [IN.thk, /thickness|thin/i], [IN.cover, /cover/i], [IN.lap, /lap/i]].forEach(p => p[0].setAttribute("aria-invalid", String(plain.some(e => p[1].test(e)))));
+    [...GEO.rows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Opening " + (i + 1) + " ") === 0)); });
+    const badB = model.errors.some(e => /^Balcony:/.test(e)); BALC_KEYS.forEach(k => GEO[k].setAttribute("aria-invalid", String(badB)));
   }
   function slabline(model) {
     const c = model.cfg;
@@ -2179,7 +2308,15 @@ html.print #sheet { background: #fff; }
     rebuildTimer = setTimeout(() => { rebuild(readInputs(), { camera: false }); $("building").hidden = true; }, 350);
   }
   Object.values(IN).forEach(el => { el.addEventListener("input", scheduleRebuild); el.id = el.id; });
-  featBoxes.forEach(b => b.addEventListener("change", scheduleRebuild));
+  BALC_KEYS.forEach(k => GEO[k].addEventListener("input", scheduleRebuild));
+  featBoxes.forEach(b => b.addEventListener("change", () => { syncGeomEnabled(); scheduleRebuild(); }));
+  $("btnAddOpen").onclick = () => {
+    // a new 600 × 600 opening near the middle of the current slab, named by its row; the user moves it from there
+    const SL = (lastGood && M && M.SL) || parseGrids(readInputs()).SL, n = GEO.rows.children.length + 1;
+    const cx = Math.round(((SL.x0 + SL.x1) / 2 - 300) / 50) * 50 + (n - 1) * 900, cy = Math.round(((SL.y0 + SL.y1) / 2 - 300) / 50) * 50;
+    const row = openRow({ name: "OPENING " + n, x0: cx, y0: cy, x1: cx + 600, y1: cy + 600 });
+    GEO.rows.appendChild(row); row.querySelector("input").focus(); scheduleRebuild();
+  };
   $("btnReset").onclick = () => { fillInputs(DEFAULT_CFG); rebuild(DEFAULT_CFG, { example: true, camera: true }); };
   $("btnPlain").onclick = () => {
     const plain = Object.assign({}, DEFAULT_CFG, { gridX: [0, 6000], gridY: [0, 4500], callouts: "N12-200 A E-W\nN12-200 B N-S\nN12-200 C N-S\nN12-200 D E-W", features: { beams: false, columns: false, drop: false, step: false, balcony: false, openings: false, extras: false, edges: true } });

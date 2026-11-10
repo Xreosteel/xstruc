@@ -293,6 +293,74 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   if (problems.length) fail(problems.slice(0, 20).join("\n"));
 }
 
+// geometry inputs (#7a): openings and the balcony from cfg, the example's rows reproduce the example, bad rows are
+// reported by row number and left out while the rest builds
+{
+  const { exampleGeometry, parseGrids } = lib, problems = [], p = m => problems.push("geometry inputs: " + m);
+  const EX = exampleGeometry(DEFAULT_CFG);
+  if (EX.openings.length !== 2 || EX.openings[0].name !== "STAIR VOID" || EX.balcony.proj !== 1800 || EX.balcony.thk !== 180 || EX.balcony.down !== 50) p("example rows " + JSON.stringify(EX));
+  if (parseGrids(DEFAULT_CFG).SL.x1 !== 14250 || parseGrids({ gridX: "0, 6000", gridY: [0, 4500] }).SL.y1 !== 4750) p("parseGrids slab outline");
+  // the panel's pre-filled rows, fed back in explicitly, build the very same floor
+  const ME = buildModel(Object.assign({}, DEFAULT_CFG, EX));
+  if (ME.errors.length || ME.bars.length !== M.bars.length || ME.marks.length !== M.marks.length || Math.round(ME.kg) !== Math.round(M.kg) || ME.HOLES.length !== 2 || !ME.BALC) p("explicit example rows differ from the example: " + ME.bars.length + " bars, " + ME.marks.length + " marks, " + Math.round(ME.kg) + " kg, errors " + ME.errors.join(" | "));
+  ME.bars.forEach((b, i) => { const a = M.bars[i]; if (!a || a.len !== b.len || a.mark !== b.mark || JSON.stringify(a.pts) !== JSON.stringify(b.pts)) p("bar " + i + " differs between the example and its explicit rows"); });
+  // a job: three openings, one big (N16 trimmers extended 600) and two small (N12 extended 500), mats cut at each
+  const job = { gridX: [0, 6000, 12000], gridY: [0, 5000, 10000], features: Object.assign({}, DEFAULT_CFG.features, { drop: false, step: false }),
+    openings: [{ name: "lift", x0: 7000, y0: 1500, x1: 9000, y1: 4000 }, { name: "Duct", x0: 2000, y0: 7000, x1: 2600, y1: 7600 }, { x0: 9600, y0: 7400, x1: 9000, y1: 6800 }],
+    balcony: { x0: 1000, x1: 5000, proj: 2400, thk: 200, down: 0 } };
+  const MJ = buildModel(job);
+  if (MJ.errors.length) p("job has errors: " + MJ.errors.join(" | "));
+  if (MJ.HOLES.length !== 3 || MJ.HOLES.map(h => h.id).join(",") !== "LIFT,DUCT,OPENING 3") p("job openings " + JSON.stringify(MJ.HOLES.map(h => h.id)));
+  const h3 = MJ.HOLES[2]; if (!(h3.x0 === 9000 && h3.x1 === 9600 && h3.y0 === 6800 && h3.y1 === 7400)) p("reversed corners were not normalised: " + JSON.stringify(h3));
+  MJ.HOLES.forEach(h => {
+    const trims = MJ.runs.filter(r => r.kind === "trim" && r.callout.indexOf("OF " + h.id + " ") >= 0), big = Math.max(h.x1 - h.x0, h.y1 - h.y0) >= 1500;
+    if (trims.length !== 4) p(h.id + ": expected trimmers in 4 layers, got " + trims.length);
+    trims.forEach(r => { if (r.size !== (big ? 16 : 12) && (r.layer === "A" || r.layer === "B")) p(h.id + ": bottom trimmer N" + r.size + " for a " + (big ? "big" : "small") + " opening"); if (r.bars.length !== 4) p(h.id + ": " + r.bars.length + " trimmer bars in layer " + r.layer); });
+    const ext = big ? 600 : 500, tA = trims.find(r => r.layer === "A");
+    if (tA && Math.abs(Math.min(...tA.bars.map(b => Math.min(b.pts[0][0], b.pts[b.pts.length - 1][0]))) - (h.x0 - ext)) > 1) p(h.id + ": layer A trimmers do not extend " + ext + " past the opening");
+    // no main bar runs through the opening (mats are cut with the cover clear of the hole)
+    MJ.bars.filter(b => b.run.kind === "main").forEach(b => {
+      const xs = b.pts.map(q => q[0]), ys = b.pts.map(q => q[1]);
+      if (Math.min(...xs) < h.x1 - 1 && Math.max(...xs) > h.x0 + 1 && Math.min(...ys) < h.y1 - 1 && Math.max(...ys) > h.y0 + 1) p(h.id + ": main bar " + b.id + " (" + b.run.label + ") crosses the opening");
+    });
+    if (!h.label || (h.y1 - h.y0 < 1000) !== !!h.small) p(h.id + ": label / small flag " + JSON.stringify([h.label, h.small]));
+  });
+  const SJ = buildSheet(MJ, ["A", "B", "C", "D", "BM", "CH", "ST"], []);
+  MJ.HOLES.forEach(h => { if (!SJ.notes.some(n => n.text === h.label)) p("no sheet note for " + h.label); if (!SJ.concrete.holes.some(r => r.x0 === h.x0 && r.y1 === h.y1)) p("no sheet outline for " + h.id); });
+  if (!MJ.HOLES[1].small || MJ.HOLES[1].label !== "DUCT 600 × 600" || MJ.HOLES[0].small) p("small-opening labels: " + MJ.HOLES.map(h => h.label).join(" / "));
+  // the balcony as entered: 4,000 along the north edge, 2,400 out, 200 thick, no set-down, so the top bar runs straight into the slab
+  const B = MJ.BALC;
+  if (!B || B.x0 !== 1000 || B.x1 !== 5000 || B.y0 !== 10250 || B.y1 !== 12650 || B.top !== 200 || B.bot !== 0) p("balcony geometry " + JSON.stringify(B));
+  const cant = MJ.runs.find(r => r.label.indexOf("CANTILEVER") >= 0);
+  if (!cant || cant.bars.some(b => b.shape !== "cog" || b.pts.length !== 3) || /Z AT/.test(cant.callout)) p("cantilever bars with no set-down should be cogged and straight: " + (cant && cant.bars[0].shape + " " + cant.callout));
+  if (!MJ.bars.filter(b => b.run.kind === "balc").every(b => b.pts.every(q => q[2] >= B.bot && q[2] <= B.top))) p("balcony bars outside the balcony depth");
+  const ME50 = buildModel(Object.assign({}, job, { balcony: { x0: 1000, x1: 5000, proj: 2400, thk: 200, down: 60 } })), cant50 = ME50.runs.find(r => r.label.indexOf("CANTILEVER") >= 0);
+  if (!cant50 || cant50.bars.some(b => b.shape !== "cog + Z" || b.pts.length !== 5) || !/Z AT 60 STEP/.test(cant50.callout)) p("cantilever bars with a 60 set-down should crank: " + (cant50 && cant50.bars[0].shape + " " + cant50.callout));
+  // bad rows: reported by row number, left out, the good row and the rest of the floor still build; the example's
+  // derived openings only warn when they do not fit
+  const bad = buildModel(Object.assign({}, job, { openings: [
+    { name: "edge", x0: -200, y0: 1000, x1: 800, y1: 2000 },          // 1 outside / within 300 of the slab edge
+    { name: "lift", x0: 7000, y0: 1500, x1: 9000, y1: 4000 },         // 2 fine
+    { name: "beam", x0: 5700, y0: 7000, x1: 6300, y1: 7600 },         // 3 on IB1 (grid 2)
+    { name: "near", x0: 9200, y0: 2000, x1: 9800, y1: 2600 },         // 4 200 from the lift
+    { name: "slot", x0: 2000, y0: 2000, x1: 2200, y1: 4000 },         // 5 too narrow
+    { name: "blank", x0: 2000, y0: "", x1: 2600, y1: 2600 },          // 6 a blank field
+    { name: "fine2", x0: 1500, y0: 7000, x1: 2500, y1: 8500 }],       // 7 fine
+    balcony: { x0: 1000, x1: 2000, proj: 2400, thk: 200, down: 0 } }));   // too narrow
+  const want = [[1, /inside the slab edges/], [3, /sits on beam IB1/], [4, /too close to LIFT/], [5, /too small/], [6, /must all be numbers/]];
+  want.forEach(w => { if (!bad.errors.some(e => e.indexOf("Opening " + w[0] + " ") === 0 && w[1].test(e))) p("missing error for opening " + w[0] + " " + w[1] + "; got " + bad.errors.join(" | ")); });
+  if (!bad.errors.some(e => /^Balcony: too narrow/.test(e)) || bad.BALC) p("a 1,000 balcony should be an error and left out");
+  if (bad.errors.length !== want.length + 1) p("expected exactly " + (want.length + 1) + " errors, got " + bad.errors.length + ": " + bad.errors.join(" | "));
+  if (bad.HOLES.map(h => h.id).join(",") !== "LIFT,FINE2" || bad.HOLES[1].row !== 6) p("the good rows should still build: " + bad.HOLES.map(h => h.id + "@" + h.row).join(","));
+  if (bad.bars.filter(b => b.run.kind === "main").length < 100 || !bad.runs.some(r => r.kind === "trim" && r.callout.indexOf("OF FINE2 ") >= 0)) p("the floor was not built around the bad rows");
+  const small = buildModel({ gridX: [0, 4000], gridY: [0, 3000] });
+  if (small.errors.length || !small.warnings.some(w => /^Example opening stair void left out/.test(w)) || !small.warnings.some(w => /^Example balcony left out/.test(w)) || small.HOLES.length !== 1) p("example rows that do not fit a small grid should warn, not error: " + small.errors.concat(small.warnings).join(" | "));
+  const off = buildModel(Object.assign({}, job, { features: Object.assign({}, job.features, { openings: false, balcony: false }) }));
+  if (off.HOLES.length || off.BALC || off.errors.length) p("feature toggles off should ignore the rows");
+  if (problems.length) fail(problems.slice(0, 20).join("\n"));
+  console.log("  geometry inputs: example rows reproduce the example; job with 3 openings + balcony: bars " + MJ.bars.length + ", marks " + MJ.marks.length + "; 5 bad rows + bad balcony reported, 2 good rows built");
+}
+
 // error paths must report, not throw
 const bad = buildModel({ callouts: "N13-200 A\nSL82 T\nN12-200 A E-W\nN16-200 A E-W" });
 if (!bad.errors.some(e => /N13/.test(e)) || !bad.errors.some(e => /mesh/.test(e)) || !bad.errors.some(e => /already defined/.test(e))) fail("expected errors for bad callouts, got: " + bad.errors.join(" | "));
