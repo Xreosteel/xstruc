@@ -97,6 +97,17 @@ details.sec:not([open]) { gap: 0; }
 .orow .del { padding: 0; height: 30px; line-height: 1; font-size: 18px; color: var(--muted); }
 .orow .del:hover { color: var(--bad); border-color: var(--bad); }
 .orow[data-invalid="true"] input { border-color: var(--bad); }
+/* lap report (#5): the laps in use beside the AS 3600 value */
+.laprep { display: grid; gap: 4px; min-width: 0; }
+.laprep .hint b { color: var(--fg); font-weight: 500; }
+.laprows { display: grid; gap: 5px; }
+.laprow { border-left: 2px solid var(--line); padding-left: 8px; min-width: 0; }
+.laprow .w { font-size: 11.5px; color: var(--muted); }
+.laprow .w b { color: var(--fg); font-weight: 500; }
+.laprow .v { font-family: var(--mono); font-size: 11.5px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.laprow .v b { font-weight: 600; }
+.laprow.short { border-left-color: var(--warn); }
+.laprow.short .d { color: var(--warn); font-weight: 600; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 6px; }
 
 /* Stepper */
@@ -287,9 +298,11 @@ html.print #sheet { background: #fff; }
         <div class="field"><label for="inCover">Cover mm (T &amp; B)</label><input id="inCover" type="number" min="15" max="75" step="5"></div>
         <div class="field"><label for="inFc">Concrete f'c MPa</label><input id="inFc" type="number" min="20" max="80" step="5"></div>
         <div class="field"><label for="inLap">Lap, all bars mm</label><input id="inLap" type="number" min="300" max="2500" step="50"></div>
+        <div class="field wide"><label for="inLapTable">Lap table from the general notes (optional): a case line with its f'c grades, then a row per bar size. Empty = the flat lap above.</label><textarea id="inLapTable" rows="3" spellcheck="false" autocomplete="off" placeholder="SLAB 25 32 40&#10;N12 600 500 450&#10;N16 850 750 650"></textarea></div>
         <div class="field wide"><label for="inCallouts">Mats, one callout per line: size-spacing, layer A–D, and which way it runs (E-W or N-S)</label><textarea id="inCallouts" rows="4" spellcheck="false" autocomplete="off" placeholder="N16-200 A E-W"></textarea></div>
       </div>
       <ul class="errs" id="inErrs"></ul>
+      <div class="laprep" id="lapReport"></div>
       <p class="hint">Layers: A bottom 1st, B bottom 2nd, C top 3rd, D top 4th. Every mat must say which way it runs: <code>E-W</code> or <code>N-S</code>, one direction per layer; nothing is assumed when the drawing is silent. Also understood: <code>N12 @ 200 CTS A E-W</code>, <code>N12-150 C NS</code>.</p>
       <div class="feats" id="feats">
         <label><input type="checkbox" data-feat="beams" checked> Beams IB1 + EB1</label>
@@ -482,6 +495,112 @@ html.print #sheet { background: #fff; }
   const fmt = n => Math.round(n).toLocaleString("en-AU");
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 
+  // ---------- lap and development lengths (backlog #5) ----------
+  // AS 3600:2018 Section 13 as read in the research note (planning log, Findings 2; research/02-lap-and-development-lengths.md)
+  // from secondary sources (Calcs.com, Spectacalc, SkyCiv, New Future Solutions); the standard itself is paywalled, so the
+  // clause numbers and coefficients below are to be verified against the purchased standard (Amdt 2) before release.
+  //   Cl 13.1.2.2  Lsy.tb = 0.5 k1 k3 fsy db / (k2 √f'c), not less than 0.058 fsy k1 db (29 k1 db at fsy 500); f'c capped at 65.
+  //                k1 = 1.3 for a horizontal bar with more than 300 of concrete cast below it, else 1.0.
+  //                k2 = (132 − db) / 100.  k3 = 1.0 − 0.15 (cd − db) / db, kept within 0.7 … 1.0.
+  //   Fig 13.2.2   cd for a lap: the smaller of the cover to the bar and half the clear spacing to the next lapped pair
+  //                (clear spacing a = s − 2 db). DECISIONS.md: cd = min(cover, half clear spacing), show which governed.
+  //   Cl 13.2.2    tension lap in a wide element (slab, wall): Lsy.t.lap = k7 Lsy.t, not less than 0.058 fsy k1 db; k7 = 1.25 (no
+  //                As-provided credit, k4 = k5 = 1.0). Narrow element (beam web): also not less than Lsy.t + 1.5 sb; the beam
+  //                bars here are contact laps (sb = 0), so k7 Lsy.t governs.
+  //   Cl 13.1.5.2  Lsy.cb = 0.22 fsy db / √f'c, not less than 0.0435 fsy db nor 200; k6 = 1.0.
+  //   Cl 13.2.4    compression lap = max(Lsy.c, 40 db, 300).
+  // Computed laps round UP to 50 (DECISIONS.md 2026-11-04). Engineers' tables (ACOR B23) round to the NEAREST 50, so a table
+  // cell can sit a little under the rounded value; "shorter" below compares with the unrounded formula value.
+  const LAP_CASES = {
+    slab: { name: "slab", short: "slab", word: "SLAB", comp: false },
+    beamLt300: { name: "beam, <300 of concrete below the bar", short: "beam <300 below", word: "BEAM <300", k1: 1.0, comp: false },
+    beamGt300: { name: "beam, >300 of concrete below the bar", short: "beam >300 below", word: "BEAM >300", k1: 1.3, comp: false },
+    column: { name: "column / wall (compression)", short: "column", word: "COLUMN", comp: true }
+  };
+  const LAP_ROUND = 50;
+  const roundUpLap = v => Math.ceil(v / LAP_ROUND - 1e-9) * LAP_ROUND;
+  // o = { size, type (N or R), fc, cover (to the bar), spacing (centres of the lapped bars; 0 = a single bar line, cover
+  // governs), below (concrete cast below a horizontal bar), k1 (overrides below), comp (compression lap) }
+  function lapCalc(o) {
+    const db = +o.size, fsy = o.type === "R" ? 250 : 500, fc = Math.min(65, Math.max(20, +o.fc || 20));
+    if (o.comp) {
+      const basic = 0.22 * fsy * db / Math.sqrt(fc), floor = Math.max(0.0435 * fsy * db, 200), Lsy_cb = Math.max(basic, floor);
+      const raw = Math.max(Lsy_cb, 40 * db, 300);
+      const rule = raw === Lsy_cb ? "Cl 13.1.5.2 Lsy.c" : raw === 300 ? "Cl 13.2.4 minimum 300" : "Cl 13.2.4 40db";
+      return { comp: true, fsy: fsy, fc: fc, Lsy_cb: Math.round(Lsy_cb), raw: Math.round(raw), lap: roundUpLap(raw), rule: rule,
+        detail: "Lsy.c " + Math.round(Lsy_cb) + ", 40db " + 40 * db + ", up to " + LAP_ROUND };
+    }
+    const C = +o.cover, k1 = o.k1 != null ? o.k1 : (o.below > 300 ? 1.3 : 1.0);
+    const halfClear = o.spacing > 0 ? (o.spacing - 2 * db) / 2 : Infinity;
+    const cd = Math.min(C, halfClear), cdGov = halfClear < C ? "half clear spacing" : "cover";
+    const k2 = (132 - db) / 100, k3 = Math.min(1, Math.max(0.7, 1 - 0.15 * (cd - db) / db));
+    const floor = 0.058 * fsy * k1 * db, basic = 0.5 * k1 * k3 * fsy * db / (k2 * Math.sqrt(fc)), Lsy_tb = Math.max(basic, floor);
+    const raw = Math.max(1.25 * Lsy_tb, floor);
+    return { comp: false, fsy: fsy, fc: fc, k1: k1, k2: k2, k3: Math.round(k3 * 1000) / 1000, cd: Math.round(cd), cdGov: cdGov, floor: Math.round(floor),
+      Lsy_tb: Math.round(Lsy_tb), raw: Math.round(raw), lap: roundUpLap(raw), rule: basic >= floor ? "Cl 13.2.2 1.25 × Lsy.tb" : "Cl 13.2.2 1.25 × Lsy.tb (at its 29 k1 db minimum)",
+      detail: "Lsy.tb " + Math.round(Lsy_tb) + " × 1.25 = " + Math.round(raw) + ", up to " + LAP_ROUND + "; cd " + Math.round(cd) + " = " + cdGov + ", k1 " + k1.toFixed(1) };
+  }
+  // A project lap table typed from the drawing's general notes (ACOR B23 style, Findings 2.2): a header line per case
+  // (SLAB / BEAM <300 / BEAM >300 / BEAM alone = both beam cases / COLUMN or WALL) followed by the f'c grades of its
+  // columns, then one row per bar size with one lap per grade. A case with no grades (B23's columns) has one value per
+  // size for any f'c. Lines starting with # are comments.
+  //   SLAB 25 32 40
+  //   N12 600 500 450
+  //   N16 850 750 650
+  //   COLUMN
+  //   N12 500
+  // Returns { cases: { slab: { fcs: [25, 32, 40] | null, rows: { 12: [600, 500, 450] }, line }, … }, errors: [], rows, empty }.
+  function parseLapTable(text) {
+    const out = { cases: {}, errors: [], rows: 0, empty: true };
+    let cur = null;
+    const QUAL = /(<|>|LT|GT|LESS THAN|MORE THAN|UNDER|OVER|BELOW|ABOVE)\s*300(?:\s*(?:MM|BELOW|OF CONCRETE(?: CAST)?(?: BELOW)?(?: THE BAR)?|CAST BELOW|CONCRETE BELOW|BELOW BAR))?/g;
+    String(text || "").split(/\r?\n/).forEach((line, i) => {
+      const raw = line.trim(); if (!raw || /^(#|\/\/)/.test(raw)) return;
+      out.empty = false;
+      const where = "Lap table line " + (i + 1) + " (" + raw.slice(0, 40) + (raw.length > 40 ? "…" : "") + "): ";
+      const s = raw.toUpperCase().replace(/[–—]/g, "-").replace(/\b(MPA|F'C|FC|GRADES?|LAPS?|LENGTHS?|MM|BARS?|SIZE)\b/g, " ").replace(/[:,;()|]/g, " ").replace(/\s+/g, " ").trim();
+      let m;
+      if ((m = s.match(/^(SLABS?|BEAMS?|COLUMNS?(?: (?:AND|&|\/) WALLS?)?|WALLS?)(?:\s+(.*))?$/))) {
+        const word = m[1], rest = (m[2] || "").trim();
+        let keys;
+        if (/^SLAB/.test(word)) keys = ["slab"];
+        else if (/^BEAM/.test(word)) keys = /(<|LT|LESS THAN|UNDER|BELOW)\s*300/.test(rest) ? ["beamLt300"] : /(>|GT|MORE THAN|OVER|ABOVE)\s*300/.test(rest) ? ["beamGt300"] : ["beamLt300", "beamGt300"];
+        else keys = ["column"];
+        const toks = rest.replace(QUAL, " ").split(" ").filter(Boolean);
+        const bad = toks.find(t => !/^\d{2,3}$/.test(t));
+        if (bad) { out.errors.push(where + "after the case word give only the f'c grades of the columns (e.g. SLAB 25 32 40), not \"" + bad + "\"."); cur = null; return; }
+        const fcs = toks.map(Number);
+        if (fcs.some(f => f < 20 || f > 100)) { out.errors.push(where + "grades must be f'c values 20–100 MPa."); cur = null; return; }
+        if (new Set(fcs).size !== fcs.length) { out.errors.push(where + "a grade is repeated."); cur = null; return; }
+        const dup = keys.find(k => out.cases[k]); if (dup) { out.errors.push(where + LAP_CASES[dup].word + " was already given above; put all its rows under one header."); cur = keys.filter(k => out.cases[k]); return; }   // rows below still go to that case
+        keys.forEach(k => { out.cases[k] = { fcs: fcs.length ? fcs : null, rows: {}, line: i + 1, both: keys.length > 1 }; });
+        cur = keys; return;
+      }
+      if ((m = s.match(/^(?:N\s?)?(\d{1,2})(?:\s+(.*))?$/))) {
+        if (!cur) { out.errors.push(where + "give the case first: SLAB, BEAM <300, BEAM >300 or COLUMN, then its f'c grades."); return; }
+        const size = +m[1], vals = (m[2] || "").split(" ").filter(Boolean);
+        if (BAR_SIZES.N.indexOf(size) < 0) { out.errors.push(where + "N" + size + " is not a standard N bar size."); return; }
+        const bad = vals.find(v => !/^\d{3,4}$/.test(v)); if (bad) { out.errors.push(where + "laps must be whole millimetres 100–3500, not \"" + bad + "\"."); return; }
+        const nums = vals.map(Number);
+        if (nums.some(v => v < 100 || v > 3500)) { out.errors.push(where + "laps must be 100–3500 mm."); return; }
+        const c0 = out.cases[cur[0]], want = c0.fcs ? c0.fcs.length : 1;
+        if (nums.length !== want) { out.errors.push(where + nums.length + " lap" + (nums.length === 1 ? "" : "s") + " for " + (c0.fcs ? c0.fcs.length + " grades (" + c0.fcs.join(", ") + ")" : "a case with no grades (one lap per size)") + "."); return; }
+        if (c0.rows[size]) { out.errors.push(where + "N" + size + " is already in " + LAP_CASES[cur[0]].word + "."); return; }
+        cur.forEach(k => { out.cases[k].rows[size] = nums; }); out.rows++; return;
+      }
+      out.errors.push(where + "not a case header or a bar row (write SLAB 25 32 40, then N12 600 500 450).");
+    });
+    Object.keys(out.cases).forEach(k => { const c = out.cases[k]; if (!Object.keys(c.rows).length && !(c.both && k === "beamGt300")) out.errors.push("Lap table line " + c.line + " (" + LAP_CASES[k].word + "): no bar rows under this case."); });
+    return out;
+  }
+  // The table's lap for a case / size / f'c: { len } ; { missing: true, fcs } when the case has grades but not this one; null when it has no such row.
+  function lapLookup(table, kase, size, fc) {
+    const c = table && table.cases[kase]; if (!c) return null;
+    const r = c.rows[size]; if (!r) return null;
+    if (!c.fcs) return { len: r[0] };
+    const i = c.fcs.indexOf(fc); return i < 0 ? { missing: true, fcs: c.fcs } : { len: r[i] };
+  }
+
   // ---------- setout from grids ----------
   // A fixer sets out with a tape from the nearest grid line, not from the slab edge, so every bar in plan carries
   // grid-referenced distances (backlog #20): its line across the run direction, both ends along it, and its lap zones.
@@ -671,9 +790,33 @@ html.print #sheet { background: #fff; }
     cfg = Object.assign({}, DEFAULT_CFG, cfg || {});
     cfg.features = Object.assign({}, DEFAULT_CFG.features, cfg.features || {});
     const F = cfg.features, errors = [], warnings = [];
-    const T = +cfg.thickness, C = +cfg.cover;
+    const T = +cfg.thickness, C = +cfg.cover, FC = +cfg.fc;
     const LAPLEN = +cfg.lap;
-    const LAP = {}; [6, 10, 12, 16, 20, 24, 28, 32, 36, 40].forEach(d => { LAP[d] = LAPLEN; });
+    // Laps (#5): the project's flat lap is the default; a lap table typed from the general notes (cfg.lapTable) is used
+    // where it has a row for the case / size / f'c; the AS 3600 value is computed beside every lap in use and a shorter
+    // lap is flagged (DECISIONS.md 2026-11-04: engineer's table, flag differences; computed laps round up to 50).
+    const TABLE = parseLapTable(cfg.lapTable);
+    TABLE.errors.forEach(e => errors.push(e));
+    const LAPS = { source: TABLE.empty ? "flat" : "table", flat: LAPLEN, table: TABLE.empty ? null : TABLE, rows: [], missing: [] };
+    if (!(FC >= 20 && FC <= 100)) errors.push("Concrete f'c must be 20–100 MPa.");
+    // The lap a run of bars gets and the AS 3600 value beside it. o = { size, type, kase (LAP_CASES key), sp (centres of the
+    // lapped bars, 0 = single line), cover (to the bar), below (concrete below the bar), fixed (a value the detail fixes,
+    // used when the table has nothing for it), what (where it is used, for the report) }. Rows are shared by key.
+    function lapUse(o) {
+      const K = LAP_CASES[o.kase], type = o.type || "N";
+      const calc = lapCalc({ size: o.size, type: type, fc: FC, cover: o.cover, spacing: o.sp, below: o.below, k1: K.k1, comp: K.comp });
+      let len = LAPLEN, src = "flat";
+      const t = LAPS.table ? lapLookup(LAPS.table, o.kase, o.size, FC) : null;
+      if (t && t.missing) { const msg = "Lap table: " + K.word + " has no column for f'c " + FC + " MPa (grades " + t.fcs.join(", ") + "); add one or change f'c."; if (errors.indexOf(msg) < 0) errors.push(msg); }
+      else if (t) { len = t.len; src = "table"; }
+      else if (o.fixed != null) { len = o.fixed; src = "fixed"; }
+      const key = [o.kase, type + o.size, o.sp | 0, o.cover, o.below > 300 ? 1 : 0, src, len].join("|");
+      let row = LAPS.rows.find(r => r.key === key);
+      if (!row) { row = { key: key, kase: o.kase, caseName: K.name, caseShort: K.short, size: o.size, type: type, fc: FC, sp: o.sp || 0, cover: o.cover, below: o.below, calc: calc, len: len, src: src, diff: len - calc.lap, short: len < calc.raw, lapped: 0, what: [] }; LAPS.rows.push(row); }   // lapped: bar ends that actually lap with this value
+      if (o.what && row.what.indexOf(o.what) < 0) row.what.push(o.what);
+      return row;
+    }
+    const lapSrcText = r => r.src === "table" ? "lap table" : r.src === "fixed" ? "fixed by the detail" : "project flat lap";
 
     // grids
     const G = parseGrids(cfg), gx = G.gx, gy = G.gy, OV = G.OV, SL = G.SL;
@@ -718,6 +861,11 @@ html.print #sheet { background: #fff; }
     MAT_LAYERS.forEach(l => { const m = mats[l]; if (!m) return; m.top = l === "C" || l === "D"; m.z = Z[l]; m.dir = m.dirIn; });   // dirIn is X or Y here; anything else was rejected above
     if (mats.A && mats.B && mats.A.dir === mats.B.dir) warnings.push("Layers A and B run the same way; a bottom mat normally crosses (A E-W, B N-S).");
     if (mats.C && mats.D && mats.C.dir === mats.D.dir) warnings.push("Layers C and D run the same way; a top mat normally crosses.");
+    // each mat's lap (#5): slab case; the cover to the bar is the slab cover for the outer layers A and D and the cover
+    // plus the outer bar for the inner layers B and C; k1 from the concrete below the bar (1.3 over 300, Cl 13.1.2.2)
+    const MATLAP = {};
+    MAT_LAYERS.forEach(l => { const m = mats[l]; if (!m) return; m.lap = MATLAP[l] = lapUse({ size: m.size, kase: "slab", sp: m.sp, cover: C + (l === "B" ? dA : l === "C" ? dD : 0), below: m.z - m.size / 2, what: "layer " + l }); });
+    const matLaps = Object.keys(MATLAP).map(l => MATLAP[l].len), LAPMAX = matLaps.length ? Math.max(...matLaps) : LAPLEN;   // the longest mat lap sizes the Z-bar and L-bar room checks below
 
     // geometry features derived from the grids (clipped to the slab)
     const inside = r => r.x0 >= SL.x0 + 300 && r.x1 <= SL.x1 - 300 && r.y0 >= SL.y0 + 300 && r.y1 <= SL.y1 - 300 && r.x1 - r.x0 > 300 && r.y1 - r.y0 > 300;
@@ -749,7 +897,7 @@ html.print #sheet { background: #fff; }
       const say = msg => explicitS ? errors.push("Step: " + msg) : warnings.push("Example step left out: " + msg);
       const v = [s.x0, s.y0, s.rise, s.nib].map(numv);
       // the L-bars reach lap + cover + 64 from the step line on each side, so the step line keeps that (at least 1,000) from every slab edge
-      const minBay = Math.max(1000, LAPLEN + 2 * C + 100), nibMin = 2 * C + 100;   // nib holds both vertical legs (at C + 40 and C + 64) with cover to its far face
+      const minBay = Math.max(1000, LAPMAX + 2 * C + 100), nibMin = 2 * C + 100;   // nib holds both vertical legs (at C + 40 and C + 64) with cover to its far face
       if (v.some(n => !isFinite(n))) say("from x, from y, rise and nib must all be numbers.");
       else if (!(v[2] > ZBAR_MAX_DROP)) say("a rise of " + ZBAR_MAX_DROP + " or less is a shallow set-down (Z-bars), not a step; enter it as a set-down.");
       else if (v[2] > STEP_MAX_RISE) say("rise must be at most " + STEP_MAX_RISE + "; a taller change of level is a wall, not a slab step.");
@@ -763,7 +911,7 @@ html.print #sheet { background: #fff; }
     }
     // ---- set-downs: shallow drops of the whole slab, Z-bar splices (crank 1:6, ≥ 300, SRIA TN5) across every edge in every mat ----
     const DROPS = [];
-    const zReach = d => LAPLEN + Math.max(300, 6 * d) / 2;   // how far a Z-bar reaches from the set-down edge: lap + half the crank
+    const zReach = d => LAPMAX + Math.max(300, 6 * d) / 2;   // how far a Z-bar reaches from the set-down edge: the longest mat lap + half the crank
     if (F.drop) {
       (explicitD ? cfg.setdowns : EX.setdowns).forEach((o, i) => {
         const name = String(o && o.name != null ? o.name : "").trim().toUpperCase().slice(0, 24) || "SET-DOWN " + (i + 1);
@@ -773,7 +921,7 @@ html.print #sheet { background: #fff; }
         const dd = { id: name, row: i, x0: Math.min(v[0], v[2]), x1: Math.max(v[0], v[2]), y0: Math.min(v[1], v[3]), y1: Math.max(v[1], v[3]), d: v[4], kind: "drop" };
         if (!(dd.d >= 10 && dd.d <= ZBAR_MAX_DROP)) return say("depth must be 10–" + ZBAR_MAX_DROP + "; a deeper change of level is a step (L-bars on a nib), enter it as the step.");
         const reach = zReach(dd.d), minSide = 2 * reach + 100, edge = Math.max(300, Math.ceil((reach + C) / 10) * 10);
-        if (dd.x1 - dd.x0 < minSide || dd.y1 - dd.y0 < minSide) return say("too small for Z-bar splices from both edges (lap " + LAPLEN + " + half a " + Math.max(300, 6 * dd.d) + " crank each); make each side at least " + fmt(minSide) + ".");
+        if (dd.x1 - dd.x0 < minSide || dd.y1 - dd.y0 < minSide) return say("too small for Z-bar splices from both edges (lap " + LAPMAX + " + half a " + Math.max(300, 6 * dd.d) + " crank each); make each side at least " + fmt(minSide) + ".");
         if (!(dd.x0 >= SL.x0 + edge && dd.x1 <= SL.x1 - edge && dd.y0 >= SL.y0 + edge && dd.y1 <= SL.y1 - edge)) return say("must sit at least " + fmt(edge) + " inside the slab edges so the Z-bars fit (slab " + fmt(SL.x0) + " to " + fmt(SL.x1) + " E–W, " + fmt(SL.y0) + " to " + fmt(SL.y1) + " N–S).");
         const bm = beamOn(dd); if (bm) return say("sits on beam " + bm + ".");
         if (STEP && overlaps(dd, STEP)) return say("overlaps the step.");
@@ -839,7 +987,10 @@ html.print #sheet { background: #fff; }
     }
     // plan extents of the pour: the slab plus its balconies (grids, bubbles, dimension strings and the sheet frame it)
     const EXT = { x0: Math.min(SL.x0, ...BALCS.map(b => b.x0)), x1: Math.max(SL.x1, ...BALCS.map(b => b.x1)), y0: Math.min(SL.y0, ...BALCS.map(b => b.y0)), y1: Math.max(SL.y1, ...BALCS.map(b => b.y1)) };
-    const COLB = -1500, COL = 400, PROJ = 950;
+    const COLB = -1500, COL = 400;
+    // starter projection = the lap with the column bars above (#5): the example's 950 unless the lap table has a COLUMN
+    // row for N24 (compression lap, Cl 13.2.4; the AS 3600 value is computed beside it either way)
+    const STLAP = F.columns ? lapUse({ size: 24, kase: "column", sp: 0, cover: C, below: 0, fixed: 950, what: "column starters" }) : null, PROJ = STLAP ? STLAP.len : 950;
     const lvl = (x, y) => { if (STEP && x > STEP.x0 && y > STEP.y0) return STEP.rise; for (let i = 0; i < DROPS.length; i++) { const dd = DROPS[i]; if (x > dd.x0 && x < dd.x1 && y > dd.y0 && y < dd.y1) return -dd.d; } return 0; };
     const COLS = [];
     if (F.columns) GX.forEach(g1 => GY.forEach(g2 => COLS.push({ x: g1[1], y: g2[1], name: g1[0] + "/" + g2[0] })));
@@ -859,7 +1010,8 @@ html.print #sheet { background: #fff; }
       const c = classify(b, b.geom);
       b.code = c.code; b.shapeName = c.name; b.dims = c.dims; b.dimStr = c.dimStr; b.flags = c.flags;
       if (c.flags.length && !b.existing) cogFlagged++;
-      b.grid = gridSetout(b, GX, GY, LAP[b.size] || LAPLEN);
+      b.grid = gridSetout(b, GX, GY, run.lap ? run.lap.len : 0);
+      if (run.lap && !b.existing && (b.lapPrev || b.lapNext || run.kind === "z" || run.kind === "l" || run.kind === "start")) run.lap.lapped++;
       bars.push(b); run.bars.push(b); return b;
     }
     // r.grid for a run of parallel bar lines: first and last line from the nearest grid, plus the slab-edge distances.
@@ -869,11 +1021,11 @@ html.print #sheet { background: #fff; }
     }
     // Split a bar line [a, b] into stock-length pieces with laps. exS / exE = extra steel at the start / end (a cog or hook)
     // that must also come out of the 12 m stock bar. odd = stagger (split from the far end) for alternate bars.
-    function pieces(a, b, size, odd, exS, exE) {
+    function pieces(a, b, run, odd, exS, exE) {
       exS = exS || 0; exE = exE || 0;
       if (b - a + exS + exE <= STOCK) return [[a, b]];
-      if (odd) return pieces(-b, -a, size, false, exE, exS).map(p => [-p[1], -p[0]]).reverse();
-      const lap = LAP[size] || LAPLEN, out = [];
+      if (odd) return pieces(-b, -a, run, false, exE, exS).map(p => [-p[1], -p[0]]).reverse();
+      const lap = run.lap ? run.lap.len : LAPLEN, out = [];
       let s = a, first = true;
       for (;;) {
         const cap = STOCK - (first ? exS : 0);
@@ -916,7 +1068,7 @@ html.print #sheet { background: #fff; }
         const zz = z + iv.o;
         const edgeS = X ? iv.s <= SL.x0 + C + 1 : iv.s <= SL.y0 + C + 1, edgeE = X ? iv.e >= SL.x1 - C - 1 : iv.e >= SL.y1 - C - 1;
         const cogS = !!(o.cog && F.edges && iv.fs && edgeS), cogE = !!(o.cog && F.edges && iv.fe && edgeE), cogX = Math.max(0, zz - (COGZ + iv.o));
-        const ps = pieces(iv.s, iv.e, run.size, !!o.odd, cogS ? cogX : 0, cogE ? cogX : 0);
+        const ps = pieces(iv.s, iv.e, run, !!o.odd, cogS ? cogX : 0, cogE ? cogX : 0);
         ps.forEach((pc, k) => {
           const pts = [P(pc[0], zz), P(pc[1], zz)]; let cogs = 0;
           if (cogS && k === 0) { pts.unshift(P(pc[0], COGZ + iv.o)); cogs++; }
@@ -930,7 +1082,7 @@ html.print #sheet { background: #fff; }
     const tagAlong = { A: 0.52, B: 0.47, C: 0.41, D: 0.58 }, tagFrac = { A: 0.3, B: 0.2, C: 0.82, D: 0.72 };
     MAT_LAYERS.forEach(lid => {
       const m = mats[lid]; if (!m) return;
-      const d = m.size, X = m.dir === "X", Lp = LAP[d];
+      const d = m.size, X = m.dir === "X", Lp = m.lap.len;
       const a0 = X ? SL.x0 + C : SL.y0 + C, a1 = X ? SL.x1 - C : SL.y1 - C;
       const q0 = X ? SL.y0 : SL.x0, q1 = X ? SL.y1 : SL.x1;
       const n = Math.floor((q1 - q0 - 2 * C - d) / m.sp) + 1;
@@ -938,9 +1090,9 @@ html.print #sheet { background: #fff; }
       const start = q0 + (q1 - q0 - (n - 1) * m.sp) / 2;
       const run = addRun({ layer: lid, size: d, dir: m.dir, sp: m.sp, n: n, kind: "main", z: m.z,
         label: n + " N" + d + "-" + m.sp + " · " + lid, callout: "N" + d + "-" + m.sp + " LAYER " + lid + (X ? " E–W" : " N–S") + (m.top && F.edges ? ", COGGED AT FREE EDGES" : ""),
-        setout: { first: start - q0, last: q1 - (start + (n - 1) * m.sp), edges: X ? ["S", "N"] : ["W", "E"] } });
-      const zruns = DROPS.map(dd => addRun({ layer: lid, size: d, dir: m.dir, kind: "z", z: m.z, drop: dd, label: "Z-BARS N" + d + "-" + m.sp + " · " + lid, callout: "Z-BAR SPLICES N" + d + "-" + m.sp + " LAYER " + lid + " AT " + dd.d + " SET-DOWN (" + dd.id + "), LAP " + Lp + " EACH SIDE" }));
-      const lrun = STEP ? addRun({ layer: lid, size: d, dir: m.dir, kind: "l", z: m.z, label: "L-BARS N" + d + "-" + m.sp + " · " + lid, callout: "L-BARS N" + d + "-" + m.sp + " LAYER " + lid + " EACH SIDE OF " + STEP.rise + " STEP, LEG " + Lp }) : null;
+        setout: { first: start - q0, last: q1 - (start + (n - 1) * m.sp), edges: X ? ["S", "N"] : ["W", "E"] }, lap: m.lap });
+      const zruns = DROPS.map(dd => addRun({ layer: lid, size: d, dir: m.dir, kind: "z", z: m.z, drop: dd, lap: m.lap, label: "Z-BARS N" + d + "-" + m.sp + " · " + lid, callout: "Z-BAR SPLICES N" + d + "-" + m.sp + " LAYER " + lid + " AT " + dd.d + " SET-DOWN (" + dd.id + "), LAP " + Lp + " EACH SIDE" }));
+      const lrun = STEP ? addRun({ layer: lid, size: d, dir: m.dir, kind: "l", z: m.z, lap: m.lap, label: "L-BARS N" + d + "-" + m.sp + " · " + lid, callout: "L-BARS N" + d + "-" + m.sp + " LAYER " + lid + " EACH SIDE OF " + STEP.rise + " STEP, LEG " + Lp }) : null;
       let cur = 0;
       const P = (sv, z) => X ? [sv, cur, z] : [cur, sv, z];
       for (let i = 0; i < n; i++) {
@@ -951,7 +1103,7 @@ html.print #sheet { background: #fff; }
           const z = m.z + iv.o;
           minusF(iv.s, iv.e, iv.fs, iv.fe, cuts).forEach(g => {
             const cogX = m.top && F.edges ? m.z - COGZ : 0;
-            const ps = pieces(g.s, g.e, d, i % 2 === 1, g.fs ? cogX : 0, g.fe ? cogX : 0);
+            const ps = pieces(g.s, g.e, run, i % 2 === 1, g.fs ? cogX : 0, g.fe ? cogX : 0);
             ps.forEach((pc, k) => {
               const pts = [P(pc[0], z), P(pc[1], z)]; let cogs = 0;
               if (m.top && F.edges && k === 0 && g.fs) { pts.unshift(P(pc[0], COGZ + iv.o)); cogs++; }
@@ -987,19 +1139,19 @@ html.print #sheet { background: #fff; }
     // ---- N12 edge bars top and bottom around the free slab edges (inside the cogs) ----
     if (F.edges) {
       const off = C + 12;
-      const et = addRun({ layer: "D", size: 12, dir: "X", kind: "edge", z: zEdgeT, label: "N12 EDGE BAR T", callout: "N12 EDGE BAR TOP, ALL FREE SLAB EDGES" });
-      const eb = addRun({ layer: "A", size: 12, dir: "X", kind: "edge", z: zEdgeB, label: "N12 EDGE BAR B", callout: "N12 EDGE BAR BOTTOM, ALL FREE SLAB EDGES" });
+      const et = addRun({ layer: "D", size: 12, dir: "X", kind: "edge", z: zEdgeT, label: "N12 EDGE BAR T", callout: "N12 EDGE BAR TOP, ALL FREE SLAB EDGES", lap: lapUse({ size: 12, kase: "slab", sp: 0, cover: C, below: zEdgeT - 6, what: "edge bars top" }) });
+      const eb = addRun({ layer: "A", size: 12, dir: "X", kind: "edge", z: zEdgeB, label: "N12 EDGE BAR B", callout: "N12 EDGE BAR BOTTOM, ALL FREE SLAB EDGES", lap: lapUse({ size: 12, kase: "slab", sp: 0, cover: C, below: zEdgeB - 6, what: "edge bars bottom" }) });
       [[true, SL.y0 + off], [true, SL.y1 - off], [false, SL.x0 + off], [false, SL.x1 - off]].forEach(e => {
         const a = e[0] ? SL.x0 + off : SL.y0 + off, b = e[0] ? SL.x1 - off : SL.y1 - off;
-        [[et, zEdgeT], [eb, zEdgeB]].forEach(rz => placeLine(rz[0], e[0], e[1], a, b, rz[1], { setout: "slab edge", note: "Edge bar along the free slab edge, tied inside the top-bar cogs; laps " + LAPLEN + " where split." }));
+        [[et, zEdgeT], [eb, zEdgeB]].forEach(rz => placeLine(rz[0], e[0], e[1], a, b, rz[1], { setout: "slab edge", note: "Edge bar along the free slab edge, tied inside the top-bar cogs; laps " + rz[0].lap.len + " where split." }));
       });
       et.tagPos = [SL.x0 + Math.min(2850, L * 0.2), SL.y0 + off, zEdgeT + 20]; eb.tagPos = [SL.x0 + off, SL.y0 + Math.min(1550, Wd * 0.17), zEdgeB + 20];
     }
 
     // ---- additional top bars over flat-plate columns (columns not on a beam line) ----
     if (COLS.length && (mats.C || mats.D)) {
-      const rx = mats.D ? addRun({ layer: "D", size: 16, dir: "X", kind: "add", z: Z.D, label: "ADD N16-200 · D × 3000", callout: "ADD N16-200 LAYER D × 3000 OVER COLUMNS" }) : null;
-      const ry = mats.C ? addRun({ layer: "C", size: 16, dir: "Y", kind: "add", z: Z.C, label: "ADD N16-200 · C × 3000", callout: "ADD N16-200 LAYER C × 3000 OVER COLUMNS" }) : null;
+      const rx = mats.D ? addRun({ layer: "D", size: 16, dir: "X", kind: "add", z: Z.D, label: "ADD N16-200 · D × 3000", callout: "ADD N16-200 LAYER D × 3000 OVER COLUMNS", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C, below: Z.D - 8, what: "additional top bars (D)" }) }) : null;
+      const ry = mats.C ? addRun({ layer: "C", size: 16, dir: "Y", kind: "add", z: Z.C, label: "ADD N16-200 · C × 3000", callout: "ADD N16-200 LAYER C × 3000 OVER COLUMNS", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C + dD, below: Z.C - 8, what: "additional top bars (C)" }) }) : null;
       let last = null;
       COLS.filter(c => !inBeam(c.x, c.y).length).forEach(c => {
         last = c;
@@ -1015,13 +1167,13 @@ html.print #sheet { background: #fff; }
     if (F.extras && nX >= 3 && nY >= 2) {
       const midX = (gx[1] + gx[2]) / 2, bay = { x0: gx[1] + 200, x1: gx[2] - 200, y0: gy[0] + 200, y1: gy[1] - 200 };
       if (mats.A && clearOfBeams({ x0: midX - 1500, x1: midX + 1500, y0: bay.y0, y1: bay.y1 })) {
-        const ex1 = addRun({ layer: "A", size: 16, dir: "X", kind: "extra", z: Z.A, label: "EXTRA N16-200 · A × 3000", callout: "EXTRA N16-200 LAYER A × 3000 MID-SPAN, BAY 2–3 / A–B" });
+        const ex1 = addRun({ layer: "A", size: 16, dir: "X", kind: "extra", z: Z.A, label: "EXTRA N16-200 · A × 3000", callout: "EXTRA N16-200 LAYER A × 3000 MID-SPAN, BAY 2–3 / A–B", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C, below: Z.A - 8, what: "extra bottom bars (A)" }) });
         for (let y = bay.y0 + 900; y <= bay.y1 - 800; y += 200) placeLine(ex1, true, y, midX - 1500, midX + 1500, Z.A, { setout: so(true, y), note: "Extra bottom bar at mid-span, placed between the layer A mat bars." });
         if (ex1.bars.length) ex1.tagPos = [midX, bay.y0 + 1200, Z.A + 22]; else runs.splice(runs.indexOf(ex1), 1);
       }
       const ib = BEAMS.find(b => b.id === "IB1");
       if (ib && mats.D) {
-        const ex2 = addRun({ layer: "D", size: 16, dir: "X", kind: "extra", z: Z.D, label: "EXTRA N16-300 · D × 3000 OVER IB1", callout: "EXTRA N16-300 LAYER D × 3000 OVER BEAM IB1" });
+        const ex2 = addRun({ layer: "D", size: 16, dir: "X", kind: "extra", z: Z.D, label: "EXTRA N16-300 · D × 3000 OVER IB1", callout: "EXTRA N16-300 LAYER D × 3000 OVER BEAM IB1", lap: lapUse({ size: 16, kase: "slab", sp: 300, cover: C, below: Z.D - 8, what: "extra top bars over IB1 (D)" }) });
         for (let y = SL.y0 + 175; y <= SL.y1 - 50; y += 300) placeLine(ex2, true, y, ib.at - 1500, ib.at + 1500, Z.D, { setout: so(true, y), note: "Extra top bar across beam IB1, 1500 each side of the beam centreline, between the layer D mat bars." });
         ex2.tagPos = [ib.at + 900, SL.y0 + Wd * 0.3, Z.D + 26];
       }
@@ -1043,7 +1195,8 @@ html.print #sheet { background: #fff; }
       const cx = v => Math.max(SL.x0 + C, Math.min(SL.x1 - C, v)), cy = v => Math.max(SL.y0 + C, Math.min(SL.y1 - C, v));
       [{ layer: "A", size: sizeB, X: true, z: Z.A }, { layer: "B", size: sizeB, X: false, z: Z.B }, { layer: "C", size: sizeT, X: false, z: Z.C }, { layer: "D", size: sizeT, X: true, z: Z.D }].forEach(t => {
         if (!mats[t.layer]) return;
-        const run = addRun({ layer: t.layer, size: t.size, dir: t.X ? "X" : "Y", kind: "trim", z: t.z, label: "2-N" + t.size + " TRIM · " + t.layer, callout: "2-N" + t.size + " TRIMMERS EACH SIDE OF " + name + " (LAYER " + t.layer + ")" });
+        const run = addRun({ layer: t.layer, size: t.size, dir: t.X ? "X" : "Y", kind: "trim", z: t.z, label: "2-N" + t.size + " TRIM · " + t.layer, callout: "2-N" + t.size + " TRIMMERS EACH SIDE OF " + name + " (LAYER " + t.layer + ")",
+          lap: lapUse({ size: t.size, kase: "slab", sp: 75, cover: C + (t.layer === "B" ? dA : t.layer === "C" ? dD : 0), below: t.z - t.size / 2, what: "trimmers (" + t.layer + ")" }) });   // the two trimmers sit 75 apart, so half the clear spacing governs cd
         (t.X ? yL : xL).forEach(p => placeLine(run, t.X, p, t.X ? cx(h.x0 - ext) : cy(h.y0 - ext), t.X ? cx(h.x1 + ext) : cy(h.y1 + ext), t.z, { cog: t.layer === "C" || t.layer === "D", setout: name.toLowerCase() + " edge", note: "Trimmer: replaces the bars stopped at the opening and extends " + ext + " past each corner." }));
         run.tagPos = t.X ? [(h.x0 + h.x1) / 2, t.layer === "A" ? h.y1 + 300 : h.y0 - 300, t.z + 22] : [t.layer === "B" ? h.x0 - 360 : h.x1 + 360, (h.y0 + h.y1) / 2, t.z + 22];
       });
@@ -1103,20 +1256,22 @@ html.print #sheet { background: #fff; }
       const P = (sv, tv, z) => X ? [sv, bm.at + tv, z] : [bm.at + tv, sv, z];
       const spread = (n, d) => { const e = bm.w / 2 - C - ld - d / 2; return n === 1 ? [0] : Array.from({ length: n }, (_, i) => -e + i * 2 * e / (n - 1)); };
       const zB = soff + C + ld + bm.bot[0] / 2, zT = zChairTop - 20;
-      const bot = addRun({ layer: "BM", size: bm.bot[0], dir: bm.dir, kind: "beam", z: zB, label: bm.id + " · " + bm.bot[1] + "N" + bm.bot[0] + " B", callout: bm.id + " " + bm.bot[1] + "N" + bm.bot[0] + " BOTTOM, COGGED ENDS" });
+      // beam laps (#5): narrow-element contact laps; cover to the bar = cover + the lig; the bar centres from spread(); k1 1.3 for the top bars (more than 300 of concrete below)
+      const beamLap = (n, d, z, what) => { const e = bm.w / 2 - C - ld - d / 2, below = z - soff - d / 2; return lapUse({ size: d, kase: below > 300 ? "beamGt300" : "beamLt300", sp: n > 1 ? 2 * e / (n - 1) : 0, cover: C + ld, below: below, what: bm.id + " " + what }); };
+      const bot = addRun({ layer: "BM", size: bm.bot[0], dir: bm.dir, kind: "beam", z: zB, label: bm.id + " · " + bm.bot[1] + "N" + bm.bot[0] + " B", callout: bm.id + " " + bm.bot[1] + "N" + bm.bot[0] + " BOTTOM, COGGED ENDS", lap: beamLap(bm.bot[1], bm.bot[0], zB, "bottom bars") });
       // longitudinal bars: split at the 12 m stock length with staggered laps, cogs on the true ends only
       const beamLine = (run, tv, i, z, cogDz, size, what) => {
-        const ps = pieces(bm.a + C, bm.b - C, size, i % 2 === 1, 300, 300);
+        const ps = pieces(bm.a + C, bm.b - C, run, i % 2 === 1, 300, 300);
         ps.forEach((pc, k) => {
           const pts = [P(pc[0], tv, z), P(pc[1], tv, z)], first = k === 0, last = k === ps.length - 1;
           if (first) pts.unshift(P(pc[0], tv, z + cogDz)); if (last) pts.push(P(pc[1], tv, z + cogDz));
           addBar(run, { pts: pts, beam: true, shape: first && last ? "cogged both ends" : first || last ? "cogged one end" : "straight", lapPrev: !first, lapNext: !last,
-            setout: tv === 0 ? "on beam centreline" : fmt(Math.abs(tv)) + " off beam centreline", note: "Beam " + what + " bar; standard cogs (300 nominal) at the beam ends" + (ps.length > 1 ? ", split at 12 m with " + LAPLEN + " staggered laps." : ".") });
+            setout: tv === 0 ? "on beam centreline" : fmt(Math.abs(tv)) + " off beam centreline", note: "Beam " + what + " bar; standard cogs (300 nominal) at the beam ends" + (ps.length > 1 ? ", split at 12 m with " + run.lap.len + " staggered laps." : ".") });
         });
       };
       spread(bm.bot[1], bm.bot[0]).forEach((tv, i) => beamLine(bot, tv, i, zB, 300, bm.bot[0], "bottom"));
       bot.tagPos = X ? [bm.a + (bm.b - bm.a) * bm.tagS, bm.at, zB] : [bm.at, bm.a + (bm.b - bm.a) * bm.tagS, zB];
-      const top = addRun({ layer: "BM", size: bm.top[0], dir: bm.dir, kind: "beam", z: zT, label: bm.id + " · " + bm.top[1] + "N" + bm.top[0] + " T", callout: bm.id + " " + bm.top[1] + "N" + bm.top[0] + " TOP, COGGED ENDS" });
+      const top = addRun({ layer: "BM", size: bm.top[0], dir: bm.dir, kind: "beam", z: zT, label: bm.id + " · " + bm.top[1] + "N" + bm.top[0] + " T", callout: bm.id + " " + bm.top[1] + "N" + bm.top[0] + " TOP, COGGED ENDS", lap: beamLap(bm.top[1], bm.top[0], zT, "top bars") });
       spread(bm.top[1], bm.top[0]).forEach((tv, i) => beamLine(top, tv, i, zT, -300, bm.top[0], "top"));
       top.tagPos = X ? [bm.a + (bm.b - bm.a) * (bm.tagS + 0.3), bm.at, zT + 40] : [bm.at, bm.a + (bm.b - bm.a) * (bm.tagS + 0.3), zT + 40];
       const lg = addRun({ layer: "BM", size: ld, type: bm.lig[2], dir: bm.dir, kind: "lig", z: soff + 100, label: bm.id + " · " + bm.lig[2] + ld + " LIGS @" + bm.lig[1], callout: bm.id + " " + bm.lig[2] + ld + " CLOSED LIGS @ " + bm.lig[1] });
@@ -1132,7 +1287,7 @@ html.print #sheet { background: #fff; }
       const offs = [[-o, -o], [0, -o], [o, -o], [-o, 0], [o, 0], [-o, o], [0, o], [o, o]];
       const cv = addRun({ layer: "CL", size: 24, dir: "Z", kind: "col", z: -800, label: "COL 400 × 400 · 8N24 · R10-200", callout: "COLUMN BELOW: 8N24 VERTICALS, R10 TIES @ 200", existing: true });
       const ct = addRun({ layer: "CL", size: 10, type: "R", dir: "Z", kind: "col", z: -800, label: "", callout: "COLUMN BELOW: R10 TIES @ 200", existing: true });
-      const st = addRun({ layer: "ST", size: 24, dir: "Z", kind: "start", z: T + 400, label: "8N24 STARTERS · PROJ " + PROJ, callout: "8N24 STARTERS PER COLUMN, PROJECT " + PROJ + " ABOVE SLAB" });
+      const st = addRun({ layer: "ST", size: 24, dir: "Z", kind: "start", z: T + 400, label: "8N24 STARTERS · PROJ " + PROJ, callout: "8N24 STARTERS PER COLUMN, PROJECT " + PROJ + " ABOVE SLAB", lap: STLAP });
       COLS.forEach(c => {
         const bmNames = [...new Set(inBeam(c.x, c.y).map(b => b.id))];
         offs.forEach(([dx, dy]) => {
@@ -1176,6 +1331,15 @@ html.print #sheet { background: #fff; }
       list.forEach(b => { b.mark = m; });
       return { mark: m, type: list[0].type, size: list[0].size, shape: list[0].shape, code: list[0].code, shapeName: list[0].shapeName, dims: list[0].dims, dimStr: list[0].dimStr, flags: list[0].flags, pin: list[0].geom.dp, len: list[0].len, qty: list.length, layer: list[0].layer, kg: list.reduce((s, b) => s + b.kg, 0) };
     });
+    // lap flags (#5): any lap in use that is shorter than the AS 3600 value, and table gaps the flat lap filled
+    LAPS.rows.filter(r => r.short && r.lapped).forEach(r => warnings.push("Lap " + r.type + r.size + " " + r.caseShort + " (" + r.what.join(", ") + "): " + r.len + " (" + lapSrcText(r) + ") is shorter than AS 3600 " + r.calc.rule + " gives, " + r.calc.lap + " (" + r.calc.detail + "). Check with the engineer."));
+    if (LAPS.table) {   // one line for the table's gaps among the laps actually in use (and the mats): the flat lap or the detail's value filled them
+      const by = {};
+      LAPS.rows.filter(r => r.src !== "table" && (r.lapped || r.what.some(w => /^layer /.test(w)))).forEach(r => { const k = LAP_CASES[r.kase].word + " " + r.type + r.size; const m = by[k] = by[k] || { key: k, kase: r.kase, size: r.size, type: r.type, len: r.len, src: r.src, what: [] }; r.what.forEach(w => { if (m.what.indexOf(w) < 0) m.what.push(w); }); });
+      LAPS.missing = Object.keys(by).map(k => by[k]);
+      if (LAPS.missing.length) warnings.push("Lap table has no row for " + LAPS.missing.map(m => m.key + " (" + m.what.join(", ") + (m.src === "fixed" ? ": the detail's " + m.len + " stays" : "") + ")").join(", ") + "; the flat lap " + LAPLEN + " is used where no detail fixes it.");
+    }
+    LAPS.text = LAPS.source === "flat" ? LAPLEN + " all bars" : "per lap table" + (LAPS.missing.length ? " (flat " + LAPLEN + " where it has no row)" : "");
     if (cogFlagged) warnings.push(cogFlagged + " top-bar cogs are shorter than the AS 3600 standard cog because the slab is only " + T + " thick; scheduled as drawn. Confirm the cog length with the engineer.");
     bars.filter(b => b.existing).forEach(b => { b.mark = "EX"; });
     runs.forEach(r => { r.marks = [...new Set(r.bars.map(b => b.mark))]; });
@@ -1183,7 +1347,7 @@ html.print #sheet { background: #fff; }
 
     return { cfg: cfg, errors: errors, warnings: warnings, parsed: parsed, mats: mats, Z: Z, T: T, C: C, L: L, W: Wd, SL: SL, GX: GX, GY: GY, gx: gx, gy: gy,
       HOLES: HOLES, DROPS: DROPS, STEP: STEP, BALCS: BALCS, EXT: EXT, BEAMS: BEAMS, COLS: COLS, COL: COL, COLB: COLB, PROJ: PROJ,
-      bars: bars, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kg, LAYERS: LAYERS, LBY: LBY, EXPLODE: EXPLODE, lvl: lvl };
+      bars: bars, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kg, laps: LAPS, LAYERS: LAYERS, LBY: LBY, EXPLODE: EXPLODE, lvl: lvl };
   }
 
   // ---------- 2D placing sheet (backlog #9a) ----------
@@ -1262,7 +1426,9 @@ html.print #sheet { background: #fff; }
     const lname = l => (LBY[l] ? LBY[l].name : l).toUpperCase();
     const mat = S.layer && M.mats[S.layer] ? " · N" + M.mats[S.layer].size + "-" + M.mats[S.layer].sp + (M.mats[S.layer].dir === "X" ? " E–W" : " N–S") : "";
     S.title.push(M.cfg.name.toUpperCase() + " · PLACING SHEET · " + (S.layer ? lname(S.layer) + mat : solid.length ? "ALL LAYERS" : "FORMWORK"));
-    S.title.push(M.T + " THK · COVER " + M.C + " · LAPS " + M.cfg.lap + " · " + (S.layer ? S.bars.filter(x => !x.ghost).length + " BARS THIS LAYER" : fmt(M.sched.length) + " BARS") + (ghost.length ? " · BELOW: " + ghost.join(" ") : ""));
+    // the lap this layer is placed with (#5): its mat's lap, from the table when one is in use, else the flat lap
+    const lapTxt = S.layer && M.mats[S.layer] ? "LAP " + M.mats[S.layer].lap.len + (M.laps.source === "table" ? " (TABLE)" : "") : M.laps.source === "flat" ? "LAPS " + M.cfg.lap : "LAPS PER TABLE";
+    S.title.push(M.T + " THK · COVER " + M.C + " · " + lapTxt + " · " + (S.layer ? S.bars.filter(x => !x.ghost).length + " BARS THIS LAYER" : fmt(M.sched.length) + " BARS") + (ghost.length ? " · BELOW: " + ghost.join(" ") : ""));
     // title strip (#9b): what a fixer reads before placing the layer. Callouts are the runs' drawing wording, main mat first.
     const inkBars = S.bars.filter(x => !x.ghost);
     const layerRuns = S.layer ? M.runs.filter(r => r.layer === S.layer && r.callout && r.bars.some(b => !b.existing)) : [];
@@ -1270,7 +1436,7 @@ html.print #sheet { background: #fff; }
       floor: M.cfg.name.toUpperCase(),
       layer: S.layer ? lname(S.layer) : solid.length > 1 ? "ALL LAYERS" : solid.length ? lname(solid[0]) : "FORMWORK",
       callouts: layerRuns.slice().sort((p, q) => (q.kind === "main") - (p.kind === "main")).map(r => r.callout).filter((t, i, a) => a.indexOf(t) === i),
-      cover: M.C, laps: +M.cfg.lap, thickness: M.T, fc: +M.cfg.fc,
+      cover: M.C, laps: +M.cfg.lap, lapText: lapTxt, thickness: M.T, fc: +M.cfg.fc,
       bars: inkBars.length, marks: inkBars.map(x => x.bar.mark).filter((m, i, a) => m && a.indexOf(m) === i).length,
       kg: Math.round(inkBars.reduce((s, x) => s + x.bar.kg, 0))
     };
@@ -1681,7 +1847,7 @@ html.print #sheet { background: #fff; }
     const f = M.cfg.features, mats = M.mats;
     const md = l => mats[l] ? "N" + mats[l].size + "-" + mats[l].sp + (mats[l].dir === "X" ? " E–W" : " N–S") : "none";
     let rows = "<dt>Slab</dt><dd>" + fmt(M.L) + " × " + fmt(M.W) + ", " + M.T + " THK, " + M.cfg.fc + " MPa, cover " + M.C + "</dd>" +
-      "<dt>Requirements</dt><dd>laps " + M.cfg.lap + " on all bars; grids " + M.GX.map(g => g[0]).join("–") + " / " + M.GY.map(g => g[0]).join("–") + "</dd>" +
+      "<dt>Requirements</dt><dd>laps " + esc(M.laps.text) + "; grids " + M.GX.map(g => g[0]).join("–") + " / " + M.GY.map(g => g[0]).join("–") + "</dd>" +
       "<dt>Layers</dt><dd>A bottom 1st " + md("A") + " · B bottom 2nd " + md("B") + " · C top 3rd " + md("C") + " · D top 4th " + md("D") + "</dd>";
     if (f.edges) rows += "<dt>Edges</dt><dd>Top bars cogged (L) at free edges and voids; N12 edge bars T&amp;B</dd>";
     M.DROPS.forEach(dd => { rows += "<dt>Set-down</dt><dd>" + esc(dd.id) + " " + fmt(dd.x1 - dd.x0) + " × " + fmt(dd.y1 - dd.y0) + " down " + dd.d + ": mats stop at the edge, Z-bar splices T&amp;B</dd>"; });
@@ -1711,6 +1877,7 @@ html.print #sheet { background: #fff; }
       "<dt>Run</dt><dd>" + esc(r.callout) + "</dd>" +
       "<dt>Cut length</dt><dd>" + fmt(b.len) + (b.len !== b.geomLen ? " (drawn " + fmt(b.geomLen) + " along the centreline)" : "") + "</dd>" +
       gridRows(b, "<br>").map(row => "<dt>" + row[0] + "</dt><dd>" + row[1] + "</dd>").join("") +
+      (lapRow(b) ? "<dt>Lap</dt><dd>" + lapRow(b) + "</dd>" : "") +
       "<dt>Mass</dt><dd>" + b.kg.toFixed(2) + " kg</dd></dl>" +
       (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "") +
       b.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("");
@@ -1720,11 +1887,27 @@ html.print #sheet { background: #fff; }
     let rows = "<dt>Layer</dt><dd>" + esc(l.name) + "</dd><dt>Callout</dt><dd>" + esc(r.callout) + "</dd>";
     if (r.grid) rows += "<dt>Bar lines</dt><dd>" + r.n + " @ " + r.sp + "</dd>" + runGridRows(r).map(row => "<dt>" + row[0] + "</dt><dd>" + row[1] + "</dd>").join("");
     rows += "<dt>Pieces</dt><dd>" + r.bars.length + "</dd>";
+    if (r.lap) rows += "<dt>Lap</dt><dd>" + lapText(r.lap) + "</dd>";
     if (!r.existing) rows += "<dt>Marks</dt><dd>" + esc(r.marks.join(", ")) + "</dd><dt>Mass</dt><dd>" + fmt(kg) + " kg</dd>";
     insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(r.layer) + "</span><b>" + esc(r.label || r.callout) + "</b></div>" +
       '<dl class="kv">' + rows + "</dl>" +
-      (r.kind === "main" ? '<p class="note">Bar lines longer than 12 m are split with ' + M.cfg.lap + ' staggered laps. Top bars are cogged where they meet a free edge or void. Z-bars splice across a shallow set-down; L-bars each side splice across a deep step.</p>' : "") +
+      (r.kind === "main" ? '<p class="note">Bar lines longer than 12 m are split with ' + r.lap.len + ' staggered laps. Top bars are cogged where they meet a free edge or void. Z-bars splice across a shallow set-down; L-bars each side splice across a deep step.</p>' : "") +
       (r.existing ? '<p class="note">Existing column cage, already poured. Not in this pour\'s schedule.</p>' : "");
+  }
+  // lap wording (#5): the lap in use, where it came from, and the AS 3600 value beside it with cd and k1
+  function lapText(L) {
+    const c = L.calc, src = L.src === "table" ? "lap table" : L.src === "fixed" ? "detail" : "flat lap";
+    const as = c.comp ? "AS 3600 " + c.rule + " " + c.lap : "AS 3600 " + c.rule.replace(/ \(.*\)/, "") + " " + c.lap + " (cd " + c.cd + " = " + c.cdGov + ", k1 " + c.k1.toFixed(1) + ")";
+    return fmt(L.len) + " (" + src + ") · " + esc(as) + (L.short ? ' <span style="color:var(--warn)">— shorter than AS 3600</span>' : "");
+  }
+  const lapRow = b => b.run && b.run.lap && !b.existing && (b.lapPrev || b.lapNext || b.run.kind === "z" || b.run.kind === "l" || b.run.kind === "start") ? lapText(b.run.lap) : "";
+  // the lap report under the inputs: the mats and every lap actually in use, beside the AS 3600 value, differences flagged
+  function renderLaps(model) {
+    const L = model.laps, box = $("lapReport");
+    const rows = L.rows.filter(r => r.lapped || (r.kase === "slab" && r.what.some(w => /^layer /.test(w))));
+    const head = '<p class="hint">Laps <b>' + esc(L.text) + '</b> · AS 3600 Section 13 beside each (f\'c ' + esc(String(model.cfg.fc)) + ', rounded up to 50; cd = min(cover, half clear spacing), the one that governs is named).' + (L.table ? " A table cell shorter than the formula is flagged." : " Type the drawing's lap table above to use the engineer's values.") + "</p>";
+    box.innerHTML = head + '<div class="laprows">' + rows.map(r => '<div class="laprow' + (r.short ? " short" : "") + '"><div class="w"><b>' + esc(r.type + r.size + " " + r.caseShort) + "</b> · " + esc(r.what.join(", ")) + '</div><div class="v"><b>' + fmt(r.len) + "</b> " + (r.src === "table" ? "table" : r.src === "fixed" ? "detail" : "flat") + " · AS 3600 <b>" + fmt(r.calc.lap) + "</b> · " +
+      (r.calc.comp ? esc(r.calc.rule.replace("Cl 13.2.4 ", "")) : "cd " + r.calc.cd + " " + (r.calc.cdGov === "cover" ? "cover" : "½ clear") + " · k1 " + r.calc.k1.toFixed(1)) + ' · <span class="d">' + (r.diff === 0 ? "same" : (r.diff > 0 ? "+" : "−") + fmt(Math.abs(r.diff))) + (r.short ? " shorter" : "") + "</span></div></div>").join("") + "</div>";
   }
   function showCard(on) { $("sitecard").classList.toggle("sel", on); if (!on && state.site) siteDefault(); }
   function clearSel() { state.sel = null; state.selRun = null; if (built) built.barTag.el.hidden = true; showCard(false); }
@@ -1801,6 +1984,7 @@ html.print #sheet { background: #fff; }
     rows.push(["Layer", esc(l.name) + (g ? " · runs " + (g.dir === "X" ? "E–W" : "N–S") : "")]);
     rows.push(...gridRows(b, "<br>"));
     rows.push(["Shape", esc(b.code) + " · " + esc(b.shapeName) + (b.dimStr ? "<br>" + esc(b.dimStr) : "")]);
+    if (lapRow(b)) rows.push(["Lap", lapRow(b)]);
     rows.push(["Run", esc(r.callout)]);
     card.innerHTML = '<div class="hd"><span class="chip">' + esc(b.mark) + "</span><b>" + b.type + b.size + " · " + esc(b.shapeName) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' +
       siteKV(rows) +
@@ -1817,6 +2001,7 @@ html.print #sheet { background: #fff; }
       rows.push(["Bar lines", r.n + " @ " + r.sp, "big"]);
       rows.push(...runGridRows(r));
     } else rows.push(["Pieces", String(r.bars.length), "big"]);
+    if (r.lap) rows.push(["Lap", lapText(r.lap)]);
     // marks are tappable (#9c): one tap highlights every bar with that mark in the model and on the sheet
     if (!r.existing) rows.push(["Marks", '<div class="markchips">' + r.marks.map(m => '<button type="button" class="markchip" data-mark="' + esc(m) + '">' + esc(m) + "</button>").join("") + "</div>"], ["Mass", fmt(r.bars.reduce((s, b) => s + b.kg, 0)) + " kg"]);
     card.innerHTML = '<div class="hd"><span class="chip">' + esc(r.layer) + "</span><b>" + esc(r.label || r.callout) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' + siteKV(rows) +
@@ -1850,7 +2035,7 @@ html.print #sheet { background: #fff; }
       state.ghost = true; state.tags = true; state.explode = false; state.conc = true;
       [["tgConc", "conc"], ["tgTags", "tags"], ["tgGhost", "ghost"], ["tgExplode", "explode"]].forEach(p => $(p[0]).setAttribute("aria-pressed", String(state[p[1]])));
       if (state.all) { state.all = false; state.step = Math.min(1, NSTEP); }
-      if (M) $("siteFloor").textContent = M.cfg.name + " · " + M.T + " THK · laps " + M.cfg.lap;
+      if (M) $("siteFloor").textContent = M.cfg.name + " · " + M.T + " THK · laps " + M.laps.text;
       clearSel(); state.mark = null; markRows();
     } else showCard(false);
     apply(); resize();
@@ -2102,7 +2287,7 @@ html.print #sheet { background: #fff; }
     // the stage is wide); it sits above the 24 px hint line at the foot of the stage
     const st = sheet.strip;
     if (st) {
-      const g = stripGeom(w, h), head = st.floor + " · " + st.layer + " · " + st.thickness + " THK · N" + st.fc + " · COVER " + st.cover + " · LAPS " + st.laps + " · " + fmt(st.bars) + " BARS · " + st.marks + " MARKS · " + fmt(st.kg) + " kg";
+      const g = stripGeom(w, h), head = st.floor + " · " + st.layer + " · " + st.thickness + " THK · N" + st.fc + " · COVER " + st.cover + " · " + st.lapText + " · " + fmt(st.bars) + " BARS · " + st.marks + " MARKS · " + fmt(st.kg) + " kg";
       const y0 = h - sheetFoot() - g.h;
       c.fillStyle = halo(0.94); c.fillRect(0, y0, w, h - y0);
       c.strokeStyle = CONC; c.lineWidth = 1; c.beginPath(); c.moveTo(0, y0 + 0.5); c.lineTo(w, y0 + 0.5); c.stroke();
@@ -2340,7 +2525,7 @@ html.print #sheet { background: #fff; }
   }
 
   // ---- inputs panel ----
-  const IN = { gridX: $("inGridX"), gridY: $("inGridY"), thk: $("inThk"), cover: $("inCover"), fc: $("inFc"), lap: $("inLap"), callouts: $("inCallouts") };
+  const IN = { gridX: $("inGridX"), gridY: $("inGridY"), thk: $("inThk"), cover: $("inCover"), fc: $("inFc"), lap: $("inLap"), lapTable: $("inLapTable"), callouts: $("inCallouts") };
   const featBoxes = [...document.querySelectorAll("#feats input[data-feat]")];
   // geometry lists (#7a, #7b, #7c): opening, set-down and balcony rows, the step fields; the example's rows come from exampleGeometry(cfg)
   const GEO = { rows: $("openRows"), dropRows: $("dropRows"), balcRows: $("balcRows"), fsOpen: $("geomOpen"), fsBalc: $("geomBalc"), fsDrop: $("geomDrop"), fsStep: $("geomStep"),
@@ -2390,22 +2575,23 @@ html.print #sheet { background: #fff; }
   }
   function fillInputs(cfg) {
     IN.gridX.value = cfg.gridX.join(", "); IN.gridY.value = cfg.gridY.join(", ");
-    IN.thk.value = cfg.thickness; IN.cover.value = cfg.cover; IN.fc.value = cfg.fc; IN.lap.value = cfg.lap;
+    IN.thk.value = cfg.thickness; IN.cover.value = cfg.cover; IN.fc.value = cfg.fc; IN.lap.value = cfg.lap; IN.lapTable.value = cfg.lapTable || "";
     IN.callouts.value = cfg.callouts;
     featBoxes.forEach(b => { b.checked = !!cfg.features[b.dataset.feat]; });
     fillGeom(cfg);
   }
   function readInputs() {
     const features = {}; featBoxes.forEach(b => { features[b.dataset.feat] = b.checked; });
-    return Object.assign({ name: "Level 1", gridX: IN.gridX.value, gridY: IN.gridY.value, thickness: +IN.thk.value, cover: +IN.cover.value, fc: +IN.fc.value, lap: +IN.lap.value, callouts: IN.callouts.value, features: features, scheme: "ABCD" }, readGeom());
+    return Object.assign({ name: "Level 1", gridX: IN.gridX.value, gridY: IN.gridY.value, thickness: +IN.thk.value, cover: +IN.cover.value, fc: +IN.fc.value, lap: +IN.lap.value, lapTable: IN.lapTable.value, callouts: IN.callouts.value, features: features, scheme: "ABCD" }, readGeom());
   }
   function showErrors(model) {
     const ul = $("inErrs"); ul.innerHTML = "";
     model.errors.forEach(e => { const li = document.createElement("li"); li.textContent = e; ul.appendChild(li); });
     model.warnings.forEach(e => { const li = document.createElement("li"); li.className = "warn"; li.textContent = e; ul.appendChild(li); });
     IN.callouts.setAttribute("aria-invalid", String(model.errors.some(e => /^Line \d/.test(e))));
-    const plain = model.errors.filter(e => !/^(Line \d|Opening \d|Balcony \d|Set-down \d|Step:)/.test(e));
-    [[IN.gridX, /grid/i], [IN.gridY, /grid/i], [IN.thk, /thickness|thin/i], [IN.cover, /cover/i], [IN.lap, /lap/i]].forEach(p => p[0].setAttribute("aria-invalid", String(plain.some(e => p[1].test(e)))));
+    IN.lapTable.setAttribute("aria-invalid", String(model.errors.some(e => /^Lap table/.test(e))));
+    const plain = model.errors.filter(e => !/^(Line \d|Opening \d|Balcony \d|Set-down \d|Step:|Lap table)/.test(e));
+    [[IN.gridX, /grid/i], [IN.gridY, /grid/i], [IN.thk, /thickness|thin/i], [IN.cover, /cover/i], [IN.fc, /f'c/], [IN.lap, /^Lap must/]].forEach(p => p[0].setAttribute("aria-invalid", String(plain.some(e => p[1].test(e)))));
     [...GEO.rows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Opening " + (i + 1) + " ") === 0)); });
     [...GEO.dropRows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Set-down " + (i + 1) + " ") === 0)); });
     [...GEO.balcRows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Balcony " + (i + 1) + " ") === 0)); });
@@ -2415,7 +2601,7 @@ html.print #sheet { background: #fff; }
     const c = model.cfg;
     $("slabline").innerHTML = '<span class="example">' + (model.cfg.example ? "Example floor" : "Custom floor") + "</span>" +
       "<span><em>" + esc(c.name.toUpperCase()) + "</em> suspended slab</span><span><em>" + fmt(model.L) + " × " + fmt(model.W) + "</em></span>" +
-      "<span><em>" + model.T + " THK</em> · f'c <em>" + c.fc + " MPa</em></span><span>cover <em>" + model.C + "</em> · laps <em>" + c.lap + "</em></span>" +
+      "<span><em>" + model.T + " THK</em> · f'c <em>" + c.fc + " MPa</em></span><span>cover <em>" + model.C + "</em> · laps <em>" + esc(model.laps.source === "flat" ? c.lap : "table") + "</em></span>" +
       "<span>grids <em>" + model.GX[0][0] + "–" + model.GX[model.GX.length - 1][0] + " / " + model.GY[0][0] + "–" + model.GY[model.GY.length - 1][0] + "</em></span>" +
       (model.COLS.length ? "<span><em>" + model.COLS.length + "</em> cols 400 × 400</span>" : "");
   }
@@ -2430,8 +2616,8 @@ html.print #sheet { background: #fff; }
     clearSel(); state.mark = null;
     teardown(); buildScene(model); lastGood = cfg;
     sheet = null; sheetKey = "";   // the sheet is rebuilt from the new model by apply()
-    renderSteps(); renderSchedule(); showDefault(); slabline(model); apply(); resize();
-    $("siteFloor").textContent = model.cfg.name + " · " + model.T + " THK · laps " + model.cfg.lap;
+    renderSteps(); renderSchedule(); showDefault(); slabline(model); renderLaps(model); apply(); resize();
+    $("siteFloor").textContent = model.cfg.name + " · " + model.T + " THK · laps " + model.laps.text;
     if (opts.camera) goCam("iso", true); else if (planMode) goCam("plan");
     return true;
   }

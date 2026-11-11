@@ -147,6 +147,27 @@ const { chromium } = require("playwright");
   await page.click("#btnReset"); await page.waitForTimeout(800);
   const v6 = await stats(); Object.assign(v6, await levels()); v6.rise = await page.inputValue("#inSrise"); v6.depth = await page.inputValue("#dropRows .orow:nth-child(1) input[data-k=depth]");
 
+  // laps (#5): the flat lap is the default and the report shows the AS 3600 value beside every lap in use (the short ones
+  // flagged); typing the drawing's lap table changes the laps per size and case, the inspector / report / header say so; a
+  // bad table line is an error on the textarea that keeps the scene; clearing it goes back to the flat lap
+  const laps = () => page.evaluate(() => { const M = window.xstruc.model(); return { src: M.laps.source, text: M.laps.text, A: M.mats.A.lap.len, D: M.mats.D.lap.len, proj: M.PROJ, rows: document.querySelectorAll("#lapReport .laprow").length, short: document.querySelectorAll("#lapReport .laprow.short").length, head: document.querySelector("#lapReport .hint").textContent, floor: document.getElementById("siteFloor").textContent, warns: [...document.querySelectorAll("#inErrs li.warn")].map(e => e.textContent) }; });
+  const l0 = await laps();
+  console.log("laps (flat):", JSON.stringify([l0.src, l0.text, l0.rows, l0.short, l0.warns.filter(w => /^Lap/.test(w)).length]));
+  await page.fill("#dropRows .orow:nth-child(1) input[data-k=x0]", "1200");   // the example's wet area sits 850 from the west edge; layer A's 750 lap needs 990 for its Z-bars, so move it east first
+  await page.fill("#inLapTable", "SLAB 25 32 40\nN12 600 500 450\nN16 850 750 650\nBEAM >300 32\nN16 950\nCOLUMN\nN24 950"); await page.waitForTimeout(900);
+  const l1 = await stats(); Object.assign(l1, await laps()); l1.invalid = await page.getAttribute("#inLapTable", "aria-invalid");
+  await page.evaluate(() => window.xstruc.selectRun("R0")); await page.waitForTimeout(200);
+  l1.insp = (await page.textContent("#inspector")).replace(/\s+/g, " ");
+  console.log("laps (table):", JSON.stringify([l1.src, l1.text, l1.A, l1.D, l1.proj, l1.rows, l1.short, l1.bars]), l1.insp.slice(l1.insp.indexOf("Lap"), l1.insp.indexOf("Lap") + 90));
+  await page.screenshot({ path: path.join(outDir, "smoke-17-lap-table.png") });
+  await page.fill("#inLapTable", "SLAB 25 32 40\nN12 600 500\nN16 850 750 650"); await page.waitForTimeout(800);   // two laps for three grades: an error on the textarea, scene kept
+  const l2 = await stats(); l2.invalid = await page.getAttribute("#inLapTable", "aria-invalid");
+  console.log("laps (bad line):", JSON.stringify(l2.errs.filter(e => /^Lap table/.test(e))), "aria-invalid", l2.invalid);
+  await page.fill("#inLapTable", ""); await page.waitForTimeout(800);
+  const l3 = await stats(); Object.assign(l3, await laps());
+  await page.click("#btnReset"); await page.waitForTimeout(800);
+  const l4 = await stats();
+
   // click a schedule row
   await page.click("#sched tr:nth-child(5)"); await page.waitForTimeout(200);
   console.log("inspector:", (await page.textContent("#inspector")).slice(0, 80).replace(/\s+/g, " "));
@@ -391,6 +412,12 @@ const { chromium } = require("playwright");
   if (v4.rows !== 1 || !v4.step || v4.step[2] !== 300 || v4.step[3] !== 400 || !/EACH SIDE OF 300 STEP/.test(v4.l[0] || "") || v4.errs.some(e => /^(Set-down|Step)/.test(e)) || v4.bars === v2.bars) problems.push("removing the bad row / editing the step did not rebuild (300 step on a 400 nib): " + JSON.stringify([v4.rows, v4.step, v4.l[0], v4.errs]));
   if (!v5.errs.some(e => /^Step: a rise of 160 or less is a shallow set-down/.test(e)) || v5.invalid !== "true" || v5.bars !== v4.bars) problems.push("a 100 step should be an error on the step fields that keeps the scene: " + JSON.stringify(v5));
   if (v6.rise !== "200" || v6.depth !== "70" || v6.bars !== s0.bars || !v6.step || v6.step[2] !== 200) problems.push("reset did not restore the example level rows: " + JSON.stringify(v6));
+  // laps (#5)
+  if (l0.src !== "flat" || l0.text !== "600 all bars" || l0.rows < 6 || l0.short !== 3 || !/Laps 600 all bars/.test(l0.head) || l0.warns.filter(w => /^Lap N16 slab \(layer A.*700/.test(w)).length !== 1 || !/laps 600 all bars/.test(l0.floor)) problems.push("flat-lap report wrong: " + JSON.stringify(l0));
+  if (l1.src !== "table" || !/^per lap table \(flat 600 where it has no row\)$/.test(l1.text) || l1.A !== 750 || l1.D !== 500 || l1.proj !== 950 || l1.invalid !== "false" || l1.errs.some(e => /^Lap table line/.test(e)) || !/laps per lap table/.test(l1.floor) || l1.warns.filter(w => /^Lap N/.test(w)).length !== 1 || !l1.warns.some(w => /^Lap table has no row for BEAM <300 N16 \(EB1 bottom bars\); the flat lap 600/.test(w)) || l1.short !== 1) problems.push("lap table did not drive the laps: " + JSON.stringify(l1));
+  if (!/Lap ?750 \(lap table\) · AS 3600 Cl 13\.2\.2 1\.25 × Lsy\.tb 700 \(cd 30 = cover, k1 1\.0\)/.test(l1.insp) || !/split with 750 staggered laps/.test(l1.insp)) problems.push("run inspector lacks the lap line from the table: " + l1.insp.slice(0, 400));
+  if (!l2.errs.some(e => /^Lap table line 2 \(N12 600 500\): 2 laps for 3 grades \(25, 32, 40\)\./.test(e)) || l2.invalid !== "true" || l2.bars !== l1.bars) problems.push("a bad lap-table line should be an error on the textarea that keeps the scene: " + JSON.stringify([l2.errs, l2.invalid, l2.bars, l1.bars]));
+  if (l3.src !== "flat" || l3.kg === l1.kg || l3.A !== 600 || l3.short !== 3 || l4.bars !== s0.bars) problems.push("clearing the lap table did not restore the flat lap: " + JSON.stringify([l3.src, l3.kg, l1.kg, l3.A, l3.short, l4.bars, s0.bars]));
   if (problems.length) { console.error("smoke: FAIL\n" + problems.join("\n")); process.exit(1); }
   console.log("smoke: OK (screenshots in " + outDir + ")");
 })().catch(e => { console.error("smoke: FAIL\n" + e.stack); process.exit(1); });

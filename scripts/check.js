@@ -7,7 +7,7 @@ const { loadModel } = require("./model-lib");
 
 let lib;
 try { lib = loadModel(); } catch (e) { fail(e.message); }
-const { buildModel, DEFAULT_CFG, LBY, buildSheet, barAxis, sheetMarksFor, sheetPrintScale, PRINT_SCALES } = lib;
+const { buildModel, DEFAULT_CFG, LBY, buildSheet, barAxis, sheetMarksFor, sheetPrintScale, PRINT_SCALES, lapCalc, parseLapTable, lapLookup } = lib;
 const fmt = n => Math.round(n).toLocaleString("en-AU");
 const FIX = ["BM", "A", "B", "CH", "C", "D", "ST"];   // fixing order, as the viewer steps through it
 
@@ -50,7 +50,7 @@ function checkModel(name, cfg, minBars) {
 // Setout from grids (#20): every bar with a plan axis carries b.grid, every run of parallel lines carries r.grid,
 // and the distances are from the NEAREST grid line, consistent with the bar geometry and the lap flags.
 function checkGridSetout(M, problems) {
-  const { bars, runs, GX, GY } = M, lap = +M.cfg.lap;
+  const { bars, runs, GX, GY } = M;
   const nearest = (G, v) => G.reduce((g, q) => Math.abs(v - q[1]) < Math.abs(v - g[1]) ? q : g, G[0]);
   const okRef = (ref, G, where, v) => {
     const g = G.find(q => q[0] === ref.grid);
@@ -76,6 +76,8 @@ function checkGridSetout(M, problems) {
     if (g.to.v - g.from.v !== Math.round(X ? dx : dy)) problems.push(where + ": from/to span " + (g.to.v - g.from.v) + " != plan length " + Math.round(X ? dx : dy));
     const expLaps = (b.lig || b.tie || b.col) ? 0 : (b.lapPrev ? 1 : 0) + (b.lapNext ? 1 : 0);
     if (g.laps.length !== expLaps) problems.push(where + ": " + g.laps.length + " lap zones for lapPrev/lapNext " + !!b.lapPrev + "/" + !!b.lapNext);
+    const lap = b.run.lap ? b.run.lap.len : 0;   // #5: the lap is the run's (per size and case), not one project number
+    if (expLaps && !lap) problems.push(where + ": lapped bar in a run with no lap");
     g.laps.forEach(z => {
       withLaps++;
       if (z.len !== lap || Math.abs(z.b.v - z.a.v) !== lap) problems.push(where + ": lap zone " + z.a.v + "–" + z.b.v + " is not the " + lap + " lap");
@@ -169,7 +171,7 @@ function checkSheets(M, problems) {
       });
       if (S.dims.some(d => !M.runs.find(r => r.id === d.run && r.layer === lid))) p("a setout dim belongs to another layer's run");
     } else if (S.dims.length) p("the finished-floor sheet should carry no per-run setout dims");
-    if (!S.title[0].includes(lid ? LBY[lid].name.toUpperCase() : "ALL LAYERS") || !/THK · COVER \d+ · LAPS \d+/.test(S.title[1])) p("title " + JSON.stringify(S.title));
+    if (!S.title[0].includes(lid ? LBY[lid].name.toUpperCase() : "ALL LAYERS") || !/THK · COVER \d+ · LAPS? (\d+( \(TABLE\))?|PER TABLE)/.test(S.title[1])) p("title " + JSON.stringify(S.title));
     checkSheetNotes(M, S, lid, sol, p);
   });
 }
@@ -540,6 +542,108 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   if (!stepped.errors.some(e => /^Balcony 2 .*keep it west of x 7,000/.test(e)) || !stepped.errors.some(e => /^Balcony 4 .*keep it south of y 6,000/.test(e)) || stepped.errors.length !== 2 || stepped.BALCS.length !== 3) p("step / balcony conflicts: " + stepped.errors.join(" | ") + " built " + stepped.BALCS.length);
   if (problems.length) fail(problems.slice(0, 20).join("\n"));
   console.log("  balconies: four edges built (bars " + MB.bars.length + ", balcony runs " + MB.runs.filter(r => r.balc).length + "); the north balcony turned to S / E / W keeps its bars; 6 bad rows reported, 3 good rows built; step conflicts on N and E");
+}
+
+// lap and development lengths (#5): AS 3600 Section 13 values reproduce the research note (Findings 2: the shipped default
+// table and the ACOR B23 fit), cd = min(cover, half clear spacing) with the governing value named, laps round up to 50, a
+// project lap table drives the laps per size and case, every shorter lap in use is flagged, bad table lines are reported
+{
+  const problems = [], p = m => problems.push("laps: " + m);
+  // Findings 2.4: tension lap 1.25 × Lsy.tb, fsy 500, cd 20, k1 1.0, rounded up to 10 (that table's rounding), N10–N40 × 20–65 MPa
+  const FCS = [20, 25, 32, 40, 50, 65];
+  const T24 = { 10: [490, 440, 390, 370, 370, 370], 12: [630, 570, 500, 450, 440, 440], 16: [930, 830, 740, 660, 590, 580], 20: [1250, 1120, 990, 890, 790, 730], 24: [1560, 1390, 1230, 1100, 990, 870], 28: [1890, 1690, 1490, 1340, 1190, 1050], 32: [2240, 2000, 1770, 1590, 1420, 1250], 36: [2630, 2350, 2080, 1860, 1660, 1460], 40: [3040, 2720, 2410, 2150, 1930, 1690] };
+  let cells = 0;
+  Object.keys(T24).forEach(sz => FCS.forEach((fc, i) => {
+    const c = lapCalc({ size: +sz, fc: fc, cover: 20, spacing: 0 }), up10 = Math.ceil((c.raw - 0.5) / 10) * 10; cells++;
+    if (Math.abs(up10 - T24[sz][i]) > 10) p("N" + sz + " at " + fc + " MPa: raw " + c.raw + " (up to 10: " + up10 + ") vs Findings 2.4 " + T24[sz][i]);
+    if (c.cdGov !== "cover" || c.cd !== 20 || c.k1 !== 1) p("N" + sz + ": cd / k1 " + JSON.stringify([c.cd, c.cdGov, c.k1]));
+    if (c.lap % 50 || c.lap < c.raw || c.lap - c.raw >= 50) p("N" + sz + " at " + fc + ": lap " + c.lap + " is not raw " + c.raw + " rounded up to 50");
+    const c13 = lapCalc({ size: +sz, fc: fc, cover: 20, spacing: 0, k1: 1.3 });
+    if (Math.abs(c13.raw - 1.3 * c.raw) > 1.5) p("N" + sz + " at " + fc + ": k1 1.3 is not linear (" + c13.raw + " vs 1.3 × " + c.raw + ")");
+  }));
+  // the 29 k1 db floor governs N10 / N12 at 50 and 65 MPa
+  [[10, 50], [10, 65], [12, 50], [12, 65]].forEach(([sz, fc]) => { const c = lapCalc({ size: sz, fc: fc, cover: 20, spacing: 0 }); if (c.Lsy_tb !== c.floor || !/minimum/.test(c.rule)) p("N" + sz + " at " + fc + " should sit on the 29 k1 db floor: " + JSON.stringify(c)); });
+  // ACOR B23 (Findings 2.2 / 2.3): slab cells = 1.25 × Lsy.tb at cd 20 rounded to the nearest 50 (within −2 % … +7 % of the formula); beam >300 = ×1.3; columns = 40db
+  const B23 = { slab: { 12: [600, 500, 450], 16: [850, 750, 650], 20: [1100, 1000, 900] }, gt: { 12: [750, 650, 600], 16: [1100, 950, 850], 20: [1450, 1300, 1150], 24: [1800, 1600, 1400], 28: [2200, 1950, 1700], 32: [2600, 2300, 2050], 36: [3050, 2700, 2400] }, col: { 12: 500, 16: 650, 20: 800, 24: 950, 28: 1150, 32: 1300, 36: 1450 } };
+  [25, 32, 40].forEach((fc, i) => {
+    Object.keys(B23.slab).forEach(sz => { const r = B23.slab[sz][i] / lapCalc({ size: +sz, fc: fc, cover: 20, spacing: 0 }).raw; if (r < 0.97 || r > 1.08) p("B23 slab N" + sz + " at " + fc + " is " + r.toFixed(3) + " × the formula"); });
+    Object.keys(B23.gt).forEach(sz => { const r = B23.gt[sz][i] / lapCalc({ size: +sz, fc: fc, cover: 20, spacing: 0, k1: 1.3 }).raw; if (r < 0.97 || r > 1.08) p("B23 beam >300 N" + sz + " at " + fc + " is " + r.toFixed(3) + " × the formula"); });
+  });
+  Object.keys(B23.col).forEach(sz => { const c = lapCalc({ size: +sz, fc: 32, comp: true }); if (Math.abs(B23.col[sz] - 40 * sz) > 30 || c.raw !== 40 * sz || !/40db/.test(c.rule)) p("B23 column N" + sz + " " + B23.col[sz] + " vs 40db " + c.raw + " (" + c.rule + ")"); });
+  // compression: N24 at 32 → Lsy.cb on its 0.0435 fsy db floor (522), 40db 960 governs, 1000 after rounding; N16 at 20 → Lsy.cb 394 above the floor
+  const c24 = lapCalc({ size: 24, fc: 32, comp: true }), c16 = lapCalc({ size: 16, fc: 20, comp: true });
+  if (c24.Lsy_cb !== 522 || c24.raw !== 960 || c24.lap !== 1000 || c16.Lsy_cb !== 394 || c16.raw !== 640) p("compression values: " + JSON.stringify([c24, c16]));
+  // cd: half the clear spacing governs two N16 trimmers 75 apart with 30 cover ((75 − 32) / 2 = 21.5); cover governs an N16 mat at 200; k3 clamps at 0.7 for a deep bar
+  const ct = lapCalc({ size: 16, fc: 32, cover: 30, spacing: 75 }), cm = lapCalc({ size: 16, fc: 32, cover: 30, spacing: 200 }), cdeep = lapCalc({ size: 12, fc: 32, cover: 60, spacing: 0 });
+  if (ct.cdGov !== "half clear spacing" || ct.cd !== 22 || Math.abs(ct.k3 - 0.948) > 0.001 || cm.cdGov !== "cover" || cm.cd !== 30 || Math.abs(cm.k3 - 0.869) > 0.001 || cdeep.k3 !== 0.7) p("cd / k3: " + JSON.stringify([ct, cm, cdeep]));
+  if (ct.lap <= cm.lap) p("a tighter cd must give a longer lap (" + ct.lap + " vs " + cm.lap + ")");
+  // k1 from the concrete below the bar: in a 400 slab the top mats (358 below) take 1.3, the bottom mats 1.0 (Cl 13.1.2.2)
+  const MK = buildModel(Object.assign({}, DEFAULT_CFG, { thickness: 400 }));
+  if (MK.errors.length || MK.mats.D.lap.calc.k1 !== 1.3 || MK.mats.C.lap.calc.k1 !== 1.3 || MK.mats.A.lap.calc.k1 !== 1 || MK.mats.B.lap.calc.k1 !== 1 || MK.mats.D.lap.calc.lap <= MK.mats.B.lap.calc.lap) p("k1 by depth in a 400 slab: " + JSON.stringify([MK.errors, ["A", "B", "C", "D"].map(l => MK.mats[l].lap.calc.k1)]));
+  // the example floor: flat 600 everywhere; the AS 3600 value sits beside every lap in use, the short ones are flagged (N16 layer A needs 700 at cd 30, EB1 top bars 800 with k1 1.3, the N24 starter projection 950 vs 40db 960) and nothing else is
+  const L = M.laps;
+  if (L.source !== "flat" || L.table || L.text !== "600 all bars" || L.missing.length) p("example lap source " + JSON.stringify([L.source, L.text, L.missing]));
+  const row = (kase, sz, what) => L.rows.find(r => r.kase === kase && r.size === sz && (!what || r.what.indexOf(what) >= 0));
+  const rA = row("slab", 16, "layer A"), rB = row("slab", 12, "layer B"), rD = row("slab", 12, "layer D"), rE = row("beamGt300", 16, "EB1 top bars"), rEb = row("beamLt300", 16, "EB1 bottom bars"), rS = row("column", 24), rT = row("slab", 16, "trimmers (A)");
+  if (!rA || rA.len !== 600 || rA.calc.lap !== 700 || rA.calc.cd !== 30 || rA.calc.cdGov !== "cover" || rA.calc.k1 !== 1 || !rA.short || !rA.lapped) p("layer A lap row " + JSON.stringify(rA));
+  if (!rB || rB.cover !== 46 || rB.calc.lap !== 450 || rB.short || !rB.lapped) p("layer B lap row (cover 30 + 16) " + JSON.stringify(rB));
+  if (!rD || rD.cover !== 30 || rD.calc.lap !== 450 || rD.short) p("layer D lap row " + JSON.stringify(rD));
+  if (!rE || rE.calc.k1 !== 1.3 || rE.calc.lap !== 800 || !rE.short || !rE.lapped) p("EB1 top bars lap row " + JSON.stringify(rE));
+  if (!rEb || rEb.calc.k1 !== 1 || rEb.calc.lap !== 600 || rEb.short || !rEb.lapped) p("EB1 bottom bars lap row " + JSON.stringify(rEb));
+  if (!rS || rS.len !== 950 || rS.src !== "fixed" || rS.calc.lap !== 1000 || !rS.short || !rS.lapped || M.PROJ !== 950) p("starter lap row " + JSON.stringify(rS));
+  if (!rT || rT.calc.cdGov !== "half clear spacing" || rT.lapped) p("trimmers never lap, their row stays unflagged: " + JSON.stringify(rT));
+  const lapWarns = M.warnings.filter(w => /^Lap /.test(w));
+  if (lapWarns.length !== 3 || !lapWarns.some(w => /^Lap N16 slab \(layer A.*600 \(project flat lap\) is shorter than AS 3600 Cl 13\.2\.2 1\.25 × Lsy\.tb gives, 700 \(Lsy\.tb 530 × 1\.25 = 662, up to 50; cd 30 = cover, k1 1\.0\)/.test(w)) || !lapWarns.some(w => /^Lap N16 beam >300 below \(EB1 top bars\): 600 .* 800 .*k1 1\.3/.test(w)) || !lapWarns.some(w => /^Lap N24 column.*950 \(fixed by the detail\) is shorter than AS 3600 Cl 13\.2\.4 40db gives, 1000/.test(w))) p("example lap warnings: " + JSON.stringify(lapWarns));
+  M.runs.filter(r => r.lap).forEach(r => r.bars.forEach(b => { if (b.grid && b.grid.laps.some(z => z.len !== r.lap.len)) p("run " + r.id + " lap zones differ from its lap " + r.lap.len); }));
+  if (M.runs.some(r => r.bars.some(b => b.lapPrev || b.lapNext) && !r.lap)) p("a lapped run has no lap");
+  // the B23 table as the project's: layers A / B–D take 750 / 500 (f'c 32), Z-bar legs and lap zones follow, the EB1 top bars 950, the
+  // starters the COLUMN row (950, flagged 10 under 40db), the model's text says so, and the sheet title names the layer's lap
+  const TBL = "# ACOR B23 R12\nSLAB 25 32 40\nN12 600 500 450\nN16 850 750 650\nN20 1100 1000 900\nBEAM <300 25 32 40\nN16 850 750 650\nN20 1100 1000 900\nBEAM >300 25 32 40\nN16 1100 950 850\nN20 1450 1300 1150\nCOLUMNS AND WALLS\nN24 950\n";
+  const PT = parseLapTable(TBL);
+  if (PT.errors.length || PT.rows !== 8 || Object.keys(PT.cases).sort().join() !== "beamGt300,beamLt300,column,slab" || PT.cases.slab.fcs.join() !== "25,32,40" || PT.cases.column.fcs !== null) p("B23 table parse " + JSON.stringify(PT));
+  if (lapLookup(PT, "slab", 16, 32).len !== 750 || lapLookup(PT, "column", 24, 65).len !== 950 || !lapLookup(PT, "slab", 12, 50).missing || lapLookup(PT, "slab", 24, 32) !== null || lapLookup(PT, "wall", 12, 32) !== null) p("lapLookup");
+  const MT = buildModel(Object.assign({}, DEFAULT_CFG, { lapTable: TBL }));
+  if (MT.errors.length) p("B23 table model errors: " + MT.errors.join(" | "));
+  const mA = MT.mats.A.lap, mD = MT.mats.D.lap;
+  if (MT.laps.source !== "table" || mA.len !== 750 || mA.src !== "table" || mD.len !== 500 || MT.PROJ !== 950 || MT.laps.text !== "per lap table") p("B23 table laps " + JSON.stringify([MT.laps.source, mA.len, mA.src, mD.len, MT.PROJ, MT.laps.text]));
+  const zA = MT.runs.find(r => r.kind === "z" && r.layer === "A"), zD = MT.runs.find(r => r.kind === "z" && r.layer === "D");
+  // the example's wet-area set-down is too close to the west edge for a 750 lap (needs 990, has 850): left out with a warning, as a job row would be an error
+  if (zA || zD || !MT.warnings.some(w => /^Example set-down wet area left out: must sit at least 990 inside/.test(w))) p("the set-down should drop out at the longer lap: " + MT.warnings.join(" | "));
+  const MT2 = buildModel(Object.assign({}, DEFAULT_CFG, { lapTable: TBL, setdowns: [{ name: "WET AREA", x0: 1200, y0: 5300, x1: 4600, y1: 8200, depth: 70 }] }));
+  const z2 = MT2.runs.find(r => r.kind === "z" && r.layer === "A"), z2D = MT2.runs.find(r => r.kind === "z" && r.layer === "D");
+  if (MT2.errors.length || !z2 || !z2D || !/LAP 750 EACH SIDE/.test(z2.callout) || !/LAP 500 EACH SIDE/.test(z2D.callout)) p("Z-bar laps per layer from the table: " + JSON.stringify([MT2.errors, z2 && z2.callout, z2D && z2D.callout]));
+  const legs = b => [0, 1, 2].map(i => Math.hypot(b.pts[i + 1][0] - b.pts[i][0], b.pts[i + 1][1] - b.pts[i][1]));
+  if (z2 && z2.bars.some(b => Math.abs(legs(b)[0] - 750) > 0.5)) p("layer A Z-bar legs are not 750");
+  if (MT2.bars.filter(b => b.layer === "A" && b.run.kind === "main" && b.grid && b.grid.laps.length).some(b => b.grid.laps.some(z => z.len !== 750))) p("layer A lap zones are not 750 with the table");
+  if (MT2.bars.filter(b => b.layer === "D" && b.run.kind === "main" && b.grid && b.grid.laps.length).some(b => b.grid.laps.some(z => z.len !== 500))) p("layer D lap zones are not 500 with the table");
+  const eT = MT2.runs.find(r => r.kind === "beam" && /EB1 .* T$/.test(r.label)), eB = MT2.runs.find(r => r.kind === "beam" && /EB1 .* B$/.test(r.label)), st = MT2.runs.find(r => r.kind === "start");
+  if (!eT || eT.lap.len !== 950 || eT.lap.kase !== "beamGt300" || !eB || eB.lap.len !== 750 || eB.lap.kase !== "beamLt300" || !st || st.lap.len !== 950 || st.lap.src !== "table" || !st.lap.short || !/PROJECT 950/.test(st.callout)) p("beam / starter laps from the table " + JSON.stringify([eT && eT.lap, eB && eB.lap, st && st.lap]));
+  const tw = MT2.warnings.filter(w => /^Lap /.test(w));
+  if (tw.length !== 1 || !/^Lap N24 column.*950 \(lap table\) is shorter than AS 3600 Cl 13\.2\.4 40db gives, 1000/.test(tw[0])) p("table model lap warnings: " + JSON.stringify(tw));
+  if (MT2.laps.rows.filter(r => r.lapped).some(r => r.src !== "table")) p("a lapped run did not take the table: " + JSON.stringify(MT2.laps.rows.filter(r => r.lapped && r.src !== "table").map(r => r.what)));
+  const S1 = buildSheet(MT2, ["A"], ["BM"]);
+  if (!/LAP 750 \(TABLE\)/.test(S1.title[1]) || S1.strip.lapText !== "LAP 750 (TABLE)" || S1.strip.laps !== 600) p("sheet title / strip lap text " + JSON.stringify([S1.title, S1.strip.lapText, S1.strip.laps]));
+  // a table that lacks this f'c is an error; a table that lacks a row falls back to the flat lap with a warning; a table at another f'c changes the laps
+  const MF = buildModel(Object.assign({}, DEFAULT_CFG, { lapTable: "SLAB 25 40\nN12 600 450\nN16 850 650" }));
+  if (!MF.errors.some(e => e === "Lap table: SLAB has no column for f'c 32 MPa (grades 25, 40); add one or change f'c.") || MF.errors.length !== 1) p("missing f'c column: " + MF.errors.join(" | "));
+  const MG = buildModel(Object.assign({}, DEFAULT_CFG, { lapTable: "SLAB 32\nN16 750" }));
+  if (MG.errors.length || MG.mats.A.lap.len !== 750 || MG.mats.D.lap.len !== 600 || MG.mats.D.lap.src !== "flat" || MG.warnings.filter(w => /^Lap table has no row/.test(w)).length !== 1 || !MG.warnings.some(w => /^Lap table has no row for SLAB N12 \(layer B, layer C, layer D, edge bars top, edge bars bottom\), COLUMN N24 \(column starters: the detail's 950 stays\), BEAM <300 N16 \(EB1 bottom bars\), BEAM >300 N16 \(EB1 top bars\); the flat lap 600 is used where no detail fixes it\.$/.test(w)) || !/flat 600 where it has no row/.test(MG.laps.text)) p("partial table: " + JSON.stringify([MG.errors, MG.warnings.filter(w => /^Lap/.test(w)), MG.laps.text]));
+  const M25 = buildModel(Object.assign({}, DEFAULT_CFG, { fc: 25, lapTable: TBL }));
+  if (M25.errors.length || M25.mats.A.lap.len !== 850 || M25.mats.B.lap.len !== 600 || M25.mats.A.lap.calc.lap !== 750) p("f'c 25 picks the 25 column: " + JSON.stringify([M25.errors, M25.mats.A.lap.len, M25.mats.B.lap.len, M25.mats.A.lap.calc.lap]));
+  // bad lines are reported by line with the reason, the good lines still parse, and the model reports them as errors
+  const BAD = parseLapTable("N12 600\nSLAB 25 32\nN12 600 500 450\nN13 600 500\nN16 850 750\nBEAM 25 32\nN16 850 750\nfoo bar\nCOLUMN\nN12 500 600\nN12 500\nSLAB 25\nN12 600\n");
+  const want = [[1, /give the case first/], [3, /3 laps for 2 grades \(25, 32\)/], [4, /N13 is not a standard N bar size/], [8, /not a case header or a bar row/], [10, /2 laps for a case with no grades/], [12, /SLAB was already given above/], [13, /1 lap for 2 grades \(25, 32\)/]];   // rows after a repeated header still belong to that case
+  const EMPTY = parseLapTable("SLAB 25 32\n# nothing under it\n"), WALL = parseLapTable("WALLS 40\nN12 500\nCOLUMN\nN16 650");
+  if (EMPTY.errors.length !== 1 || !/^Lap table line 1 \(SLAB\): no bar rows under this case/.test(EMPTY.errors[0]) || EMPTY.empty) p("empty case: " + JSON.stringify(EMPTY));
+  if (WALL.errors.length !== 1 || !/^Lap table line 3 \(COLUMN\): COLUMN was already given above/.test(WALL.errors[0]) || WALL.cases.column.rows[12][0] !== 500 || WALL.cases.column.rows[16][0] !== 650) p("wall = column case: " + JSON.stringify(WALL));
+  want.forEach(([ln, re]) => { if (!BAD.errors.some(e => e.indexOf("Lap table line " + ln + " ") === 0 && re.test(e))) p("expected an error on table line " + ln + " matching " + re + "; got " + JSON.stringify(BAD.errors)); });
+  if (BAD.errors.length !== want.length || BAD.rows !== 3 || !BAD.cases.beamLt300 || !BAD.cases.beamGt300 || BAD.cases.beamGt300.rows[16][1] !== 750 || BAD.cases.column.rows[12][0] !== 500) p("bad table parse: " + JSON.stringify(BAD));
+  const MBAD = buildModel(Object.assign({}, DEFAULT_CFG, { lapTable: "SLAB 32\nN16 abc" }));
+  if (!MBAD.errors.some(e => /^Lap table line 2 \(N16 abc\): laps must be whole millimetres/.test(e))) p("model should report table errors: " + MBAD.errors.join(" | "));
+  const MFC = buildModel(Object.assign({}, DEFAULT_CFG, { fc: 10 }));
+  if (!MFC.errors.some(e => /^Concrete f'c must be 20–100 MPa/.test(e))) p("f'c range: " + MFC.errors.join(" | "));
+  if (problems.length) fail(problems.slice(0, 20).join("\n"));
+  console.log("  laps: " + cells + " Findings 2.4 cells reproduced, B23 slab / beam / column fit, cd and k3 cases, flat example flagged (3), B23 table drives A 750 / D 500 / EB1 top 950 / starters 950, partial and bad tables reported");
 }
 
 // error paths must report, not throw
