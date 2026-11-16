@@ -330,8 +330,59 @@ const { chromium } = require("playwright");
     siteRuns.push(r);
   }
 
+  // precast panel (#33): the floor / panel switch, NF and FF faces as bars or mesh, the sheet and site mode
+  await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300);
+  await page.click("#modePanel"); await page.waitForTimeout(900);
+  const pn = { stats: await stats() };
+  Object.assign(pn, await page.evaluate(() => { const M = window.xstruc.model(); return { kind: M.kind, order: M.ORDER.join(), wires: M.wires.length, pieces: M.meshPieces.length, line: document.getElementById("slabline").textContent, legend: document.getElementById("legend").textContent, chips: document.querySelectorAll("#steps .step").length, fieldsHidden: document.getElementById("inGridX").offsetParent === null, panelShown: document.getElementById("pnW").offsetParent !== null, meshRow: !!document.querySelector('#sched tr[data-mark="P1-M1"]') }; }));
+  await page.screenshot({ path: path.join(outDir, "smoke-18-panel.png") });
+  await page.evaluate(() => window.xstruc.selectPiece("S1")); await page.waitForTimeout(200);
+  pn.piece = await page.textContent("#inspector");
+  // the near face set to mesh: its bars give way to a sheet
+  await page.click('.kindsw [data-face="NF"][data-kind="mesh"]'); await page.waitForTimeout(900);
+  pn.nfMesh = await page.evaluate(() => { const M = window.xstruc.model(); return { pieces: M.meshPieces.map(p => p.face + " " + p.code).join(), nfBars: M.bars.filter(b => b.layer === "NF1").length, text: document.getElementById("pnNF").value, pressed: document.querySelector('.kindsw [data-face="NF"][data-kind="mesh"]').getAttribute("aria-pressed") }; });
+  // a bad line is an error on that face and keeps the scene
+  await page.fill("#pnNF", "SL82"); await page.waitForTimeout(900);
+  pn.bad = { errs: (await stats()).errs, invalid: await page.getAttribute("#pnNF", "aria-invalid"), pieces: await page.evaluate(() => window.xstruc.model().meshPieces.length) };
+  // back to bars: the face remembers what was typed for bars
+  await page.click('.kindsw [data-face="NF"][data-kind="bar"]'); await page.waitForTimeout(900);
+  const sBack = await stats();
+  pn.back = { text: await page.inputValue("#pnNF"), errs: sBack.errs, bars: sBack.bars };
+  // the near face on the bed flips the fixing order
+  await page.selectOption("#pnCast", "NF"); await page.waitForTimeout(900);
+  pn.flip = await page.evaluate(() => ({ order: window.xstruc.model().ORDER.join(), first: document.querySelector('#steps .step[data-step="1"] b').textContent }));
+  await page.selectOption("#pnCast", "FF"); await page.waitForTimeout(900);
+  // the placing sheet of the far-face mesh, and of the near face's inner bars
+  await page.click("#tgSheet"); await page.click('#steps .step[data-step="1"]'); await page.waitForTimeout(600);
+  pn.sheet = await page.evaluate(() => { const S = window.xstruc.sheet(); return { title: S.title.join(" / "), tags: S.tags.map(t => t.text), sheets: S.strip.sheets, wires: S.bars.length }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-18-panel-sheet.png") });
+  await page.click('#steps .step[data-step="4"]'); await page.waitForTimeout(600);
+  pn.sheet4 = await page.evaluate(() => { const S = window.xstruc.sheet(); return { tags: S.tags.map(t => t.text).sort(), dims: S.dims.length, overlap: S.tags.some(t => t.overlap) }; });
+  await page.click(".side [data-cam=iso]"); await page.click("#all");
+  // site mode on a tablet
+  await page.setViewportSize({ width: 1024, height: 768 }); await page.waitForTimeout(300); await page.click("#btnSite"); await page.waitForTimeout(700);
+  pn.site = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#siteChips .chip-step")].map(c => c.lastElementChild.textContent), now: document.getElementById("siteNow").textContent, overflow: document.documentElement.scrollHeight > innerHeight + 1 }));
+  await page.screenshot({ path: path.join(outDir, "smoke-18-panel-site.png") });
+  await page.click("#btnSiteExit"); await page.waitForTimeout(300);
+  await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300);
+  // back to the floor: the Level 1 example as it was
+  await page.click("#modeFloor"); await page.waitForTimeout(900);
+  pn.floor = await stats();
+  console.log("panel:", JSON.stringify(pn).slice(0, 1500));
+
   await browser.close();
   const problems = [];
+  // precast panel (#33)
+  if (pn.kind !== "panel" || pn.order !== "FF1,FF2,CH,NF2,NF1" || pn.chips !== 6 || pn.pieces !== 1 || pn.wires < 40 || !pn.fieldsHidden || !pn.panelShown || !pn.meshRow || !/Example panel/.test(pn.line) || !/FF mesh/.test(pn.legend) || pn.stats.bars !== "83" || pn.stats.errs.length) problems.push("panel mode did not build the example panel: " + JSON.stringify(pn).slice(0, 600));
+  if (!/P1-M1SL82 mesh sheet/.test(pn.piece) || !/Cut size5,940 × 2,940/.test(pn.piece)) problems.push("mesh sheet inspector wrong: " + pn.piece);
+  if (pn.nfMesh.pieces !== "NF SL82,FF SL82" || pn.nfMesh.nfBars !== 0 || pn.nfMesh.text !== "SL82 H" || pn.nfMesh.pressed !== "true") problems.push("setting the near face to mesh: " + JSON.stringify(pn.nfMesh));
+  if (!pn.bad.errs.some(e => /^Near face line 1 \(SL82\): say which way its long wires run/.test(e)) || pn.bad.invalid !== "true" || pn.bad.pieces !== 2) problems.push("a bad face line should be an error that keeps the scene: " + JSON.stringify(pn.bad));
+  if (pn.back.text !== "N12-200 H\nN12-200 V" || pn.back.errs.length || pn.back.bars !== "83") problems.push("back to bars did not restore the bar lines: " + JSON.stringify(pn.back));
+  if (pn.flip.order !== "NF1,NF2,CH,FF2,FF1" || pn.flip.first !== "Near face outer bars") problems.push("NF on the bed did not flip the order: " + JSON.stringify(pn.flip));
+  if (!/FAR FACE · MESH SL82 H/.test(pn.sheet.title) || pn.sheet.sheets !== 1 || pn.sheet.tags.join() !== "SL82 H · FF" || pn.sheet.wires < 40) problems.push("panel mesh sheet wrong: " + JSON.stringify(pn.sheet));
+  if (pn.sheet4.tags.join() !== "30 N12-200 V · NF,N16 PERIMETER · NF,OPENING BARS · NF" || pn.sheet4.dims !== 2 || pn.sheet4.overlap) problems.push("panel near-face sheet wrong: " + JSON.stringify(pn.sheet4));
+  if (pn.site.chips.join("|") !== "Formwork|Far face mesh|Far face edge bars|Bar chairs|Near face inner bars|Near face outer bars|Finished panel" || pn.site.overflow) problems.push("panel site mode: " + JSON.stringify(pn.site));
+  if (pn.floor.bars !== s0.bars || pn.floor.steps !== 8 || JSON.stringify(pn.floor.errs) !== JSON.stringify(s0.errs)) problems.push("back to the floor did not restore the example: " + JSON.stringify(pn.floor));
   siteRuns.forEach(r => {
     const p = m => problems.push("site " + r.vp + ": " + m);
     if (!r.on || !r.sideHidden || !r.inspectHidden || !r.barVisible) p("site mode did not strip the UI (" + JSON.stringify({ on: r.on, side: r.sideHidden, insp: r.inspectHidden, bar: r.barVisible }) + ")");

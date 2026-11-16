@@ -2,6 +2,12 @@
 
 Decisions Baji has made. Build to these; don't re-ask them. Newest first. A build run that needs a decision not listed here adds a question to the planning doc instead of guessing.
 
+## 2026-11-16
+
+- **Precast panels:** the viewer shows precast panels as well as floors, with a switch between them.
+- **Panel faces:** the two faces are named as on a precast shop drawing, NF (near face) and FF (far face); the face cast down on the bed is stated per panel.
+- **Bars or mesh per face:** each face can be reinforced with bars or with mesh, chosen per face, and the viewer must show both kinds.
+
 ## 2026-11-04
 
 - **Primary user: site crews.** Leading hands, foremen and fixers building the reo from the model. Site-facing features lead the backlog; scheduling-office and bending-machine features follow.
