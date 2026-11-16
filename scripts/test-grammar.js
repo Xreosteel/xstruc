@@ -64,6 +64,15 @@ const CASES = [
   ["3-L11TM BTM", TB, { kind: "mesh", count: 3, mesh: "L11TM", position: "B" }],
   ["2 LAYERS SL82", TB, { kind: "mesh", count: 2, mesh: "SL82" }],
   ["SL72 MESH TOP, 20 COVER", TB, { kind: "mesh", mesh: "SL72", position: "T" }],
+  // mesh in the floor inputs (#6): position T / B and the long-wire direction, in either scheme
+  ["SL82 T E-W", AB, { kind: "mesh", mesh: "SL82", position: "T", layer: null, direction: "X", count: null }],
+  ["RL918 B N-S", AB, { kind: "mesh", mesh: "RL918", position: "B", direction: "Y" }],
+  ["SL82 T&B E-W", AB, { kind: "mesh", position: "TB", direction: "X" }],
+  ["SL82 TOP NS", AB, { kind: "mesh", position: "T", direction: "Y" }],
+  ["SL82 T EW", AB, { kind: "mesh", position: "T", direction: "EW" }],
+  ["SL82 D E-W", AB, { kind: "mesh", layer: "D", position: "T", direction: "X" }],
+  ["RL1218 BOTTOM E-W", AB, { kind: "mesh", mesh: "RL1218", position: "B", direction: "X" }],
+  ["L11TM B E-W", AB, { kind: "mesh", mesh: "L11TM", type: "LTM", position: "B" }],
   // thickness lines
   ["200 THK", TB, { kind: "thickness", value: 200 }],
   ["180 THICK SLAB", TB, { kind: "thickness", value: 180 }],

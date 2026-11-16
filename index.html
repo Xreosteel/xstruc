@@ -189,6 +189,9 @@ tbody tr.on { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 tfoot td { font-weight: 500; color: var(--fg); border-bottom: 0; position: sticky; bottom: 0; background: var(--panel); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; }
 td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
+#meshsec td.dims, #meshsum td { white-space: normal; }
+#meshsum td { font-weight: 400; font-size: 12px; }
+#meshsum small { color: var(--muted); font-size: 11px; }
 .fl { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: color-mix(in srgb, var(--warn) 25%, transparent); color: var(--warn); font-size: 10px; text-align: center; line-height: 14px; font-weight: 600; cursor: help; }
 
 @media (max-width: 1150px) {
@@ -314,7 +317,7 @@ html.print #sheet { background: #fff; }
         <div class="field"><label for="inFc">Concrete f'c MPa</label><input id="inFc" type="number" min="20" max="80" step="5"></div>
         <div class="field"><label for="inLap">Lap, all bars mm</label><input id="inLap" type="number" min="300" max="2500" step="50"></div>
         <div class="field wide"><label for="inLapTable">Lap table from the general notes (optional): a case line with its f'c grades, then a row per bar size. Empty = the flat lap above.</label><textarea id="inLapTable" rows="3" spellcheck="false" autocomplete="off" placeholder="SLAB 25 32 40&#10;N12 600 500 450&#10;N16 850 750 650"></textarea></div>
-        <div class="field wide"><label for="inCallouts">Mats, one callout per line: size-spacing, layer A–D, and which way it runs (E-W or N-S)</label><textarea id="inCallouts" rows="4" spellcheck="false" autocomplete="off" placeholder="N16-200 A E-W"></textarea></div>
+        <div class="field wide"><label for="inCallouts">Mats, one callout per line: size-spacing, layer A–D, and which way it runs (E-W or N-S); or a mesh for a whole face, T or B, with its long-wire direction</label><textarea id="inCallouts" rows="4" spellcheck="false" autocomplete="off" placeholder="N16-200 A E-W&#10;SL82 T E-W"></textarea></div>
       </div>
       </div>
       <div class="modein in-panel" hidden>
@@ -356,7 +359,7 @@ html.print #sheet { background: #fff; }
       </div>
       <div class="modein in-floor">
       <div class="laprep" id="lapReport"></div>
-      <p class="hint">Layers: A bottom 1st, B bottom 2nd, C top 3rd, D top 4th. Every mat must say which way it runs: <code>E-W</code> or <code>N-S</code>, one direction per layer; nothing is assumed when the drawing is silent. Also understood: <code>N12 @ 200 CTS A E-W</code>, <code>N12-150 C NS</code>.</p>
+      <p class="hint">Layers: A bottom 1st, B bottom 2nd, C top 3rd, D top 4th. Every mat must say which way it runs: <code>E-W</code> or <code>N-S</code>, one direction per layer; nothing is assumed when the drawing is silent. Also understood: <code>N12 @ 200 CTS A E-W</code>, <code>N12-150 C NS</code>. Mesh: <code>SL82 T E-W</code> lays 6.0 × 2.4 sheets over both top layers (C+D) with the long wires E-W, lapped and cut clear of openings; <code>RL918 B N-S</code> the bottom.</p>
       <div class="feats" id="feats">
         <label><input type="checkbox" data-feat="beams" checked> Beams IB1 + EB1</label>
         <label><input type="checkbox" data-feat="columns" checked> Columns + starters</label>
@@ -465,6 +468,17 @@ html.print #sheet { background: #fff; }
         </table>
       </div>
       <p class="note" id="schednote">Click a row to highlight every bar with that mark. Excludes the columns below (already poured) and bar chairs.</p>
+    </div>
+    <div class="sec" id="meshsec" hidden>
+      <h2>Mesh cutting list</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Mark</th><th>Mesh · cut L × W</th><th class="num">Sheets</th><th class="num">kg</th></tr></thead>
+          <tbody id="meshsched"></tbody>
+          <tfoot id="meshsum"></tfoot>
+        </table>
+      </div>
+      <p class="note">Cut sizes are along the long wires × across, from 6.0 × 2.4 stock with the fly ends trimmed (5.8 m between the end wires). Stock sheets to order nest the pieces on whole sheets; the net area is what measured work pays (no allowance for laps), the bought area is what the shop buys. Laps 225 end / 325 side (SL) are placeholders until the lap rule is confirmed. Mass is wire length at nominal mass.</p>
     </div>
   </section>
 </div>
@@ -886,8 +900,35 @@ html.print #sheet { background: #fff; }
     if (!(C >= 15 && C <= 75)) errors.push("Cover must be 15–75 mm.");
     if (!(LAPLEN >= 300 && LAPLEN <= 2500)) errors.push("Lap must be 300–2500 mm.");
 
-    // mats from callouts
+    // mats from callouts: bar mats by layer (A–D), or a mesh for a whole face (#6): "SL82 T E-W" is both top layers
     const mats = {}, parsed = [], named = {};   // named: layers a callout line names, even when that line is rejected
+    const meshes = {};                           // T / B → { code, spec, dir (X / Y: the long wires), line, layers }
+    const MESH_FACE = { T: ["C", "D"], B: ["A", "B"] }, faceOf = l => l < "C" ? "B" : "T", faceWord = f => f === "T" ? "top" : "bottom";
+    const meshCovers = l => !!meshes[faceOf(l)];
+    // A mesh callout: position T or B (a sheet is both layers of that face; T&B lays one each), long wires E-W or N-S
+    // stated (DECISIONS.md layer direction: nothing is assumed), a sheet mesh from the catalogue (trench mesh is for
+    // footings), one mesh per face, and not on a face that already has a bar mat.
+    function meshLine(p, where) {
+      const pos = p.position === "TB" ? ["T", "B"] : p.position === "T" || p.position === "B" ? [p.position] : null;
+      if (pos) pos.forEach(f => MESH_FACE[f].forEach(l => { named[l] = true; }));
+      if (/TM$/.test(p.type)) { errors.push(where + p.mesh + " is trench mesh, for footings; a slab mesh is SL or RL."); return; }
+      if (!MESH[p.mesh]) { errors.push(where + p.mesh + " is not a sheet mesh in the catalogue here (SL62–SL102, SL81, RL718–RL1218)."); return; }
+      if (p.count && p.count !== 1) { errors.push(where + "give each mesh its own line with its position, T or B."); return; }
+      if (!pos) { errors.push(where + "say where the mesh goes: T (top) or B (bottom); one sheet is both layers of that face."); return; }
+      const d = p.direction;
+      if (d !== "X" && d !== "Y") {
+        if (!d) errors.push(where + "say which way the mesh's long wires run: E-W or N-S (no direction is assumed).");
+        else if (d === "EW") errors.push(where + "a sheet is already each way; say which way its long wires run, E-W or N-S.");
+        else errors.push(where + ({ H: "horizontal", V: "vertical", LONG: "longitudinal", TRANS: "transverse" }[d] || d) + " is a wall or beam direction; a slab mesh's long wires run E-W or N-S.");
+        return;
+      }
+      pos.forEach(f => {
+        if (meshes[f]) { errors.push(where + "the " + faceWord(f) + " already has " + meshes[f].code + " on line " + meshes[f].line + "; one mesh per face."); return; }
+        const bar = MESH_FACE[f].map(l => mats[l]).find(Boolean);
+        if (bar) { errors.push(where + "layer " + bar.layer + " is a bar mat on line " + bar.line + "; the " + faceWord(f) + " is either mesh or bars."); return; }
+        meshes[f] = { code: p.mesh, spec: MESH[p.mesh], dir: d, line: p.line, face: f, layers: MESH_FACE[f] };
+      });
+    }
     String(cfg.callouts || "").split(/\r?\n/).forEach((line, i) => {
       if (!line.trim()) return;
       const p = parseCallout(line, { scheme: cfg.scheme || "ABCD" }); p.line = i + 1; parsed.push(p);
@@ -895,7 +936,7 @@ html.print #sheet { background: #fff; }
       if (p.layer && MAT_LAYERS.indexOf(p.layer) >= 0) named[p.layer] = true;
       if (p.error) { errors.push(where + p.error + "."); return; }
       if (p.kind === "thickness") { warnings.push(where + "slab thickness is set in its own field; line ignored."); return; }
-      if (p.kind === "mesh") { errors.push(where + "mesh is not supported yet (backlog #6); use N bars for the mats."); return; }
+      if (p.kind === "mesh") { meshLine(p, where); return; }
       if (p.role) { warnings.push(where + "additional/" + p.role + " bars are not read from callouts yet; the example extras are controlled by the Extra bars toggle."); return; }
       if (!p.layer || MAT_LAYERS.indexOf(p.layer) < 0) { errors.push(where + "say which layer this mat is: A, B, C or D."); return; }
       if (!p.spacing) { errors.push(where + "no spacing found (write N12-200 or N12 @ 200)."); return; }
@@ -904,16 +945,24 @@ html.print #sheet { background: #fff; }
       const dirErr = matDirectionError(p.direction);
       if (dirErr) { errors.push(where + dirErr); return; }
       if (mats[p.layer]) { errors.push(where + "layer " + p.layer + " is already defined on line " + mats[p.layer].line + "."); return; }
+      if (meshCovers(p.layer)) { errors.push(where + "the " + faceWord(faceOf(p.layer)) + " is " + meshes[faceOf(p.layer)].code + " mesh on line " + meshes[faceOf(p.layer)].line + "; layer " + p.layer + " is in that sheet."); return; }
       if (p.spacing < p.size * 2 + 20) { errors.push(where + "spacing " + p.spacing + " is too tight for N" + p.size + "."); return; }
       if (p.spacing > 600) { warnings.push(where + "spacing over 600 exceeds the usual slab maximum (2D or 300 whichever is less)."); }
       mats[p.layer] = { layer: p.layer, size: p.size, sp: p.spacing, dirIn: p.direction, line: i + 1, count: p.count };
     });
     MAT_LAYERS.forEach(l => { if (!mats[l] && !named[l]) warnings.push("No mat for layer " + l + "; it is left out of this model."); });   // a rejected line already has its error
-    const dA = mats.A ? mats.A.size : 16, dB = mats.B ? mats.B.size : 12, dC = mats.C ? mats.C.size : 12, dD = mats.D ? mats.D.size : 12;
+    // layer bar sizes for the stack: a mesh face puts its long wires outside (A / D) and its cross wires inside (B / C)
+    const dA = mats.A ? mats.A.size : meshes.B ? meshes.B.spec.dl : 16, dB = mats.B ? mats.B.size : meshes.B ? meshes.B.spec.dc : 12;
+    const dD = mats.D ? mats.D.size : meshes.T ? meshes.T.spec.dl : 12, dC = mats.C ? mats.C.size : meshes.T ? meshes.T.spec.dc : 12;
+    const hasMat = l => !!mats[l] || meshCovers(l);   // a layer with steel to tie trimmers and extras to
     const Z = { A: C + dA / 2, B: C + dA + dB / 2, D: T - C - dD / 2, C: T - C - dD - dC / 2 };
     if (Z.C - dC / 2 - (Z.B + dB / 2) < 40) errors.push("Slab too thin for this mat stack: top and bottom mats would clash.");
     const COGZ = Z.B + dB / 2 + 4;            // top-bar cogs turn down to just above the bottom mat
     const zEdgeT = Z.C - dC / 2 - 6, zEdgeB = Z.B + dB / 2 + 12, zChairTop = Z.C - dC / 2;
+    // where a trimmer / additional / extra bar sits in a layer: between the mat bars at the layer's level, or, on a mesh
+    // face, tied just inside the mesh (under the top sheet's edge bars, over the bottom sheet's; the face's inner layer
+    // first, its outer layer one bar further in) so it never shares a plane with a wire or with the other layer's bars
+    const zTied = (l, size) => !meshCovers(l) ? Z[l] : l < "C" ? zEdgeB + 6 + size / 2 + (l === "A" ? 0 : size + 2) : zEdgeT - 6 - size / 2 - (l === "C" ? 0 : size + 2);
     MAT_LAYERS.forEach(l => { const m = mats[l]; if (!m) return; m.top = l === "C" || l === "D"; m.z = Z[l]; m.dir = m.dirIn; });   // dirIn is X or Y here; anything else was rejected above
     if (mats.A && mats.B && mats.A.dir === mats.B.dir) warnings.push("Layers A and B run the same way; a bottom mat normally crosses (A E-W, B N-S).");
     if (mats.C && mats.D && mats.C.dir === mats.D.dir) warnings.push("Layers C and D run the same way; a top mat normally crosses.");
@@ -1192,6 +1241,56 @@ html.print #sheet { background: #fff; }
       if (lrun) { if (lrun.bars.length) lrun.tagPos = X ? [STEP.x0 + 150, STEP.y0 + (lid < "C" ? 2100 : 3800), m.z + 100] : [STEP.x0 + (lid < "C" ? 2100 : 3700), STEP.y0 + 150, m.z + 100]; else runs.splice(runs.indexOf(lrun), 1); }
     });
 
+    // ---- mesh mats (#6): a face's sheets laid over the slab inside cover (Findings 11.4), long wires outside ----
+    // The bottom mesh is placed first of all (layer A's step), the top mesh right after the chairs (layer C's step); the
+    // other layer of that face holds only the trimmers and extras tied to the sheet. Sheets stop cover short of every
+    // opening (wires cut on site, as the bars do) and of every change of level: the main slab, each set-down and the
+    // raised step are laid as separate zones at their own levels. Nothing splices the mesh across a level change (the
+    // Z-bar and L-bar details are bar details); that is flagged and asked (planning doc, Questions for Baji, 2026-11-16).
+    const wires = [], meshPieces = [], MSUM = [];
+    const uvOf = (X, r) => X ? { u0: r.x0, u1: r.x1, v0: r.y0, v1: r.y1 } : { u0: r.y0, u1: r.y1, v0: r.x0, v1: r.x1 };
+    ["B", "T"].forEach(f => {
+      const ms = meshes[f]; if (!ms) return;
+      const s = ms.spec, X = ms.dir === "X", top = f === "T", lid = top ? "C" : "A";
+      const zL = top ? Z.D : Z.A, zC = top ? Z.C : Z.B;   // long wires at the outer layer's level, cross wires at the inner
+      const dirS = X ? "E–W" : "N–S";
+      const run = addRun({ layer: lid, kind: "mesh", face: f, size: s.dl, code: ms.code, dir: ms.dir, mesh: [], z: zL, label: ms.code + " " + f + " " + dirS, callout: "" });
+      ms.run = run;
+      const xy = (u, v) => X ? [u, v] : [v, u];
+      const grown = (r, id) => Object.assign(uvOf(X, { x0: r.x0 - C, x1: r.x1 + C, y0: r.y0 - C, y1: r.y1 + C }), { id: id });
+      const inset = r => ({ x0: r.x0 + C, x1: r.x1 - C, y0: r.y0 + C, y1: r.y1 - C });
+      const openings = HOLES.map(h => grown(h, h.id));
+      const zones = [];
+      const mainHoles = openings.concat(DROPS.map(dd => grown(dd, dd.id)));
+      // the low slab runs into the step nib as the bars do (to nib − cover past the step line); the raised slab starts cover past it
+      if (STEP) mainHoles.push(grown({ x0: STEP.x0 + STEP.nib, x1: SL.x1 + 5000, y0: STEP.y0 + STEP.nib, y1: SL.y1 + 5000 }, "STEP"));
+      zones.push({ rect: inset(SL), holes: mainHoles, dz: 0, name: "" });
+      DROPS.forEach(dd => zones.push({ rect: inset(dd), holes: openings, dz: -dd.d, name: dd.id + " set-down" }));
+      if (STEP) zones.push({ rect: inset({ x0: STEP.x0, y0: STEP.y0, x1: SL.x1, y1: SL.y1 }), holes: openings, dz: STEP.rise, name: "raised step" });
+      let lapped = false, area = 0;
+      zones.forEach(zn => {
+        const uv = uvOf(X, zn.rect);
+        const res = layMesh({ U0: uv.u0, U1: uv.u1, V0: uv.v0, V1: uv.v1, holes: zn.holes, spec: s, code: ms.code, layer: lid, run: run, xy: xy, zL: zL + zn.dz, zC: zC + zn.dz, made: false, C: C,
+          dirShort: dirS, dirWord: X ? "east–west" : "north–south", extra: { face: f, level: zn.dz, zone: zn.name } }, { pieces: meshPieces, wires: wires });
+        lapped = lapped || res.lapped; area += res.area;
+        res.list.forEach(pc => {
+          pc.pos = "SW corner " + nearestGrid(GX, pc.x0, ["E", "W"]).text + ", " + nearestGrid(GY, pc.y0, ["N", "S"]).text + (zn.dz ? " · at the " + zn.name + " level" : "");
+          if (zn.dz) pc.note += " Laid at the " + zn.name + " level (" + (zn.dz > 0 ? "+" : "−") + Math.abs(zn.dz) + "); no splice to the main slab's sheets.";
+        });
+      });
+      run.n = run.mesh.length;
+      if (!run.n) { errors.push("Line " + ms.line + " (" + ms.code + " " + f + "): no sheet fits the slab inside cover."); runs.splice(runs.indexOf(run), 1); delete meshes[f]; return; }
+      const LAP = MESH_LAP(s.fam);
+      run.label = ms.code + " " + f + " " + dirS + " · " + run.n + " SHEET" + (run.n > 1 ? "S" : "");
+      run.callout = ms.code + " " + (top ? "TOP" : "BOTTOM") + " MESH, LONG WIRES " + dirS + ", " + run.n + " SHEET" + (run.n > 1 ? "S" : "") + " FROM 6.0 × 2.4 STOCK, LAPS " + LAP.end + " END / " + LAP.side + " SIDE, CUT " + C + " CLEAR OF OPENINGS";
+      const p0 = run.mesh[0];
+      run.tagPos = [p0.x0 + (p0.x1 - p0.x0) * (top ? 0.62 : 0.35), p0.y0 + (p0.y1 - p0.y0) * (top ? 0.7 : 0.45), zL + 20];
+      if (lapped) warnings.push(ms.code + " " + f + ": mesh laps " + LAP.end + " end / " + LAP.side + " side are placeholders (AS 3600 Cl 13.2.3 geometry with the fly ends trimmed, Findings 11.3); confirm the mesh lap rule.");
+      if (DROPS.length || STEP) warnings.push(ms.code + " " + f + " stops " + C + " short of each side of " + DROPS.map(dd => "the " + dd.d + " set-down " + dd.id).concat(STEP ? ["the " + STEP.rise + " step"] : []).join(" and ") + "; the splice across a change of level is not detailed for mesh (Z-bars and L-bars are bar details). Check with the engineer.");
+      MSUM.push(meshSummary(run, area));
+    });
+    const CHAIR_PITCH = meshes.T ? 800 : 1000;   // chairs at 800 under a top mesh (NCC 2019 Vol 2 Table 3.2.3.1, fabric, via Findings 11.3), 1,000 under bars
+
     // ---- N12 edge bars top and bottom around the free slab edges (inside the cogs) ----
     if (F.edges) {
       const off = C + 12;
@@ -1205,35 +1304,38 @@ html.print #sheet { background: #fff; }
     }
 
     // ---- additional top bars over flat-plate columns (columns not on a beam line) ----
-    if (COLS.length && (mats.C || mats.D)) {
-      const rx = mats.D ? addRun({ layer: "D", size: 16, dir: "X", kind: "add", z: Z.D, label: "ADD N16-200 · D × 3000", callout: "ADD N16-200 LAYER D × 3000 OVER COLUMNS", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C, below: Z.D - 8, what: "additional top bars (D)" }) }) : null;
-      const ry = mats.C ? addRun({ layer: "C", size: 16, dir: "Y", kind: "add", z: Z.C, label: "ADD N16-200 · C × 3000", callout: "ADD N16-200 LAYER C × 3000 OVER COLUMNS", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C + dD, below: Z.C - 8, what: "additional top bars (C)" }) }) : null;
+    if (COLS.length && (hasMat("C") || hasMat("D"))) {
+      const zAX = zTied("D", 16), zAY = zTied("C", 16);
+      const rx = hasMat("D") ? addRun({ layer: "D", size: 16, dir: "X", kind: "add", z: zAX, label: "ADD N16-200 · D × 3000", callout: "ADD N16-200 LAYER D × 3000 OVER COLUMNS", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C, below: Z.D - 8, what: "additional top bars (D)" }) }) : null;
+      const ry = hasMat("C") ? addRun({ layer: "C", size: 16, dir: "Y", kind: "add", z: zAY, label: "ADD N16-200 · C × 3000", callout: "ADD N16-200 LAYER C × 3000 OVER COLUMNS", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C + dD, below: Z.C - 8, what: "additional top bars (C)" }) }) : null;
       let last = null;
       COLS.filter(c => !inBeam(c.x, c.y).length).forEach(c => {
         last = c;
         for (let o = -400; o <= 400; o += 200) {
-          if (rx) placeLine(rx, true, c.y + o + 75, Math.max(c.x - 1500, SL.x0 + C), Math.min(c.x + 1500, SL.x1 - C), Z.D, { cog: true, setout: "over column " + c.name, note: "Additional top bar over column " + c.name + ", 1500 each side of the column centre." });
-          if (ry) placeLine(ry, false, c.x + o + 75, Math.max(c.y - 1500, SL.y0 + C), Math.min(c.y + 1500, SL.y1 - C), Z.C, { cog: true, setout: "over column " + c.name, note: "Additional top bar over column " + c.name + ", 1500 each side of the column centre." });
+          if (rx) placeLine(rx, true, c.y + o + 75, Math.max(c.x - 1500, SL.x0 + C), Math.min(c.x + 1500, SL.x1 - C), zAX, { cog: true, setout: "over column " + c.name, note: "Additional top bar over column " + c.name + ", 1500 each side of the column centre." });
+          if (ry) placeLine(ry, false, c.x + o + 75, Math.max(c.y - 1500, SL.y0 + C), Math.min(c.y + 1500, SL.y1 - C), zAY, { cog: true, setout: "over column " + c.name, note: "Additional top bar over column " + c.name + ", 1500 each side of the column centre." });
         }
       });
-      [rx, ry].forEach(r => { if (!r) return; if (!r.bars.length) runs.splice(runs.indexOf(r), 1); else r.tagPos = [last.x - 900, last.y - (r === rx ? 650 : 700), Z.D + 26 + lvl(last.x - 1, last.y - 1)]; });
+      [rx, ry].forEach(r => { if (!r) return; if (!r.bars.length) runs.splice(runs.indexOf(r), 1); else r.tagPos = [last.x - 900, last.y - (r === rx ? 650 : 700), zAX + 26 + lvl(last.x - 1, last.y - 1)]; });
     }
 
     // ---- extra bars ----
     if (F.extras && nX >= 3 && nY >= 2) {
       const midX = (gx[1] + gx[2]) / 2, bay = { x0: gx[1] + 200, x1: gx[2] - 200, y0: gy[0] + 200, y1: gy[1] - 200 };
-      if (mats.A && clearOfBeams({ x0: midX - 1500, x1: midX + 1500, y0: bay.y0, y1: bay.y1 })) {
-        const ex1 = addRun({ layer: "A", size: 16, dir: "X", kind: "extra", z: Z.A, label: "EXTRA N16-200 · A × 3000", callout: "EXTRA N16-200 LAYER A × 3000 MID-SPAN, BAY 2–3 / A–B", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C, below: Z.A - 8, what: "extra bottom bars (A)" }) });
-        for (let y = bay.y0 + 900; y <= bay.y1 - 800; y += 200) placeLine(ex1, true, y, midX - 1500, midX + 1500, Z.A, { setout: so(true, y), note: "Extra bottom bar at mid-span, placed between the layer A mat bars." });
-        if (ex1.bars.length) ex1.tagPos = [midX, bay.y0 + 1200, Z.A + 22]; else runs.splice(runs.indexOf(ex1), 1);
+      if (hasMat("A") && clearOfBeams({ x0: midX - 1500, x1: midX + 1500, y0: bay.y0, y1: bay.y1 })) {
+        const zE1 = zTied("A", 16);
+        const ex1 = addRun({ layer: "A", size: 16, dir: "X", kind: "extra", z: zE1, label: "EXTRA N16-200 · A × 3000", callout: "EXTRA N16-200 LAYER A × 3000 MID-SPAN, BAY 2–3 / A–B", lap: lapUse({ size: 16, kase: "slab", sp: 200, cover: C, below: Z.A - 8, what: "extra bottom bars (A)" }) });
+        for (let y = bay.y0 + 900; y <= bay.y1 - 800; y += 200) placeLine(ex1, true, y, midX - 1500, midX + 1500, zE1, { setout: so(true, y), note: "Extra bottom bar at mid-span, placed between the layer A mat bars." });
+        if (ex1.bars.length) ex1.tagPos = [midX, bay.y0 + 1200, zE1 + 22]; else runs.splice(runs.indexOf(ex1), 1);
       }
       const ib = BEAMS.find(b => b.id === "IB1");
-      if (ib && mats.D) {
-        const ex2 = addRun({ layer: "D", size: 16, dir: "X", kind: "extra", z: Z.D, label: "EXTRA N16-300 · D × 3000 OVER IB1", callout: "EXTRA N16-300 LAYER D × 3000 OVER BEAM IB1", lap: lapUse({ size: 16, kase: "slab", sp: 300, cover: C, below: Z.D - 8, what: "extra top bars over IB1 (D)" }) });
-        for (let y = SL.y0 + 175; y <= SL.y1 - 50; y += 300) placeLine(ex2, true, y, ib.at - 1500, ib.at + 1500, Z.D, { setout: so(true, y), note: "Extra top bar across beam IB1, 1500 each side of the beam centreline, between the layer D mat bars." });
-        ex2.tagPos = [ib.at + 900, SL.y0 + Wd * 0.3, Z.D + 26];
+      if (ib && hasMat("D")) {
+        const zE2 = zTied("D", 16);
+        const ex2 = addRun({ layer: "D", size: 16, dir: "X", kind: "extra", z: zE2, label: "EXTRA N16-300 · D × 3000 OVER IB1", callout: "EXTRA N16-300 LAYER D × 3000 OVER BEAM IB1", lap: lapUse({ size: 16, kase: "slab", sp: 300, cover: C, below: Z.D - 8, what: "extra top bars over IB1 (D)" }) });
+        for (let y = SL.y0 + 175; y <= SL.y1 - 50; y += 300) placeLine(ex2, true, y, ib.at - 1500, ib.at + 1500, zE2, { setout: so(true, y), note: "Extra top bar across beam IB1, 1500 each side of the beam centreline, between the layer D mat bars." });
+        ex2.tagPos = [ib.at + 900, SL.y0 + Wd * 0.3, zE2 + 26];
       }
-      if (HOLES.length && mats.C) {
+      if (HOLES.length && hasMat("C")) {
         const ex3 = addRun({ layer: "C", size: 12, dir: "X", kind: "extra", z: zEdgeT, label: "EXTRA 2-N12 × 1200 DIAG", callout: "EXTRA 2-N12 × 1200 DIAGONAL AT EACH RE-ENTRANT CORNER OF OPENINGS, UNDER LAYER C" });
         HOLES.forEach(h => [[h.x0, h.y0, -1, -1], [h.x1, h.y0, 1, -1], [h.x1, h.y1, 1, 1], [h.x0, h.y1, -1, 1]].forEach(cr => {
           [60, 160].forEach(k => {
@@ -1249,8 +1351,8 @@ html.print #sheet { background: #fff; }
     function addTrims(h, name, sizeB, sizeT, ext) {
       const yL = [h.y0 - 60, h.y0 - 135, h.y1 + 60, h.y1 + 135], xL = [h.x0 - 60, h.x0 - 135, h.x1 + 60, h.x1 + 135];
       const cx = v => Math.max(SL.x0 + C, Math.min(SL.x1 - C, v)), cy = v => Math.max(SL.y0 + C, Math.min(SL.y1 - C, v));
-      [{ layer: "A", size: sizeB, X: true, z: Z.A }, { layer: "B", size: sizeB, X: false, z: Z.B }, { layer: "C", size: sizeT, X: false, z: Z.C }, { layer: "D", size: sizeT, X: true, z: Z.D }].forEach(t => {
-        if (!mats[t.layer]) return;
+      [{ layer: "A", size: sizeB, X: true, z: zTied("A", sizeB) }, { layer: "B", size: sizeB, X: false, z: zTied("B", sizeB) }, { layer: "C", size: sizeT, X: false, z: zTied("C", sizeT) }, { layer: "D", size: sizeT, X: true, z: zTied("D", sizeT) }].forEach(t => {
+        if (!hasMat(t.layer)) return;
         const run = addRun({ layer: t.layer, size: t.size, dir: t.X ? "X" : "Y", kind: "trim", z: t.z, label: "2-N" + t.size + " TRIM · " + t.layer, callout: "2-N" + t.size + " TRIMMERS EACH SIDE OF " + name + " (LAYER " + t.layer + ")",
           lap: lapUse({ size: t.size, kase: "slab", sp: 75, cover: C + (t.layer === "B" ? dA : t.layer === "C" ? dD : 0), below: t.z - t.size / 2, what: "trimmers (" + t.layer + ")" }) });   // the two trimmers sit 75 apart, so half the clear spacing governs cd
         (t.X ? yL : xL).forEach(p => placeLine(run, t.X, p, t.X ? cx(h.x0 - ext) : cy(h.y0 - ext), t.X ? cx(h.x1 + ext) : cy(h.y1 + ext), t.z, { cog: t.layer === "C" || t.layer === "D", setout: name.toLowerCase() + " edge", note: "Trimmer: replaces the bars stopped at the opening and extends " + ext + " past each corner." }));
@@ -1361,10 +1463,10 @@ html.print #sheet { background: #fff; }
       st.tagPos = [mid.x, mid.y, T + PROJ + 60];
     })();
 
-    // ---- bar chairs at 1000 both ways ----
-    // the 1,000 grid starts 500 in from the slab's SW corner and extends over any balcony on the south / west edges
-    const x00 = SL.x0 + 500 - 1000 * Math.ceil((SL.x0 - EXT.x0) / 1000), y00 = SL.y0 + 500 - 1000 * Math.ceil((SL.y0 - EXT.y0) / 1000);
-    for (let x = x00; x < EXT.x1; x += 1000) for (let y = y00; y < EXT.y1; y += 1000) {
+    // ---- bar chairs at 1000 both ways (800 under a top mesh) ----
+    // the grid starts half a pitch in from the slab's SW corner and extends over any balcony on the south / west edges
+    const CP = CHAIR_PITCH, x00 = SL.x0 + CP / 2 - CP * Math.ceil((SL.x0 - EXT.x0) / CP), y00 = SL.y0 + CP / 2 - CP * Math.ceil((SL.y0 - EXT.y0) / CP);
+    for (let x = x00; x < EXT.x1; x += CP) for (let y = y00; y < EXT.y1; y += CP) {
       const inMain = x > SL.x0 && x < SL.x1 && y > SL.y0 && y < SL.y1;
       const inBalc = BALCS.find(b => x > b.x0 + 100 && x < b.x1 - 100 && y > b.y0 + 100 && y < b.y1 - 100);
       if (!inMain && !inBalc) continue;
@@ -1372,10 +1474,10 @@ html.print #sheet { background: #fff; }
       if (inBeam(x, y).length) continue;
       const o = lvl(x, y); let s = o, t = zChairTop + o;
       if (inBalc) { s = inBalc.bot; t = inBalc.top - C - 24; }
-      chairs.push({ pts: [[x, y, s], [x, y, t]], size: 8, chair: true, layer: "CH" });
+      chairs.push({ pts: [[x, y, s], [x, y, t]], size: 8, chair: true, layer: "CH", pitch: CP });
     }
 
-    // ---- bar marks (this pour only) ----
+    // ---- bar marks (this pour only), then the mesh marks (#6) ----
     const sched = bars.filter(b => !b.existing);
     const groups = new Map();
     sched.forEach(b => { const k = b.type + b.size + "|" + b.code + "|" + b.len + "|" + b.dimStr; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(b); });
@@ -1398,12 +1500,31 @@ html.print #sheet { background: #fff; }
     LAPS.text = LAPS.source === "flat" ? LAPLEN + " all bars" : "per lap table" + (LAPS.missing.length ? " (flat " + LAPLEN + " where it has no row)" : "");
     if (cogFlagged) warnings.push(cogFlagged + " top-bar cogs are shorter than the AS 3600 standard cog because the slab is only " + T + " thick; scheduled as drawn. Confirm the cog length with the engineer.");
     bars.filter(b => b.existing).forEach(b => { b.mark = "EX"; });
-    runs.forEach(r => { r.marks = [...new Set(r.bars.map(b => b.mark))]; });
-    const kg = sched.reduce((s, b) => s + b.kg, 0);
+    meshMarks(meshPieces, marks, "");
+    runs.forEach(r => { r.marks = r.kind === "mesh" ? [...new Set(r.mesh.map(pc => pc.mark))] : [...new Set(r.bars.map(b => b.mark))]; });
+    const kgBars = sched.reduce((s, b) => s + b.kg, 0), kgMesh = meshPieces.reduce((s, p) => s + p.kg, 0), kg = kgBars + kgMesh;
+    // what each layer holds, in placing-drawing words (the viewer's step list, inspector and sheet titles read this)
+    const dirWord = d => d === "X" ? "E–W" : "N–S";
+    const matText = {};
+    MAT_LAYERS.forEach(l => {
+      const m = mats[l], ms = meshes[faceOf(l)];
+      matText[l] = m ? "N" + m.size + "-" + m.sp + " " + dirWord(m.dir) : ms ? (ms.run.layer === l ? ms.code + " mesh, long wires " + dirWord(ms.dir) : "in the " + ms.code + " mesh (placed with " + ms.run.layer + ")") : "no mat";
+    });
+    // layer names follow the mesh: the sheet's layer is named for it, the face's other layer says it is in the sheet
+    let VLAYERS = LAYERS, VLBY = LBY;
+    if (meshes.T || meshes.B) {
+      VLAYERS = LAYERS.map(l => {
+        const ms = MAT_LAYERS.indexOf(l.id) >= 0 ? meshes[faceOf(l.id)] : null;
+        if (!ms) return l;
+        const mine = ms.run.layer === l.id;
+        return mine ? Object.assign({}, l, { name: (ms.face === "T" ? "Top" : "Bottom") + " mesh " + ms.code + " · layers " + ms.layers.join("+"), short: ms.layers.join("+") + " · " + (ms.face === "T" ? "top" : "bot") + " mesh" }) : l;
+      });
+      VLBY = {}; VLAYERS.forEach(l => { VLBY[l.id] = l; });
+    }
 
-    return { cfg: cfg, errors: errors, warnings: warnings, parsed: parsed, mats: mats, Z: Z, T: T, C: C, L: L, W: Wd, SL: SL, GX: GX, GY: GY, gx: gx, gy: gy,
-      HOLES: HOLES, DROPS: DROPS, STEP: STEP, BALCS: BALCS, EXT: EXT, BEAMS: BEAMS, COLS: COLS, COL: COL, COLB: COLB, PROJ: PROJ,
-      bars: bars, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kg, laps: LAPS, LAYERS: LAYERS, LBY: LBY, EXPLODE: EXPLODE, lvl: lvl };
+    return { cfg: cfg, errors: errors, warnings: warnings, parsed: parsed, mats: mats, meshes: meshes, matText: matText, Z: Z, T: T, C: C, L: L, W: Wd, SL: SL, GX: GX, GY: GY, gx: gx, gy: gy,
+      HOLES: HOLES, DROPS: DROPS, STEP: STEP, BALCS: BALCS, EXT: EXT, BEAMS: BEAMS, COLS: COLS, COL: COL, COLB: COLB, PROJ: PROJ, chairPitch: CHAIR_PITCH,
+      bars: bars, wires: wires, meshPieces: meshPieces, meshSummary: MSUM, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kg, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS, LAYERS: VLAYERS, LBY: VLBY, EXPLODE: EXPLODE, lvl: lvl };
   }
 
   // ---------- precast panels (backlog #33a/#33b, Findings 12; mesh layout from Findings 11) ----------
@@ -1447,6 +1568,122 @@ html.print #sheet { background: #fff; }
   // open mesh-lap question (fly ends kept give a 425 end lap).
   const MESH_LAP = fam => ({ end: 225, side: fam === "SL" ? 325 : 225 });
   const MESH_MADE = { L: 9000, W: 3000 };   // InfraBuild made-to-size sheets up to 9 × 3 m (guide p. 24, Findings 11.1)
+  const MESH_STOCK_AREA = 6.0 * 2.4;        // m² of one stock sheet as bought, fly ends included (Findings 11.5)
+
+  // ---------- mesh layout (backlog #6, Findings 11.4; shared by floors and panels #33) ----------
+  // Lays one mesh over a rectangular zone in a u-v frame: u along the long wires, v across them; o.xy(u, v) gives the
+  // plan point. The zone is already inside cover; holes (openings, and for a floor the set-downs and the raised step)
+  // are already grown by cover, and the wires stop at them (Findings 11.4 step 3, cut on site). One made-to-size sheet
+  // (o.made) or lapped 6.0 × 2.4 stock sheets with the fly ends trimmed: rows across the zone, alternate rows staggered
+  // half a sheet so no point has four sheets (step 2, ACOR B23 R13 ≤ 3), a last piece pulled back to keep two wires each
+  // way past its lap (step 4). No offcut pool yet (step 5): every piece is cut from its own stock sheet.
+  //   o = { U0, U1, V0, V1, holes: [{u0, u1, v0, v1, id}], spec (MESH entry), code, layer, run, xy, zL (long-wire z),
+  //         zC (cross-wire z), made, extra (fields copied to each piece), C (cover, for the note), dirShort, dirWord }
+  //   out = { pieces, wires } — the model's arrays; new pieces are "S" + n, wires "w" + n, in placing order.
+  // Returns { list (the new pieces), lapped (more than one stock sheet: the placeholder laps are in use), LAP, area (m²
+  // of zone less holes, what the mesh has to cover) }.
+  function layMesh(o, out) {
+    const s = o.spec, U0 = o.U0, U1 = o.U1, V0 = o.V0, V1 = o.V1, U = U1 - U0, V = V1 - V0, LAP = MESH_LAP(s.fam), holes = o.holes || [], C = o.C;
+    const xy = o.xy, list = [];
+    const polyLen = pts => pts.reduce((a, p, i) => i ? a + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1], p[2] - pts[i - 1][2]) : 0, 0);
+    const minus = (a, b, cuts) => { let segs = [{ s: a, e: b }]; cuts.forEach(c => { const res = []; segs.forEach(g => { if (c.b <= g.s || c.a >= g.e) { res.push(g); return; } if (c.a > g.s) res.push({ s: g.s, e: c.a }); if (c.b < g.e) res.push({ s: c.b, e: g.e }); }); segs = res; }); return segs; };
+    const holeArea = holes.reduce((a, q) => a + Math.max(0, Math.min(q.u1, U1) - Math.max(q.u0, U0)) * Math.max(0, Math.min(q.v1, V1) - Math.max(q.v0, V0)), 0);
+    const area = Math.max(0, U * V - holeArea) / 1e6;
+    if (U < 100 || V < 100) return { list: list, lapped: false, LAP: LAP, area: 0 };
+    const sheets = [];
+    if (o.made) {
+      // one sheet cut to the zone; wires at the catalogue pitch, centred, no side-lap edge wires
+      const nl = Math.floor((V - 50) / s.pl) + 1, nc = Math.floor((U - 80) / s.pc) + 1;
+      const v0 = V0 + (V - (nl - 1) * s.pl) / 2, u0 = U0 + (U - (nc - 1) * s.pc) / 2;
+      sheets.push({ su0: U0, sv0: V0, sL: U, sW: V, made: true,
+        long: Array.from({ length: nl }, (_, k) => ({ v: v0 - V0 + k * s.pl, d: s.dl })), cross: Array.from({ length: nc }, (_, k) => ({ u: u0 - U0 + k * s.pc, d: s.dc })) });
+    } else {
+      const st = meshStock(s), pu = st.L - LAP.end, pv = st.W - LAP.side;
+      const rows = V <= st.W ? 1 : Math.ceil((V - st.W) / pv) + 1;
+      const minU = LAP.end + 2 * s.pc + 100, minV = LAP.side + 2 * s.pl + 100;
+      for (let j = 0; j < rows; j++) {
+        let sv0 = V0 + j * pv;
+        if (j && V1 - sv0 < minV) sv0 = V1 - minV;
+        const off = j % 2 && U > st.L ? Math.round(pu / 2) : 0;   // alternate rows staggered half a sheet: no point has four sheets
+        let su0 = U0 - off;
+        for (let guard = 0; guard < 400; guard++) {
+          let a = su0;
+          if (a > U0 && U1 - a < minU) a = U1 - minU;
+          sheets.push({ su0: a, sv0: sv0, sL: st.L, sW: st.W, made: false, long: st.long, cross: st.cross, row: j });
+          if (a + st.L >= U1) break;
+          su0 = a + pu;
+        }
+      }
+    }
+    const cutHoles = (fixed, a, b, isLong) => {   // a wire at `fixed` across, spanning [a, b] along; holes cut it
+      const cuts = holes.filter(q => isLong ? fixed > q.v0 && fixed < q.v1 : fixed > q.u0 && fixed < q.u1).map(q => isLong ? { a: q.u0, b: q.u1 } : { a: q.v0, b: q.v1 });
+      return minus(a, b, cuts).filter(g => g.e - g.s >= 50);
+    };
+    sheets.forEach(sh => {
+      const p0u = Math.max(U0, sh.su0), p1u = Math.min(U1, sh.su0 + sh.sL), p0v = Math.max(V0, sh.sv0), p1v = Math.min(V1, sh.sv0 + sh.sW);
+      if (p1u - p0u < 100 || p1v - p0v < 100) return;
+      const pc = Object.assign({ id: null, layer: o.layer, code: o.code, dir: o.dirShort, dirWord: o.dirWord, made: sh.made, u0: p0u, u1: p1u, v0: p0v, v1: p1v, cutL: Math.round(p1u - p0u), cutW: Math.round(p1v - p0v), wires: [], kg: 0, holes: [], run: o.run, spec: s }, o.extra || {});
+      const a = xy(p0u, p0v), b = xy(p1u, p1v);
+      pc.x0 = Math.min(a[0], b[0]); pc.x1 = Math.max(a[0], b[0]); pc.y0 = Math.min(a[1], b[1]); pc.y1 = Math.max(a[1], b[1]);
+      pc.holes = holes.filter(q => !(q.u1 <= p0u || q.u0 >= p1u || q.v1 <= p0v || q.v0 >= p1v)).map(q => q.id);
+      let nLong = 0, nCross = 0;
+      const addWire = (u0, v0, u1, v1, d, z, isLong) => {
+        const P = xy(u0, v0), Q = xy(u1, v1);
+        const w = { id: null, wire: true, layer: o.layer, size: d, type: "W", pts: [[Math.round(P[0] * 10) / 10, Math.round(P[1] * 10) / 10, z], [Math.round(Q[0] * 10) / 10, Math.round(Q[1] * 10) / 10, z]], sheet: pc, run: o.run, long: isLong };
+        w.len = Math.round(polyLen(w.pts)); w.kg = w.len / 1000 * wireKgm(d);
+        pc.wires.push(w); pc.kg += w.kg;
+      };
+      sh.long.forEach(wl => { const v = sh.sv0 + wl.v; if (v < p0v - 0.5 || v > p1v + 0.5) return; nLong++; cutHoles(v, p0u, p1u, true).forEach(g => addWire(g.s, v, g.e, v, wl.d, o.zL, true)); });
+      sh.cross.forEach(wc => { const u = sh.su0 + wc.u; if (u < p0u - 0.5 || u > p1u + 0.5) return; nCross++; cutHoles(u, p0v, p1v, false).forEach(g => addWire(u, g.s, u, g.e, wc.d, o.zC, false)); });
+      if (!pc.wires.length) return;   // a piece that lies wholly in a hole (a set-down the size of a sheet) is not cut
+      pc.id = "S" + (out.pieces.length + 1);
+      pc.wires.forEach(w => { w.id = "w" + out.wires.length; out.wires.push(w); });
+      pc.nLong = nLong; pc.nCross = nCross; pc.kg = Math.round(pc.kg * 10) / 10;
+      pc.laps = sh.made ? null : { end: LAP.end, side: LAP.side };
+      pc.note = sh.made ? "Made-to-size sheet " + fmt(pc.cutL) + " × " + fmt(pc.cutW) + ", " + o.code + " wires at the catalogue pitch (InfraBuild made-to-size, up to 9 × 3 m)."
+        : "Cut from a 6.0 × 2.4 " + o.code + " sheet (fly ends trimmed) to " + fmt(pc.cutL) + " × " + fmt(pc.cutW) + "; laps " + LAP.end + " end / " + LAP.side + " side (placeholders).";
+      if (pc.holes.length) pc.note += " Wires cut " + C + " clear of " + pc.holes.join(", ") + ".";
+      out.pieces.push(pc); list.push(pc); if (o.run) o.run.mesh.push(pc);
+    });
+    return { list: list, lapped: sheets.length > 1, LAP: LAP, area: area };
+  }
+  // Marks for mesh pieces: one mark per distinct (code, made / stock, cut size, direction, holes cut, mass), appended
+  // to the bar marks (Findings 11.4 step 6). prefix: "" on a floor (M1, M2 …), the panel mark + "-" on a panel.
+  function meshMarks(pieces, marks, prefix) {
+    const mgroups = new Map();
+    pieces.forEach(pc => { const k = [pc.code, pc.made ? 1 : 0, pc.cutL, pc.cutW, pc.dir, pc.holes.join("+"), Math.round(pc.kg)].join("|"); if (!mgroups.has(k)) mgroups.set(k, []); mgroups.get(k).push(pc); });
+    [...mgroups.values()].forEach((list, i) => {
+      const m = prefix + "M" + (i + 1), p = list[0];
+      list.forEach(pc => { pc.mark = m; pc.wires.forEach(w => { w.mark = m; }); });
+      marks.push({ mark: m, mesh: true, type: p.code, size: "", shape: "mesh sheet", code: p.made ? "MTS" : "SHT", shapeName: p.made ? "mesh sheet, made to size" : "mesh sheet, cut from stock", dims: [["L", p.cutL], ["W", p.cutW]],
+        dimStr: "cut " + fmt(p.cutL) + " × " + fmt(p.cutW) + " · long wires " + p.dir + (p.holes.length ? " · cut round " + p.holes.join(", ") : ""), flags: [], pin: "—", len: p.cutL, qty: list.length, layer: p.layer, kg: list.reduce((s, q) => s + q.kg, 0), laps: p.laps, kgEach: p.kg });
+    });
+  }
+  // Cutting-list summary per mesh run (Findings 11.5): stock sheets to buy (one per piece; no offcut pool yet), the area
+  // the mesh covers (zone less holes, what measured work pays: MRS71 Cl 2.3 makes no allowance for laps), the gross
+  // area bought, and laps + waste as a share of the net. Mass is wire length at nominal mass (Findings 11.2 basis).
+  // Stock sheets to buy: the pieces nested on whole trimmed sheets by a first-fit guillotine cut in area order, each
+  // piece in its wire orientation (no rotation: the long wires stay the long way) with up to one pitch spare each way
+  // for its wire pattern. Each piece learns its sheet number (pc.from); the cut positions are the shop's.
+  function nestStock(pieces, s) {
+    const st = meshStock(s), sheets = [];
+    pieces.filter(p => !p.made).slice().sort((a, b) => b.cutL * b.cutW - a.cutL * a.cutW).forEach(p => {
+      const L = Math.min(st.L, p.cutL + s.pc), W = Math.min(st.W, p.cutW + s.pl);
+      let sh = sheets.find(q => q.free.some(f => f.L >= L && f.W >= W));
+      if (!sh) { sh = { no: sheets.length + 1, free: [{ L: st.L, W: st.W }], pieces: [] }; sheets.push(sh); }
+      const k = sh.free.findIndex(f => f.L >= L && f.W >= W), f = sh.free.splice(k, 1)[0];
+      sh.free.push({ L: f.L - L, W: W }, { L: f.L, W: f.W - W });
+      sh.pieces.push(p.id); p.from = sh.no;
+    });
+    pieces.forEach(p => { if (p.from) p.with = sheets[p.from - 1].pieces.filter(id => id !== p.id); });
+    return sheets.length;
+  }
+  function meshSummary(run, area) {
+    const pieces = run.mesh, stock = pieces.some(p => !p.made) ? nestStock(pieces, pieces[0].spec) : 0, made = pieces.filter(p => p.made).length;
+    const gross = stock * MESH_STOCK_AREA + pieces.filter(p => p.made).reduce((s, p) => s + p.cutL * p.cutW / 1e6, 0);
+    return { run: run.id, label: run.label, code: run.code, layer: run.layer, pieces: pieces.length, stock: stock, made: made, netArea: Math.round(area * 10) / 10, grossArea: Math.round(gross * 10) / 10,
+      wastePct: area > 0 ? Math.round((gross / area - 1) * 100) : 0, kg: Math.round(pieces.reduce((s, p) => s + p.kg, 0) * 10) / 10, laps: pieces.find(p => p.laps) ? pieces.find(p => p.laps).laps : null };
+  }
 
   const PANEL_CFG = {
     kind: "panel", name: "P1", W: 6000, H: 3000, T: 200, cover: 30, fc: 40, lap: 600, castFace: "FF", density: 2400,
@@ -1696,77 +1933,28 @@ html.print #sheet { background: #fff; }
       }
     });
 
-    // ---- mesh: lay each mesh face (Findings 11.4, simplified for one rectangular panel) ----
-    let pieceNo = 0;
+    // ---- mesh: lay each mesh face with the shared layout (layMesh, #6 / Findings 11.4) ----
+    const MSUM = [];
     ["NF", "FF"].forEach(f => {
       const fa = faces[f]; if (!fa.mesh) return;
       const ms = fa.mesh, s = ms.spec, X = ms.dir === "H", id = f + "1";
       const U0 = C, U1 = (X ? PW : PH) - C, V0 = C, V1 = (X ? PH : PW) - C, U = U1 - U0, V = V1 - V0;   // u along the long wires, v across
       const xy = (u, v) => X ? [u, v] : [v, u];
-      const holes = HOLES.map(h => X ? { u0: h.x0 - C, u1: h.x1 + C, v0: h.y0 - C, v1: h.y1 + C, h: h } : { u0: h.y0 - C, u1: h.y1 + C, v0: h.x0 - C, v1: h.x1 + C, h: h });
-      const zL = zOf(f, ms.dLong), zC = zOf(f, ms.dCross), LAP = MESH_LAP(s.fam);
+      const holes = HOLES.map(h => X ? { u0: h.x0 - C, u1: h.x1 + C, v0: h.y0 - C, v1: h.y1 + C, id: h.id } : { u0: h.y0 - C, u1: h.y1 + C, v0: h.x0 - C, v1: h.x1 + C, id: h.id });
       const made = cfg.meshSheets !== "stock" && U <= MESH_MADE.L && V <= MESH_MADE.W;
       if (cfg.meshSheets !== "stock" && !made) warnings.push(FACE_NAME[f] + " mesh: " + fmt(U) + " × " + fmt(V) + " inside cover is larger than a made-to-size sheet (" + fmt(MESH_MADE.L) + " × " + fmt(MESH_MADE.W) + "); laid as lapped stock sheets.");
-      const sheets = [];
-      if (made) {
-        // one sheet cut to the panel inside cover; wires at the catalogue pitch, centred, no side-lap edge wires
-        const nl = Math.floor((V - 50) / s.pl) + 1, nc = Math.floor((U - 80) / s.pc) + 1;
-        const v0 = V0 + (V - (nl - 1) * s.pl) / 2, u0 = U0 + (U - (nc - 1) * s.pc) / 2;
-        sheets.push({ su0: U0, sv0: V0, sL: U, sW: V, made: true,
-          long: Array.from({ length: nl }, (_, k) => ({ v: v0 - V0 + k * s.pl, d: s.dl })), cross: Array.from({ length: nc }, (_, k) => ({ u: u0 - U0 + k * s.pc, d: s.dc })) });
-      } else {
-        const st = meshStock(s), pu = st.L - LAP.end, pv = st.W - LAP.side;
-        const rows = V <= st.W ? 1 : Math.ceil((V - st.W) / pv) + 1;
-        // a last piece keeps two wires each way past its lap (Findings 11.4 step 4): a sliver is pulled back and its lap widens
-        const minU = LAP.end + 2 * s.pc + 100, minV = LAP.side + 2 * s.pl + 100;
-        for (let j = 0; j < rows; j++) {
-          let sv0 = V0 + j * pv;
-          if (j && V1 - sv0 < minV) sv0 = V1 - minV;
-          const off = j % 2 && U > st.L ? Math.round(pu / 2) : 0;   // alternate rows staggered half a sheet: no point has four sheets
-          let su0 = U0 - off;
-          for (let guard = 0; guard < 40; guard++) {
-            let a = su0;
-            if (a > U0 && U1 - a < minU) a = U1 - minU;
-            sheets.push({ su0: a, sv0: sv0, sL: st.L, sW: st.W, made: false, long: st.long, cross: st.cross, row: j });
-            if (a + st.L >= U1) break;
-            su0 = a + pu;
-          }
-        }
-        if (sheets.length > 1) warnings.push(FACE_NAME[f] + " mesh laps " + LAP.end + " end / " + LAP.side + " side are placeholders (AS 3600 Cl 13.2.3 geometry with the fly ends trimmed, Findings 11.3); confirm the mesh lap rule.");
-      }
-      const cutHoles = (fixed, a, b, isLong) => {   // a wire at `fixed` across, spanning [a, b] along; holes cut it
-        const cuts = holes.filter(q => isLong ? fixed > q.v0 && fixed < q.v1 : fixed > q.u0 && fixed < q.u1).map(q => isLong ? { a: q.u0, b: q.u1 } : { a: q.v0, b: q.v1 });
-        return minus(a, b, cuts).filter(g => g.e - g.s >= 50);
-      };
-      const run = addRun({ layer: id, kind: "mesh", face: f, size: s.dl, mesh: [], label: ms.code + " " + ms.dir + " · " + f, callout: "" });
-      sheets.forEach(sh => {
-        const p0u = Math.max(U0, sh.su0), p1u = Math.min(U1, sh.su0 + sh.sL), p0v = Math.max(V0, sh.sv0), p1v = Math.min(V1, sh.sv0 + sh.sW);
-        if (p1u - p0u < 100 || p1v - p0v < 100) return;
-        const pc = { id: "S" + (++pieceNo), face: f, layer: id, code: ms.code, dir: ms.dir, made: sh.made, u0: p0u, u1: p1u, v0: p0v, v1: p1v, cutL: Math.round(p1u - p0u), cutW: Math.round(p1v - p0v), wires: [], kg: 0, holes: [], run: run };
-        const a = xy(p0u, p0v), b = xy(p1u, p1v);
-        pc.x0 = Math.min(a[0], b[0]); pc.x1 = Math.max(a[0], b[0]); pc.y0 = Math.min(a[1], b[1]); pc.y1 = Math.max(a[1], b[1]);
-        pc.holes = holes.filter(q => !(q.u1 <= p0u || q.u0 >= p1u || q.v1 <= p0v || q.v0 >= p1v)).map(q => q.h.id);
-        let nLong = 0, nCross = 0;
-        const addWire = (u0, v0, u1, v1, d, z, isLong) => {
-          const P = xy(u0, v0), Q = xy(u1, v1);
-          const w = { id: "w" + wires.length, wire: true, layer: id, size: d, type: "W", pts: [[Math.round(P[0] * 10) / 10, Math.round(P[1] * 10) / 10, z], [Math.round(Q[0] * 10) / 10, Math.round(Q[1] * 10) / 10, z]], sheet: pc, run: run, long: isLong };
-          w.len = Math.round(polyLen(w.pts)); w.kg = w.len / 1000 * wireKgm(d);
-          pc.wires.push(w); pc.kg += w.kg; wires.push(w);
-        };
-        sh.long.forEach(wl => { const v = sh.sv0 + wl.v; if (v < p0v - 0.5 || v > p1v + 0.5) return; nLong++; cutHoles(v, p0u, p1u, true).forEach(g => addWire(g.s, v, g.e, v, wl.d, zL, true)); });
-        sh.cross.forEach(wc => { const u = sh.su0 + wc.u; if (u < p0u - 0.5 || u > p1u + 0.5) return; nCross++; cutHoles(u, p0v, p1v, false).forEach(g => addWire(u, g.s, u, g.e, wc.d, zC, false)); });
-        pc.nLong = nLong; pc.nCross = nCross; pc.kg = Math.round(pc.kg * 10) / 10;
-        pc.laps = sh.made ? null : { end: LAP.end, side: LAP.side };
-        pc.note = sh.made ? "Made-to-size sheet " + fmt(pc.cutL) + " × " + fmt(pc.cutW) + ", " + ms.code + " wires at the catalogue pitch (InfraBuild made-to-size, up to 9 × 3 m)."
-          : "Cut from a 6.0 × 2.4 " + ms.code + " sheet (fly ends trimmed) to " + fmt(pc.cutL) + " × " + fmt(pc.cutW) + "; laps " + LAP.end + " end / " + LAP.side + " side (placeholders).";
-        if (pc.holes.length) pc.note += " Wires cut " + C + " clear of " + pc.holes.join(", ") + ".";
-        pieces.push(pc); run.mesh.push(pc);
-      });
+      const run = addRun({ layer: id, kind: "mesh", face: f, size: s.dl, code: ms.code, mesh: [], label: ms.code + " " + ms.dir + " · " + f, callout: "" });
+      const res = layMesh({ U0: U0, U1: U1, V0: V0, V1: V1, holes: holes, spec: s, code: ms.code, layer: id, run: run, xy: xy, zL: zOf(f, ms.dLong), zC: zOf(f, ms.dCross), made: made, C: C,
+        dirShort: ms.dir, dirWord: X ? "horizontal" : "vertical", extra: { face: f } }, { pieces: pieces, wires: wires });
+      const LAP = res.LAP;
+      if (res.lapped) warnings.push(FACE_NAME[f] + " mesh laps " + LAP.end + " end / " + LAP.side + " side are placeholders (AS 3600 Cl 13.2.3 geometry with the fly ends trimmed, Findings 11.3); confirm the mesh lap rule.");
+      run.mesh.forEach(pc => { pc.pos = fmt(Math.round(pc.x0)) + " from the left edge, " + fmt(Math.round(pc.y0)) + " from the bottom edge"; });
       run.n = run.mesh.length;
       run.label = ms.code + " " + ms.dir + " · " + f + (run.mesh.length > 1 ? " · " + run.mesh.length + " SHEETS" : "");
       run.callout = ms.code + " " + f + ", LONG WIRES " + (X ? "HORIZONTAL" : "VERTICAL") + ", " + (made ? "ONE SHEET MADE TO SIZE " + fmt(U) + " × " + fmt(V) : run.mesh.length + " SHEETS FROM 6.0 × 2.4 STOCK, LAPS " + LAP.end + " END / " + LAP.side + " SIDE");
       const p0 = run.mesh[0];
-      if (p0) run.tagPos = [p0.x0 + (p0.x1 - p0.x0) * (f === bed ? 0.22 : 0.4), p0.y0 + (p0.y1 - p0.y0) * (f === bed ? 0.3 : 0.62), zC];
+      if (p0) run.tagPos = [p0.x0 + (p0.x1 - p0.x0) * (f === bed ? 0.22 : 0.4), p0.y0 + (p0.y1 - p0.y0) * (f === bed ? 0.3 : 0.62), zOf(f, ms.dCross)];
+      MSUM.push(meshSummary(run, res.area));
     });
 
     // ---- chairs under the top face: 800 centres for mesh (NCC Table 3.2.3.1 via Findings 11.3), 1,000 for bars as on the floor ----
@@ -1817,14 +2005,7 @@ html.print #sheet { background: #fff; }
       list.forEach(b => { b.mark = m; });
       return { mark: m, type: list[0].type, size: list[0].size, shape: list[0].shape, code: list[0].code, shapeName: list[0].shapeName, dims: list[0].dims, dimStr: list[0].dimStr, flags: list[0].flags, pin: list[0].geom.dp, len: list[0].len, qty: list.length, layer: list[0].layer, kg: list.reduce((s, b) => s + b.kg, 0) };
     });
-    const mgroups = new Map();
-    pieces.forEach(pc => { const k = [pc.code, pc.made ? 1 : 0, pc.cutL, pc.cutW, pc.dir, pc.holes.join("+"), Math.round(pc.kg)].join("|"); if (!mgroups.has(k)) mgroups.set(k, []); mgroups.get(k).push(pc); });
-    [...mgroups.values()].forEach((list, i) => {
-      const m = name + "-M" + (i + 1), p = list[0];
-      list.forEach(pc => { pc.mark = m; pc.wires.forEach(w => { w.mark = m; }); });
-      marks.push({ mark: m, mesh: true, type: p.code, size: "", shape: "mesh sheet", code: p.made ? "MTS" : "SHT", shapeName: p.made ? "mesh sheet, made to size" : "mesh sheet, cut from stock", dims: [["L", p.cutL], ["W", p.cutW]],
-        dimStr: "cut " + fmt(p.cutL) + " × " + fmt(p.cutW) + " · long wires " + (p.dir === "H" ? "H" : "V") + (p.holes.length ? " · cut round " + p.holes.join(", ") : ""), flags: [], pin: "—", len: p.cutL, qty: list.length, layer: p.layer, kg: list.reduce((s, q) => s + q.kg, 0) });
-    });
+    meshMarks(pieces, marks, name + "-");
     runs.forEach(r => { r.marks = r.kind === "mesh" ? [...new Set(r.mesh.map(pc => pc.mark))] : [...new Set(r.bars.map(b => b.mark))]; });
     const kgBars = sched.reduce((s, b) => s + b.kg, 0), kgMesh = pieces.reduce((s, p) => s + p.kg, 0);
     LAPS.rows.filter(r => r.short && r.lapped).forEach(r => warnings.push("Lap N" + r.size + " panel (" + r.what.join(", ") + "): " + r.len + " (project flat lap) is shorter than AS 3600 " + r.calc.rule + " gives, " + r.calc.lap + " (" + r.calc.detail + "). Check with the engineer."));
@@ -1839,7 +2020,7 @@ html.print #sheet { background: #fff; }
     const SL = { x0: 0, y0: 0, x1: PW, y1: PH };
     return { kind: "panel", cfg: cfg, errors: errors, warnings: warnings, name: name, panel: panel, faces: faces, mats: {}, Z: {}, T: T, C: C, L: PW, W: PH, SL: SL, EXT: SL,
       GX: [], GY: [], gx: [0, PW], gy: [0, PH], HOLES: HOLES, DROPS: [], STEP: null, BALCS: [], BEAMS: [], COLS: [], COL: 400, COLB: -10, PROJ: 0,
-      bars: bars, wires: wires, meshPieces: pieces, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kgBars + kgMesh, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS,
+      bars: bars, wires: wires, meshPieces: pieces, meshSummary: MSUM, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kgBars + kgMesh, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS,
       LAYERS: PLAYERS, LBY: PLBY, EXPLODE: PEXPLODE, ORDER: ORDER, steps: steps, lvl: () => 0 };
   }
 
@@ -1920,12 +2101,15 @@ html.print #sheet { background: #fff; }
     sheetTags(M, S); sheetLaps(S); sheetMarks(S);
     // title lines
     const LB = M.LBY || LBY, lname = l => (LB[l] ? LB[l].name : l).toUpperCase();
-    const mat = S.layer && M.mats[S.layer] ? " · N" + M.mats[S.layer].size + "-" + M.mats[S.layer].sp + (M.mats[S.layer].dir === "X" ? " E–W" : " N–S") : "";
+    const mt = S.layer && M.matText ? M.matText[S.layer] : null;
+    const mat = mt && mt !== "no mat" ? " · " + (lname(S.layer).indexOf("MESH") >= 0 && /mesh, /.test(mt) ? mt.replace(/^.*mesh, /, "") : mt).toUpperCase() : "";   // a mesh layer's name already says which mesh
     S.title.push(M.cfg.name.toUpperCase() + " · PLACING SHEET · " + (S.layer ? lname(S.layer) + mat : solid.length ? "ALL LAYERS" : "FORMWORK"));
     // the lap this layer is placed with (#5): its mat's lap, from the table when one is in use, else the flat lap
-    const lapTxt = S.layer && M.mats[S.layer] ? "LAP " + M.mats[S.layer].lap.len + (M.laps.source === "table" ? " (TABLE)" : "") : M.laps.source === "flat" ? "LAPS " + M.cfg.lap : "LAPS PER TABLE";
-    const inkSheets = PNL ? [...new Set(S.bars.filter(x => !x.ghost && x.bar.wire).map(x => x.bar.sheet))] : [];
-    S.title.push(M.T + " THK · COVER " + M.C + " · " + lapTxt + " · " + (S.layer ? S.bars.filter(x => !x.ghost && !x.bar.wire).length + " BARS THIS LAYER" + (inkSheets.length ? " + " + inkSheets.length + " MESH SHEET" + (inkSheets.length > 1 ? "S" : "") : "") : fmt(M.sched.length) + " BARS") + (ghost.length ? " · BELOW: " + ghost.join(" ") : ""));
+    const inkSheets = [...new Set(S.bars.filter(x => !x.ghost && x.bar.wire).map(x => x.bar.sheet))];
+    const meshLap = S.layer ? inkSheets.find(pc => pc.laps) : null;   // a mesh layer's sheet is placed with the mesh laps (#6)
+    const lapTxt = S.layer && M.mats[S.layer] ? "LAP " + M.mats[S.layer].lap.len + (M.laps.source === "table" ? " (TABLE)" : "") : meshLap ? "MESH LAPS " + meshLap.laps.end + " END / " + meshLap.laps.side + " SIDE" : M.laps.source === "flat" ? "LAPS " + M.cfg.lap : "LAPS PER TABLE";
+    const sheetsTxt = inkSheets.length ? " + " + inkSheets.length + " MESH SHEET" + (inkSheets.length > 1 ? "S" : "") : "";
+    S.title.push(M.T + " THK · COVER " + M.C + " · " + lapTxt + " · " + (S.layer ? S.bars.filter(x => !x.ghost && !x.bar.wire).length + " BARS THIS LAYER" + sheetsTxt : fmt(M.sched.length) + " BARS" + sheetsTxt) + (ghost.length ? " · BELOW: " + ghost.join(" ") : ""));
     // title strip (#9b): what a fixer reads before placing the layer. Callouts are the runs' drawing wording, main mat first.
     const inkBars = S.bars.filter(x => !x.ghost && !x.bar.wire);
     const layerRuns = S.layer ? M.runs.filter(r => r.layer === S.layer && r.callout && (r.bars.some(b => !b.existing) || (r.mesh && r.mesh.length))) : [];
@@ -2257,15 +2441,15 @@ html.print #sheet { background: #fff; }
   }
   function stepInfo() {
     if (M.steps) return M.steps;   // a panel brings its own fixing sequence (#33)
-    const md = l => { const m = M.mats[l]; return m ? "N" + m.size + "-" + m.sp + (m.dir === "X" ? " E–W" : " N–S") : "no mat"; };
+    const md = l => M.matText ? M.matText[l] : "no mat";
     return [
       { title: "Formwork", sub: "deck" + (M.DROPS.length ? ", set-down" + (M.DROPS.length > 1 ? "s" : "") : "") + (M.STEP ? ", step" : "") + (M.BALCS.length ? ", balcon" + (M.BALCS.length > 1 ? "ies" : "y") : "") + (M.COLS.length ? "; cols poured" : ""), c: null },
       { title: "Beam cages", sub: M.BEAMS.length ? [...new Set(M.BEAMS.map(b => b.id))].join(", ") + " · bars, ligs" : "no beams", c: VLBY.BM.css },
-      { title: "Layer A · bottom 1st", sub: md("A") + (M.DROPS.length || M.STEP ? " · Z/L-bars" : "") + " · trims", c: VLBY.A.css },
-      { title: "Layer B · bottom 2nd", sub: md("B") + (M.DROPS.length || M.STEP ? " · Z/L-bars" : "") + (M.BALCS.length ? " · balcon" + (M.BALCS.length > 1 ? "ies" : "y") : ""), c: VLBY.B.css },
-      { title: "Bar chairs", sub: "@1000 both ways", c: VLBY.CH.css },
-      { title: "Layer C · top 3rd", sub: md("C") + (M.cfg.features.edges ? " cogged" : "") + " · add N16", c: VLBY.C.css },
-      { title: "Layer D · top 4th", sub: md("D") + (M.cfg.features.edges ? " cogged · edge bars" : "") + " · extras", c: VLBY.D.css },
+      { title: VLBY.A.name, sub: md("A") + (M.mats.A && (M.DROPS.length || M.STEP) ? " · Z/L-bars" : "") + " · trims", c: VLBY.A.css },
+      { title: VLBY.B.name, sub: md("B") + (M.mats.B && (M.DROPS.length || M.STEP) ? " · Z/L-bars" : "") + (M.BALCS.length ? " · balcon" + (M.BALCS.length > 1 ? "ies" : "y") : ""), c: VLBY.B.css },
+      { title: "Bar chairs", sub: "@" + (M.chairPitch || 1000) + " both ways", c: VLBY.CH.css },
+      { title: VLBY.C.name, sub: md("C") + (M.mats.C && M.cfg.features.edges ? " cogged" : "") + " · add N16", c: VLBY.C.css },
+      { title: VLBY.D.name, sub: md("D") + (M.mats.D && M.cfg.features.edges ? " cogged" : "") + (M.cfg.features.edges ? " · edge bars" : "") + " · extras", c: VLBY.D.css },
       { title: "Column starters", sub: M.COLS.length ? "8N24 per column · project " + M.PROJ : "no columns", c: VLBY.ST.css }
     ];
   }
@@ -2352,10 +2536,11 @@ html.print #sheet { background: #fff; }
   function showDefault() {
     if (isPanel()) { showPanel(); return; }
     const f = M.cfg.features, mats = M.mats;
-    const md = l => mats[l] ? "N" + mats[l].size + "-" + mats[l].sp + (mats[l].dir === "X" ? " E–W" : " N–S") : "none";
+    const md = l => M.matText && M.matText[l] !== "no mat" ? M.matText[l] : "none";
     let rows = "<dt>Slab</dt><dd>" + fmt(M.L) + " × " + fmt(M.W) + ", " + M.T + " THK, " + M.cfg.fc + " MPa, cover " + M.C + "</dd>" +
       "<dt>Requirements</dt><dd>laps " + esc(M.laps.text) + "; grids " + M.GX.map(g => g[0]).join("–") + " / " + M.GY.map(g => g[0]).join("–") + "</dd>" +
       "<dt>Layers</dt><dd>A bottom 1st " + md("A") + " · B bottom 2nd " + md("B") + " · C top 3rd " + md("C") + " · D top 4th " + md("D") + "</dd>";
+    if (M.meshPieces && M.meshPieces.length) rows += "<dt>Mesh</dt><dd>" + M.meshSummary.map(ms => ms.pieces + (ms.pieces > 1 ? " sheets " : " sheet ") + ms.code + " (" + ms.stock + " stock to order)").join(" · ") + "; cutting list under the bar schedule</dd>";
     if (f.edges) rows += "<dt>Edges</dt><dd>Top bars cogged (L) at free edges and voids; N12 edge bars T&amp;B</dd>";
     M.DROPS.forEach(dd => { rows += "<dt>Set-down</dt><dd>" + esc(dd.id) + " " + fmt(dd.x1 - dd.x0) + " × " + fmt(dd.y1 - dd.y0) + " down " + dd.d + ": mats stop at the edge, Z-bar splices T&amp;B</dd>"; });
     if (M.STEP) rows += "<dt>Step</dt><dd>NE of x " + fmt(M.STEP.x0) + " / y " + fmt(M.STEP.y0) + " up " + M.STEP.rise + " on a " + M.STEP.nib + " nib: L-bars each side, top and bottom</dd>";
@@ -2461,12 +2646,13 @@ html.print #sheet { background: #fff; }
   }
   // a mesh sheet (#33): picked by any of its wires; the inspector and site card show its cut size, wires and laps
   function pieceRows(pc) {
-    const s = M.faces[pc.face].mesh.spec, dirW = pc.dir === "H" ? "horizontal" : "vertical";
+    const s = pc.spec, dirW = pc.dirWord || pc.dir;
     return [["Sheet", pc.made ? "made to size" : "cut from 6.0 × 2.4 stock, fly ends trimmed"],
       ["Cut size", fmt(pc.cutL) + " × " + fmt(pc.cutW) + " (along the long wires × across)"],
       ["Long wires", pc.nLong + " " + dirW + ", " + s.dl + " at " + s.pl + (s.de && !pc.made ? ", edge wires " + s.de : "")],
       ["Cross wires", pc.nCross + " at " + s.pc + ", " + s.dc],
-      ["Position", fmt(Math.round(pc.x0)) + " from the left edge, " + fmt(Math.round(pc.y0)) + " from the bottom edge"],
+      ["Position", pc.pos || ""],
+      ["Cut from", pc.made ? "its own made-to-size sheet" : "stock sheet " + pc.from + (pc.with && pc.with.length ? " (with " + pc.with.join(", ") + ")" : "")],
       ["Laps", pc.laps ? pc.laps.end + " end, " + pc.laps.side + " side (placeholders)" : "none, one sheet"],
       ["Mass", pc.kg.toFixed(1) + " kg (wire lengths at nominal mass)"]];
   }
@@ -2614,11 +2800,23 @@ html.print #sheet { background: #fff; }
     $("stBars").textContent = fmt(M.sched.length);
     $("stMarks").textContent = M.marks.length;
     $("stMass").textContent = fmt(M.kg);
+    const hasMesh = M.meshPieces && M.meshPieces.length;
     $("schednote").textContent = isPanel()
       ? "Panel " + M.name + ": bars, then mesh sheets (M marks, cut size L × W, length = the long-wire length). Click a row to highlight that mark. Mesh mass is from the wire lengths at nominal mass; the catalogue sheet masses run a little higher. Excludes bar chairs. Laps " + M.cfg.lap + ", " + (STOCK / 1000) + " m stock."
-      : "Click a row to highlight every bar with that mark. Dims are to the bar extremities; cut lengths include bend deductions and hooks (AS 3600 pins), rounded up to 5. ! = cog shorter than standard. Excludes the columns below and bar chairs. Laps " + M.cfg.lap + ", " + (STOCK / 1000) + " m stock.";
+      : "Click a row to highlight every bar with that mark. Dims are to the bar extremities; cut lengths include bend deductions and hooks (AS 3600 pins), rounded up to 5. ! = cog shorter than standard. Excludes the columns below and bar chairs. Laps " + M.cfg.lap + ", " + (STOCK / 1000) + " m stock." + (hasMesh ? " Mesh sheets follow the bars as M marks (cut size L × W along the long wires); the cutting list is below." : "");
+    renderMeshList();
   }
-  function markRows() { schedEl.querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", tr.dataset.mark === state.mark)); }
+  // mesh cutting list (#6, Findings 11.5): one row per mesh mark (cut size, pieces, laps, mass), then a summary per mesh
+  // (stock sheets to buy, the area covered, the area bought, laps + waste). Hidden when the model has no mesh.
+  function renderMeshList() {
+    const sec = $("meshsec"), list = M.meshPieces || [];
+    sec.hidden = !list.length;
+    if (!list.length) return;
+    const mk = M.marks.filter(m => m.mesh);
+    $("meshsched").innerHTML = mk.map(m => '<tr data-mark="' + esc(m.mark) + '"><td><span class="dot" style="--c:' + VLBY[m.layer].css + '"></span>' + esc(m.mark) + '</td><td class="dims">' + esc(m.type) + " " + fmt(m.dims[0][1]) + " × " + fmt(m.dims[1][1]) + (m.dimStr.indexOf("cut round") >= 0 ? " · " + esc(m.dimStr.replace(/^.*· cut round /, "cut round ")) : "") + (m.qty > 1 ? " · " + m.kgEach.toFixed(1) + " kg each" : "") + '</td><td class="num">' + m.qty + '</td><td class="num">' + m.kg.toFixed(1) + "</td></tr>").join("");
+    $("meshsum").innerHTML = (M.meshSummary || []).map(ms => '<tr><td colspan="2">' + esc(ms.code) + " " + esc(VLBY[ms.layer].short || ms.layer) + ": <b>" + ms.stock + "</b> stock sheet" + (ms.stock === 1 ? "" : "s") + " 6.0 × 2.4 to order" + (ms.made ? " + " + ms.made + " made to size" : "") + "<br><small>" + ms.netArea + " m² net · " + ms.grossArea + " m² bought · laps + waste " + ms.wastePct + " %" + (ms.laps ? " · laps " + ms.laps.end + " end / " + ms.laps.side + " side" : "") + '</small></td><td class="num">' + ms.pieces + '</td><td class="num">' + ms.kg.toFixed(1) + "</td></tr>").join("");
+  }
+  function markRows() { schedEl.querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", tr.dataset.mark === state.mark)); $("meshsched").querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", tr.dataset.mark === state.mark)); }
   // highlight every bar of one mark (schedule row on the desktop, mark chip on the site card); a second call clears it.
   // In 3D a mark on a layer not yet placed shows the finished floor; on the sheet it steps to the mark's own layer, so
   // the one-layer sheet carries the mark's labels (#9c).
@@ -2639,6 +2837,7 @@ html.print #sheet { background: #fff; }
     } else { recolor(); showDefault(); if (state.site) siteDefault(); }
   }
   schedEl.addEventListener("click", e => { const tr = e.target.closest("tr"); if (tr) highlightMark(tr.dataset.mark); });
+  $("meshsched").addEventListener("click", e => { const tr = e.target.closest("tr"); if (tr && tr.dataset.mark) highlightMark(tr.dataset.mark); });
 
   // ---- stepper + toggles ----
   stepsEl.addEventListener("click", e => { const b = e.target.closest(".step"); if (!b) return; state.step = +b.dataset.step; state.all = false; apply(); });

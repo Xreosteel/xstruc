@@ -32,18 +32,18 @@ function checkModel(name, cfg, minBars) {
     if (!b.existing && b.len > 12000) problems.push("bar " + b.id + " (" + b.run.label + ") cut length " + b.len + " exceeds the 12 m stock bar");
   });
   runs.forEach(r => {
-    if (!r.bars.length) problems.push("run " + r.id + " (" + (r.label || r.callout) + ") has no bars");
+    if (!(r.mesh ? r.mesh.length : r.bars.length)) problems.push("run " + r.id + " (" + (r.label || r.callout) + ") has no bars");
     if (r.label && !r.dist && !r.tagPos) problems.push("run " + r.id + " (" + r.label + ") has a label but no tag anchor");
   });
   checkGridSetout(M, problems);
   checkSheets(M, problems);
-  const qty = marks.reduce((s, m) => s + m.qty, 0);
-  if (qty !== sched.length) problems.push("schedule qty " + qty + " != scheduled bars " + sched.length);
+  const qty = marks.reduce((s, m) => s + m.qty, 0), nMesh = (M.meshPieces || []).length;
+  if (qty !== sched.length + nMesh) problems.push("schedule qty " + qty + " != scheduled bars " + sched.length + " + mesh sheets " + nMesh);
   const kgM = marks.reduce((s, m) => s + m.kg, 0);
   if (Math.abs(M.kg - kgM) > 0.5) problems.push("mass mismatch bars " + M.kg.toFixed(1) + " vs marks " + kgM.toFixed(1));
   if (chairs.length < 4) problems.push("too few chairs: " + chairs.length);
   if (problems.length) fail(name + ":\n" + problems.slice(0, 20).join("\n") + (problems.length > 20 ? "\n…and " + (problems.length - 20) + " more" : ""));
-  console.log("  " + name + ": bars " + bars.length + " (" + sched.length + " in pour), runs " + runs.length + ", marks " + marks.length + ", chairs " + chairs.length + ", steel " + Math.round(M.kg) + " kg" + (M.warnings.length ? ", warnings " + M.warnings.length : ""));
+  console.log("  " + name + ": bars " + bars.length + " (" + sched.length + " in pour), " + (nMesh ? nMesh + " mesh sheets, " : "") + "runs " + runs.length + ", marks " + marks.length + ", chairs " + chairs.length + ", steel " + Math.round(M.kg) + " kg" + (M.warnings.length ? ", warnings " + M.warnings.length : ""));
   return M;
 }
 
@@ -121,9 +121,13 @@ function checkSheets(M, problems) {
     const p = m => problems.push(where + ": " + m);
     const solidBars = M.bars.filter(b => inSheet(b) && (lid ? b.layer === lid : true));
     const ghostBars = lid ? M.bars.filter(b => inSheet(b) && FIX.indexOf(b.layer) >= 0 && FIX.indexOf(b.layer) < FIX.indexOf(lid)) : [];
-    const sol = S.bars.filter(it => !it.ghost), gho = S.bars.filter(it => it.ghost);
+    const solAll = S.bars.filter(it => !it.ghost), sol = solAll.filter(it => !it.bar.wire), gho = S.bars.filter(it => it.ghost && !it.bar.wire);
     if (sol.length !== solidBars.length) p(sol.length + " bars in ink, layer has " + solidBars.length);
     if (gho.length !== ghostBars.length) p(gho.length + " ghost bars, layers below have " + ghostBars.length);
+    // mesh wires (#6) draw with their layer, every wire of the layer once
+    const wires = (M.wires || []).filter(w => lid ? w.layer === lid : true), inkWires = solAll.filter(it => it.bar.wire);
+    if (inkWires.length !== wires.length) p(inkWires.length + " wires in ink, layer has " + wires.length);
+    if (lid && S.bars.some(it => it.ghost && it.bar.wire && FIX.indexOf(it.bar.layer) >= FIX.indexOf(lid))) p("a wire of this or a later layer is ghosted");
     if (S.layer !== lid) p("layer " + S.layer + " != " + lid);
     if (S.bars.some(it => it.bar.existing || it.layer === "CL")) p("existing / column-below bars are drawn");
     const b = S.bounds; if (!(b.x1 > b.x0 && b.y1 > b.y0)) p("bad bounds");
@@ -149,7 +153,7 @@ function checkSheets(M, problems) {
     });
     if (cogs !== expCogs) p(cogs + " cog ticks, expected " + expCogs + " turned-down end legs");
     if (lid === "ST" && !sol.every(it => it.cogs.length === 1 && it.cogs[0].kind === "vertical")) p("every starter should show one vertical leg end-on");
-    if (lid === "D" && M.cfg.features.edges && cogs < 10) p("layer D should be cogged at the free edges, only " + cogs + " ticks");
+    if (lid === "D" && M.cfg.features.edges && !(M.meshes && M.meshes.T) && cogs < 10) p("layer D should be cogged at the free edges, only " + cogs + " ticks");   // a top mesh (#6) is not cogged
     // grids and their dimension strings
     if (S.grids.x.length !== M.GX.length || S.grids.x.some((g, i) => g.name !== M.GX[i][0] || g.v !== M.GX[i][1] || g.bub.length !== 2 || !(g.a < g.b))) p("x grids differ from the model");
     if (S.grids.y.length !== M.GY.length || S.grids.y.some((g, i) => g.name !== M.GY[i][0] || g.v !== M.GY[i][1] || g.bub.length !== 2 || !(g.a < g.b))) p("y grids differ from the model");
@@ -171,19 +175,21 @@ function checkSheets(M, problems) {
       });
       if (S.dims.some(d => !M.runs.find(r => r.id === d.run && r.layer === lid))) p("a setout dim belongs to another layer's run");
     } else if (S.dims.length) p("the finished-floor sheet should carry no per-run setout dims");
-    if (!S.title[0].includes(lid ? LBY[lid].name.toUpperCase() : "ALL LAYERS") || !/THK · COVER \d+ · LAPS? (\d+( \(TABLE\))?|PER TABLE)/.test(S.title[1])) p("title " + JSON.stringify(S.title));
-    checkSheetNotes(M, S, lid, sol, p);
+    if (!S.title[0].includes(lid ? M.LBY[lid].name.toUpperCase() : "ALL LAYERS") || !/THK · COVER \d+ · (LAPS? (\d+( \(TABLE\))?|PER TABLE)|MESH LAPS \d+ END \/ \d+ SIDE)/.test(S.title[1])) p("title " + JSON.stringify(S.title));
+    if (inkWires.length && !new RegExp("\\+ " + new Set(inkWires.map(it => it.bar.sheet)).size + " MESH SHEETS?").test(S.title[1])) p("title should count the mesh sheets in ink: " + S.title[1]);
+    checkSheetNotes(M, S, lid, sol, solAll, p);
   });
 }
 
 // #9b: run tags, distribution lines, lap zones, bar marks and the title strip on a sheet
-function checkSheetNotes(M, S, lid, sol, p) {
+function checkSheetNotes(M, S, lid, sol, solAll, p) {
+  const barById = id => typeof id === "number" ? M.bars[id] : (M.wires || []).find(w => w.id === id);   // mark labels name a bar or a mesh wire (#6)
   const B = S.bounds, overlap = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
   const inside = r => r.x0 >= B.x0 - 1 && r.x1 <= B.x1 + 1 && r.y0 >= B.y0 - 1 && r.y1 <= B.y1 + 1;
   const segD = (pts, x, y) => { let bd = Infinity; for (let i = 0; i < Math.max(1, pts.length - 1); i++) { const a = pts[i], b = pts[Math.min(i + 1, pts.length - 1)], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)) : 0; bd = Math.min(bd, Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy)); } return bd; };
   const outBy = (r, q) => Math.hypot(Math.max(r.x0 - q[0], 0, q[0] - r.x1), Math.max(r.y0 - q[1], 0, q[1] - r.y1));
   // tags: every labelled run of the active layer with bars on the sheet has exactly one; none on the finished floor
-  const tagged = lid ? M.runs.filter(r => r.layer === lid && r.label && sol.some(it => it.bar.run === r)) : [];
+  const tagged = lid ? M.runs.filter(r => r.layer === lid && r.label && solAll.some(it => it.bar.run === r)) : [];
   if (S.notes.some(n => !n.box || !(n.h > 0) || n.box.x1 - n.box.x0 < n.text.length * 0.6 * n.h)) p("feature notes need a paper-text box");
   if (!lid && (S.tags.length || S.distLines.length || Object.keys(S.runMarks).length)) p("the finished-floor sheet should carry no run tags or marks");
   if (S.tags.length !== tagged.length) p(S.tags.length + " tags, " + tagged.length + " labelled runs on this layer");
@@ -210,7 +216,7 @@ function checkSheetNotes(M, S, lid, sol, p) {
       if (!t.pushed && (Math.abs(gap - 90) > 1 || t.leader)) p(w + ": an unpushed tag should sit 90 beside its line with no leader (gap " + gap + ")");
       if (t.pushed && (!t.leader || segD([t.leader[1]], a[0], a[1]) > 0.01 || outBy(t.box, t.leader[0]) > 0.01)) p(w + ": a pushed tag needs a leader from its box to its line");
     } else {
-      const polys = sol.filter(it => it.bar.run === r).map(it => it.pts);
+      const polys = solAll.filter(it => it.bar.run === r).map(it => it.pts);
       if (Math.min(...polys.map(q => segD(q, t.anchor[0], t.anchor[1]))) > 0.5) p(w + ": anchor is not on one of its bars");
       const far = outBy(t.box, t.anchor) > 20;
       if (far !== !!t.leader) p(w + ": leader " + (t.leader ? "drawn" : "missing") + " with the anchor " + Math.round(outBy(t.box, t.anchor)) + " from the box");
@@ -238,23 +244,23 @@ function checkSheetNotes(M, S, lid, sol, p) {
   if (lid && M.cfg.features.edges && lid === "D" && M.L > 12000 && !S.laps.length) p("layer D should show lap zones on a slab longer than a stock bar");
   // bar marks: every distinct mark of a run is labelled, labels name their own bar, unflagged labels do not collide
   Object.keys(S.runMarks).forEach(rid => {
-    const ls = S.runMarks[rid], items = sol.filter(it => it.bar.run.id === rid && !it.point);
+    const ls = S.runMarks[rid], items = solAll.filter(it => it.bar.run.id === rid && !it.point);
     const marks = [...new Set(items.map(it => it.bar.mark))];
     marks.forEach(m => { if (!ls.some(l => l.mark === m && l.first)) p("run " + rid + ": mark " + m + " has no label"); });
     ls.forEach((l, i) => {
-      const b = M.bars[l.bar];
+      const b = barById(l.bar);
       if (!b || b.run.id !== rid || b.mark !== l.mark) p("run " + rid + ": label " + l.mark + " names the wrong bar");
       if (!l.overlap) ls.slice(i + 1).forEach(o => { if (!o.overlap && overlap(l.box, o.box)) p("run " + rid + ": mark labels " + l.mark + " and " + o.mark + " collide"); });
     });
   });
-  if (lid) M.runs.filter(r => r.layer === lid && sol.some(it => it.bar.run === r && !it.point)).forEach(r => { if (!S.runMarks[r.id]) p("run " + r.id + " has no mark labels"); });
+  if (lid) M.runs.filter(r => r.layer === lid && solAll.some(it => it.bar.run === r && !it.point)).forEach(r => { if (!S.runMarks[r.id]) p("run " + r.id + " has no mark labels"); });
   // #9c: the schedule-mark highlight draws sheetMarksFor(S, mark): every mark of the layer has at least one label, every
   // label names a bar of that mark on this sheet, and the finished floor (no run tags) has none
   if (lid) {
-    [...new Set(sol.filter(it => !it.point && it.bar.mark).map(it => it.bar.mark))].forEach(mk => {
+    [...new Set(solAll.filter(it => !it.point && it.bar.mark).map(it => it.bar.mark))].forEach(mk => {
       const ls = sheetMarksFor(S, mk);
       if (!ls.length) p("mark " + mk + " has no label for the schedule highlight");
-      if (ls.some(l => l.mark !== mk || !sol.some(it => it.bar.id === l.bar && it.bar.mark === mk))) p("mark " + mk + ": a highlight label names a bar of another mark or layer");
+      if (ls.some(l => l.mark !== mk || !solAll.some(it => it.bar.id === l.bar && it.bar.mark === mk))) p("mark " + mk + ": a highlight label names a bar of another mark or layer");
     });
     if (sheetMarksFor(S, "no-such-mark").length) p("labels returned for a mark that is not on the sheet");
   } else if (sheetMarksFor(S, sol[0] && sol[0].bar.mark).length) p("the finished-floor sheet should carry no mark labels");
@@ -268,13 +274,13 @@ function checkSheetNotes(M, S, lid, sol, p) {
     if (!ps.fits && paper === "A3") p("A3: the sheet does not fit even at 1:" + ps.den);
   });
   // title strip
-  const st = S.strip;
-  if (!st || st.bars !== sol.length || st.kg !== Math.round(sol.reduce((s, it) => s + it.bar.kg, 0)) || st.cover !== M.C || st.laps !== +M.cfg.lap || st.floor !== M.cfg.name.toUpperCase()) p("title strip " + JSON.stringify(st));
+  const st = S.strip, inkSheets = [...new Set(solAll.filter(it => it.bar.wire).map(it => it.bar.sheet))];
+  if (!st || st.bars !== sol.length || st.sheets !== inkSheets.length || st.kg !== Math.round(sol.reduce((s, it) => s + it.bar.kg, 0) + inkSheets.reduce((s, pc) => s + pc.kg, 0)) || st.cover !== M.C || st.laps !== +M.cfg.lap || st.floor !== M.cfg.name.toUpperCase()) p("title strip " + JSON.stringify(st));
   else if (lid) {
     const main = M.runs.find(r => r.layer === lid && r.kind === "main" && r.bars.length);
     if (main && st.callouts[0] !== main.callout) p("title strip should list the main mat callout first: " + st.callouts[0]);
-    if (st.layer !== LBY[lid].name.toUpperCase()) p("title strip layer " + st.layer);
-    if (st.marks !== new Set(sol.map(it => it.bar.mark)).size) p("title strip mark count " + st.marks);
+    if (st.layer !== M.LBY[lid].name.toUpperCase()) p("title strip layer " + st.layer);
+    if (st.marks !== new Set(sol.map(it => it.bar.mark).concat(inkSheets.map(pc => pc.mark))).size) p("title strip mark count " + st.marks);
   }
 }
 
@@ -290,7 +296,7 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   const MC = buildModel({ gridX: [0, 7000, 14000, 21000], callouts: "N16-200 A E-W\nN12-200 B N-S\nN12-150 C N-S\nN12-60 D E-W" });
   MC.runs.filter(r => r.layer === "D" && !r.dist).forEach(r => { r.tagPos = [7000, 4500, 0]; });
   const SC = buildSheet(MC, ["D"], []), problems = [];
-  checkSheetNotes(MC, SC, "D", SC.bars.filter(it => !it.ghost), m => problems.push("crowded sheet D: " + m));
+  checkSheetNotes(MC, SC, "D", SC.bars.filter(it => !it.ghost), SC.bars.filter(it => !it.ghost), m => problems.push("crowded sheet D: " + m));
   if (SC.tags.filter(t => t.pushed && t.leader).length < 5) problems.push("crowded sheet D: expected at least 5 pushed tags with leaders, got " + SC.tags.filter(t => t.pushed).length);
   if (problems.length) fail(problems.slice(0, 20).join("\n"));
 }
@@ -644,6 +650,172 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   if (!MFC.errors.some(e => /^Concrete f'c must be 20–100 MPa/.test(e))) p("f'c range: " + MFC.errors.join(" | "));
   if (problems.length) fail(problems.slice(0, 20).join("\n"));
   console.log("  laps: " + cells + " Findings 2.4 cells reproduced, B23 slab / beam / column fit, cd and k3 cases, flat example flagged (3), B23 table drives A 750 / D 500 / EB1 top 950 / starters 950, partial and bad tables reported");
+}
+
+// Mesh in floors (#6, Findings 11): "SL82 T E-W" lays 6.0 × 2.4 stock sheets over both top layers, the long wires E–W,
+// lapped 225 end / 325 side (SL; RL side 225), staggered so no point has four sheets, cut cover clear of openings and of
+// every change of level, scheduled as M marks with a cutting list; the bar mats of the other face build as before.
+{
+  const problems = [], p = m => problems.push(m);
+  const near = (a, b, t) => Math.abs(a - b) <= (t == null ? 0.5 : t);
+  const wiresOK = (M, name) => {
+    const C = M.C, SL = M.SL;
+    M.wires.forEach(w => {
+      const where = name + " wire " + w.id + " (" + w.mark + ")";
+      if (w.pts.length !== 2 || w.pts.some(q => q.length !== 3 || q.some(v => !isFinite(v)))) { p(where + ": bad points"); return; }
+      w.pts.forEach(q => { if (q[0] < SL.x0 + C - 0.5 || q[0] > SL.x1 - C + 0.5 || q[1] < SL.y0 + C - 0.5 || q[1] > SL.y1 - C + 0.5) p(where + ": outside the slab less cover"); });
+      // the step nib is solid from the low soffit to the raised top, so the low slab's steel may run into it (as the bars do)
+      const ST = M.STEP, inNib = (x, y) => ST && x > ST.x0 && y > ST.y0 && (x < ST.x0 + ST.nib || y < ST.y0 + ST.nib);
+      const lv = (x, y) => inNib(x, y) ? null : M.lvl(x, y);
+      let lvl0 = null;
+      for (let k = 0; k <= 40; k++) {
+        const t = k / 40, x = w.pts[0][0] + (w.pts[1][0] - w.pts[0][0]) * t, y = w.pts[0][1] + (w.pts[1][1] - w.pts[0][1]) * t;
+        const h = M.HOLES.find(q => x > q.x0 - C + 1 && x < q.x1 + C - 1 && y > q.y0 - C + 1 && y < q.y1 + C - 1);
+        if (h) { p(where + ": passes within cover of " + h.id); break; }
+        // one level along the wire, and that level is the piece's (the main slab, a set-down or the raised step)
+        const l = lv(x, y); if (l === null) continue;
+        if (lvl0 === null) lvl0 = l;
+        else if (l !== lvl0) { p(where + ": crosses a change of level at " + Math.round(x) + ", " + Math.round(y)); break; }
+      }
+      if (lvl0 !== null && lvl0 !== w.sheet.level) p(where + ": laid at level " + w.sheet.level + " over concrete at " + lvl0);
+      if (!(w.len > 0) || !(w.kg > 0) || !w.mark || w.layer !== w.sheet.layer) p(where + ": no length, mass, mark or layer");
+      if (Math.abs(w.pts[0][2] - w.pts[1][2]) > 1e-6) p(where + ": not flat");
+    });
+    // every main-slab point inside cover and clear of the holes (grown by cover) is under at least one sheet, never four
+    let cover = 0, maxStack = 0, pts = 0;
+    for (let x = SL.x0 + C + 25; x < SL.x1 - C; x += 250) for (let y = SL.y0 + C + 25; y < SL.y1 - C; y += 250) {
+      if (M.lvl(x, y) !== 0 || M.HOLES.some(h => x > h.x0 - C && x < h.x1 + C && y > h.y0 - C && y < h.y1 + C)) continue;
+      if (M.DROPS.some(d => x > d.x0 - C && x < d.x1 + C && y > d.y0 - C && y < d.y1 + C)) continue;
+      if (M.STEP && x > M.STEP.x0 + M.STEP.nib - C && y > M.STEP.y0 + M.STEP.nib - C) continue;
+      pts++;
+      const n = M.meshPieces.filter(pc => pc.level === 0 && x >= pc.x0 && x <= pc.x1 && y >= pc.y0 && y <= pc.y1).length;
+      if (n) cover++; maxStack = Math.max(maxStack, n);
+    }
+    if (cover !== pts) p(name + ": " + (pts - cover) + " of " + pts + " main-slab points are not under a sheet");
+    if (maxStack > 3) p(name + ": " + maxStack + " sheets stacked at one point (ACOR B23 R13 allows 3)");
+    return maxStack;
+  };
+  // the laps between the pieces of one run: along the long wires the end lap, across them the side lap, never less
+  const lapsOK = (M, run, name) => {
+    const X = run.dir === "X", LAP = run.mesh[0].laps, lo = 1e9;
+    let endMin = lo, sideMin = lo, endExact = 0, sideExact = 0;
+    run.mesh.forEach(a => run.mesh.forEach(b => {
+      if (a === b || a.level !== b.level) return;
+      const au0 = X ? a.x0 : a.y0, au1 = X ? a.x1 : a.y1, av0 = X ? a.y0 : a.x0, av1 = X ? a.y1 : a.x1;
+      const bu0 = X ? b.x0 : b.y0, bu1 = X ? b.x1 : b.y1, bv0 = X ? b.y0 : b.x0, bv1 = X ? b.y1 : b.x1;
+      const ou = Math.min(au1, bu1) - Math.max(au0, bu0), ov = Math.min(av1, bv1) - Math.max(av0, bv0);
+      if (ou <= 0 || ov <= 0) return;
+      if (near(av0, bv0, 1) && au1 < bu1) { endMin = Math.min(endMin, ou); if (near(ou, LAP.end, 1)) endExact++; }   // same row, end to end
+      else if (av1 < bv1 && ou > 400) { sideMin = Math.min(sideMin, ov); if (near(ov, LAP.side, 1)) sideExact++; }    // rows
+    }));
+    if (endMin < lo && endMin < LAP.end - 0.5) p(name + ": an end lap of " + endMin + " is under " + LAP.end);
+    if (sideMin < lo && sideMin < LAP.side - 0.5) p(name + ": a side lap of " + sideMin + " is under " + LAP.side);
+    return { endExact: endExact, sideExact: sideExact };
+  };
+
+  // top mesh on the example floor: both top layers from one line, the bottom bar mats as before
+  const MT = buildModel(Object.assign({}, DEFAULT_CFG, { callouts: "N16-200 A E-W\nN12-200 B N-S\nSL82 T E-W" }));
+  if (MT.errors.length) p("top mesh: " + MT.errors.join(" | "));
+  const run = MT.runs.find(r => r.kind === "mesh");
+  if (!MT.meshes.T || MT.meshes.B || !run || run.layer !== "C" || run.dir !== "X" || run.code !== "SL82") p("top mesh run " + JSON.stringify(run && { layer: run.layer, dir: run.dir, code: run.code }));
+  if (!(MT.meshPieces.length >= 12) || MT.wires.length < 400 || run.mesh.length !== MT.meshPieces.length) p("top mesh pieces " + MT.meshPieces.length + ", wires " + MT.wires.length);
+  if (!run.callout.startsWith("SL82 TOP MESH, LONG WIRES E–W, " + run.n + " SHEETS FROM 6.0 × 2.4 STOCK, LAPS 225 END / 325 SIDE") || run.label !== "SL82 T E–W · " + run.n + " SHEETS" || !run.tagPos) p("top mesh wording: " + run.label + " / " + run.callout);
+  // long wires E–W at the outer (D) level, cross wires N–S at the inner (C) level, both inside the top cover
+  const dl = MT.meshes.T.spec.dl, dc = MT.meshes.T.spec.dc, zL = MT.T - MT.C - dl / 2, zC = zL - dl / 2 - dc / 2;
+  MT.wires.forEach(w => {
+    const dx = Math.abs(w.pts[1][0] - w.pts[0][0]), dy = Math.abs(w.pts[1][1] - w.pts[0][1]);
+    if (w.long ? (dy > 1e-6 || !near(w.pts[0][2], zL + w.sheet.level, 0.1)) : (dx > 1e-6 || !near(w.pts[0][2], zC + w.sheet.level, 0.1))) { p("wire " + w.id + " runs the wrong way or sits at the wrong level"); }
+  });
+  if (!near(MT.Z.D, zL, 0.01) || !near(MT.Z.C, zC, 0.01)) p("layer stack should take the wire diameters: " + JSON.stringify(MT.Z));
+  const stackT = wiresOK(MT, "top mesh");
+  const lapsT = lapsOK(MT, run, "top mesh");
+  if (!lapsT.endExact || !lapsT.sideExact) p("top mesh: expected some exact 225 end and 325 side laps between whole sheets, got " + JSON.stringify(lapsT));
+  if (stackT !== 3) p("top mesh: the staggered rows should stack three sheets somewhere, max " + stackT);
+  // set-down and step: their own sheets at their own level, the main sheets cut round them, no splice (warned)
+  const drop = MT.DROPS[0], dropPcs = MT.meshPieces.filter(pc => pc.level === -drop.d), stepPcs = MT.meshPieces.filter(pc => pc.level === MT.STEP.rise);
+  if (!dropPcs.length || !dropPcs.every(pc => pc.x0 >= drop.x0 + MT.C - 0.5 && pc.x1 <= drop.x1 - MT.C + 0.5 && pc.y0 >= drop.y0 + MT.C - 0.5 && pc.y1 <= drop.y1 - MT.C + 0.5)) p("set-down sheets should sit inside the set-down less cover");
+  if (!stepPcs.length || !stepPcs.every(pc => pc.x0 >= MT.STEP.x0 + MT.C - 0.5 && pc.y0 >= MT.STEP.y0 + MT.C - 0.5)) p("raised-step sheets should start cover past the step line");
+  if (!MT.meshPieces.some(pc => pc.level === 0 && pc.holes.indexOf(drop.id) >= 0) || !MT.meshPieces.some(pc => pc.level === 0 && pc.holes.indexOf("STEP") >= 0) || !MT.meshPieces.some(pc => pc.holes.indexOf("STAIR VOID") >= 0)) p("main sheets should be cut round the set-down, the step and the stair void");
+  if (!MT.warnings.some(w => /^SL82 T stops 30 short of each side of the 70 set-down WET AREA and the 200 step; the splice across a change of level is not detailed/.test(w)) || !MT.warnings.some(w => /^SL82 T: mesh laps 225 end \/ 325 side are placeholders/.test(w))) p("top mesh warnings: " + MT.warnings.join(" | "));
+  // marks: M1… after the bar marks, one per distinct cut, quantities and mass add up, the cutting-list summary
+  const mm = MT.marks.filter(m => m.mesh), firstM = MT.marks.findIndex(m => m.mesh);
+  if (!mm.length || mm[0].mark !== "M1" || MT.marks.slice(firstM).some(m => !m.mesh) || mm.reduce((s, m) => s + m.qty, 0) !== MT.meshPieces.length || !near(mm.reduce((s, m) => s + m.kg, 0), MT.kgMesh, 0.5) || !near(MT.kg, MT.kgBars + MT.kgMesh, 0.01)) p("mesh marks: " + JSON.stringify(mm.map(m => [m.mark, m.qty, m.kg])));
+  mm.forEach(m => { if (m.code !== "SHT" || !/^cut [\d,]+ × [\d,]+ · long wires E–W/.test(m.dimStr) || !m.laps || m.laps.end !== 225 || m.laps.side !== 325 || !(m.kgEach > 0)) p("mesh mark " + m.mark + " " + m.dimStr); });
+  const keys = new Set(MT.meshPieces.map(pc => [pc.cutL, pc.cutW, pc.holes.join("+"), Math.round(pc.kg)].join("|")));
+  if (keys.size !== mm.length) p("one mesh mark per distinct cut: " + keys.size + " cuts, " + mm.length + " marks");
+  const sm = MT.meshSummary;
+  if (!sm || sm.length !== 1 || sm[0].pieces !== MT.meshPieces.length || !(sm[0].stock >= 1 && sm[0].stock <= sm[0].pieces) || !near(sm[0].kg, MT.kgMesh, 0.1) || !(sm[0].netArea > 120 && sm[0].netArea < 135) || !near(sm[0].grossArea, sm[0].stock * 14.4, 0.1) || sm[0].wastePct !== Math.round((sm[0].grossArea / sm[0].netArea - 1) * 100)) p("mesh summary " + JSON.stringify(sm));
+  if (MT.meshPieces.some(pc => !(pc.from >= 1 && pc.from <= sm[0].stock) || !/grid [A-Z0-9]/.test(pc.pos) || pc.spec !== MT.meshes.T.spec)) p("every piece names its stock sheet, its grid position and its spec");
+  // the face's bars: trimmers and additional bars still built for C and D (tied under the mesh, off the wire planes), chairs at 800
+  if (!MT.runs.some(r => r.kind === "trim" && r.layer === "C") || !MT.runs.some(r => r.kind === "trim" && r.layer === "D") || !MT.runs.some(r => r.kind === "add" && r.layer === "D")) p("top mesh: trimmers / additional bars for C and D should still be built");
+  MT.bars.filter(b => !b.existing && (b.layer === "C" || b.layer === "D") && b.run.kind !== "balc" && !b.run.balc).forEach(b => { b.pts.forEach(q => { if (q[2] > zC - dc / 2 - 1 && q[2] < MT.T) p("bar " + b.id + " (" + b.run.label + ") sits in the top mesh's wire planes at z " + q[2].toFixed(1)); }); });
+  if (MT.chairPitch !== 800 || !MT.chairs.length || MT.chairs[0].pitch !== 800 || MT.chairs.length <= M.chairs.length) p("chairs should be at 800 under a top mesh: " + MT.chairPitch + ", " + MT.chairs.length + " vs " + M.chairs.length);
+  // what the viewer reads: layer text, renamed layers, the bottom mats untouched (same A / B bars as the example)
+  if (MT.matText.C !== "SL82 mesh, long wires E–W" || MT.matText.D !== "in the SL82 mesh (placed with C)" || MT.matText.A !== "N16-200 E–W") p("matText " + JSON.stringify(MT.matText));
+  if (MT.LBY.C.name !== "Top mesh SL82 · layers C+D" || MT.LBY.C.short !== "C+D · top mesh" || MT.LBY.D !== LBY.D || MT.LBY.A !== LBY.A || MT.LAYERS.length !== 8) p("mesh layer names " + JSON.stringify(MT.LAYERS.map(l => l.name)));
+  const abBars = Mdl => Mdl.bars.filter(b => (b.layer === "A" || b.layer === "B") && b.run.kind === "main").map(b => JSON.stringify(b.pts)).join();
+  if (abBars(MT) !== abBars(M)) p("the bottom mats should build as on the example");
+  if (MT.warnings.some(w => /No mat for layer/.test(w))) p("a mesh face should not warn about missing mats: " + MT.warnings.join(" | "));
+  // the sheets (#9): the mesh layer's sheet carries the wires, the mesh tag, the mesh laps and one label per sheet
+  const SC = buildSheet(MT, ["C"], ["BM", "A", "B", "CH"]);
+  if (!/TOP MESH SL82 · LAYERS C\+D · LONG WIRES E–W/.test(SC.title[0]) || !/MESH LAPS 225 END \/ 325 SIDE · \d+ BARS THIS LAYER \+ \d+ MESH SHEETS/.test(SC.title[1])) p("mesh sheet title " + JSON.stringify(SC.title));
+  if (!SC.tags.some(t => t.text === run.label) || SC.strip.sheets !== MT.meshPieces.length || SC.strip.callouts[0] !== run.callout) p("mesh sheet tags / strip " + JSON.stringify([SC.tags.map(t => t.text), SC.strip]));
+  if (!SC.runMarks[run.id] || SC.runMarks[run.id].filter(l => l.first).length !== mm.length || sheetMarksFor(SC, "M1").length < 1) p("mesh sheet marks " + JSON.stringify(SC.runMarks[run.id]));
+  const SD = buildSheet(MT, ["D"], ["BM", "A", "B", "CH", "C"]);
+  if (!/LAYER D · TOP 4TH · IN THE SL82 MESH \(PLACED WITH C\)/.test(SD.title[0]) || SD.bars.some(it => !it.ghost && it.bar.wire) || !SD.bars.some(it => it.ghost && it.bar.wire)) p("layer D sheet after a top mesh " + JSON.stringify(SD.title));
+  checkModel("top mesh on the example", Object.assign({}, DEFAULT_CFG, { callouts: "N16-200 A E-W\nN12-200 B N-S\nSL82 T E-W" }), 800);
+
+  // bottom mesh, long wires N–S, with bar mats on top: the sheet is layer A's, long wires at the bottom cover
+  const MB = buildModel(Object.assign({}, DEFAULT_CFG, { callouts: "RL918 B N-S\nN12-150 C N-S\nN12-150 D E-W" }));
+  if (MB.errors.length) p("bottom mesh: " + MB.errors.join(" | "));
+  const rb = MB.runs.find(r => r.kind === "mesh");
+  if (!MB.meshes.B || MB.meshes.T || rb.layer !== "A" || rb.dir !== "Y" || !near(MB.Z.A, MB.C + 8.6 / 2, 0.01) || !near(MB.Z.B, MB.C + 8.6 + 7.6 / 2, 0.01)) p("bottom mesh run / stack " + JSON.stringify([rb && rb.layer, rb && rb.dir, MB.Z]));
+  MB.wires.forEach(w => { const dx = Math.abs(w.pts[1][0] - w.pts[0][0]); if (w.long ? dx > 1e-6 : dx < 1e-6) p("bottom mesh wire " + w.id + " runs the wrong way"); });
+  wiresOK(MB, "bottom mesh");
+  const lapsB = lapsOK(MB, rb, "bottom mesh");
+  if (!rb.mesh[0].laps || rb.mesh[0].laps.side !== 225 || !lapsB.sideExact) p("RL side lap should be the 225 floor: " + JSON.stringify([rb.mesh[0].laps, lapsB]));
+  if (MB.chairPitch !== 1000 || MB.matText.A !== "RL918 mesh, long wires N–S" || MB.matText.B !== "in the RL918 mesh (placed with A)" || MB.LBY.A.name !== "Bottom mesh RL918 · layers A+B") p("bottom mesh text " + JSON.stringify([MB.chairPitch, MB.matText, MB.LBY.A.name]));
+  if (!MB.runs.some(r => r.kind === "trim" && r.layer === "A") || !MB.runs.some(r => r.kind === "trim" && r.layer === "B") || !MB.runs.some(r => r.kind === "extra" && r.layer === "A")) p("bottom mesh: trimmers / extras for A and B should still be built");
+  MB.bars.filter(b => !b.existing && (b.layer === "A" || b.layer === "B") && !b.run.balc && b.run.kind !== "balc").forEach(b => { b.pts.forEach(q => { if (q[2] < MB.Z.B + 7.6 / 2 + 1 && q[2] > 0) p("bar " + b.id + " (" + b.run.label + ") sits in the bottom mesh's wire planes at z " + q[2].toFixed(1)); }); });
+  checkModel("bottom mesh on the example", Object.assign({}, DEFAULT_CFG, { callouts: "RL918 B N-S\nN12-150 C N-S\nN12-150 D E-W" }), 600);
+
+  // a plain 10 × 8 slab with SL82 top (Findings 11.6, 6b): exact laps between whole sheets, stack ≤ 3, marks stable, waste in range
+  const plain = { gridX: [250, 9750], gridY: [250, 7750], overhang: 250, callouts: "SL82 T E-W\nN12-200 A E-W\nN12-200 B N-S", features: { beams: false, columns: false, drop: false, step: false, balcony: false, openings: false, extras: false, edges: true } };
+  const MP = buildModel(plain), MP2 = buildModel(plain), rp = MP.runs.find(r => r.kind === "mesh");
+  if (MP.errors.length) p("plain mesh: " + MP.errors.join(" | "));
+  const stackP = wiresOK(MP, "plain mesh"), lapsP = lapsOK(MP, rp, "plain mesh");
+  if (stackP !== 3 || lapsP.endExact < 2 || lapsP.sideExact < 2) p("plain mesh laps / stack " + JSON.stringify([stackP, lapsP]));
+  const rows = [...new Set(rp.mesh.map(pc => pc.y0))].sort((a, b) => a - b);
+  if (rows.length !== 4 || !near(rows[1] - rows[0], 2400 - 325, 0.5) || rp.mesh.some(pc => pc.cutW < 825)) p("plain mesh rows " + JSON.stringify(rows));
+  if (rp.mesh.filter(pc => pc.cutL === 5800 && pc.cutW === 2400).length < 2 || !rp.mesh.every(pc => pc.cutL >= 725 && pc.nLong >= 2 && pc.nCross >= 2)) p("plain mesh pieces " + JSON.stringify(rp.mesh.map(pc => [pc.cutL, pc.cutW])));
+  // a whole uncut SL82 piece: 14 long wires (10 main + 4 edge), 30 cross wires, mass from the wire lengths at nominal (Findings 11.1: 51.2 with 6.0 m wires, 50.4 trimmed)
+  const whole = rp.mesh.find(pc => pc.cutL === 5800 && pc.cutW === 2400 && !pc.holes.length);
+  if (!whole) p("plain mesh: no whole uncut sheet");
+  else if (whole.nLong !== 14 || whole.nCross !== 30 || whole.wires.length !== 44 || !near(whole.kg, 50.4, 0.6)) p("whole sheet " + JSON.stringify([whole.nLong, whole.nCross, whole.wires.length, whole.kg]));
+  const sp = MP.meshSummary[0];
+  if (!near(sp.netArea, 9.94 * 7.94, 0.1) || !(sp.wastePct >= 10 && sp.wastePct <= 80) || sp.stock > sp.pieces || sp.stock < Math.ceil(sp.netArea / 14.4)) p("plain mesh summary " + JSON.stringify(sp));
+  if (JSON.stringify(MP.marks.filter(m => m.mesh)) !== JSON.stringify(MP2.marks.filter(m => m.mesh))) p("mesh marks should be stable across two builds");
+  if (MP.warnings.some(w => /stops .* short of each side/.test(w))) p("a flat slab should not warn about level changes: " + MP.warnings.join(" | "));
+  checkModel("plain 10 × 8 slab, SL82 top", plain, 60);
+  // mesh top and bottom from one line; a bottom mesh under a 200 slab leaves the top mats room
+  const MTB = buildModel(Object.assign({}, plain, { callouts: "SL82 T&B E-W" }));
+  if (MTB.errors.length || !MTB.meshes.T || !MTB.meshes.B || MTB.runs.filter(r => r.kind === "mesh").length !== 2 || MTB.bars.some(b => b.run.kind === "main")) p("T&B mesh " + JSON.stringify(MTB.errors));
+  if (!MTB.LBY.A.name.startsWith("Bottom mesh") || !MTB.LBY.C.name.startsWith("Top mesh") || MTB.LAYERS.length !== 8) p("T&B layer names " + JSON.stringify(MTB.LAYERS.map(l => l.name)));
+  checkModel("SL82 top and bottom", Object.assign({}, plain, { callouts: "SL82 T&B E-W" }), 8);   // only the N12 edge bars are bars
+
+  // what a mesh line must say, each its own error, the rest of the model still built
+  const ME = buildModel(Object.assign({}, DEFAULT_CFG, { callouts: "SL82 T E-W\nN12-200 C N-S\n2 LAYERS SL82 T E-W\nL11TM B E-W\nSL52 B E-W\nSL82 T E-W\nSL82 EW\nRL918 B H\nRL918 B\nN16-200 A E-W\nSL82 B N-S" }));
+  const want = [/^Line 2 .*the top is SL82 mesh on line 1; layer C is in that sheet/, /^Line 3 .*give each mesh its own line with its position, T or B/, /^Line 4 .*L11TM is trench mesh, for footings; a slab mesh is SL or RL/,
+    /^Line 5 .*SL52 is not a sheet mesh in the catalogue here/, /^Line 6 .*the top already has SL82 on line 1; one mesh per face/, /^Line 7 .*say where the mesh goes: T \(top\) or B \(bottom\)/,
+    /^Line 8 .*horizontal is a wall or beam direction; a slab mesh's long wires run E-W or N-S/, /^Line 9 .*say which way the mesh's long wires run: E-W or N-S \(no direction is assumed\)/, /^Line 11 .*layer A is a bar mat on line 10; the bottom is either mesh or bars/];
+  want.forEach(re => { if (!ME.errors.some(e => re.test(e))) p("expected error " + re + " in: " + ME.errors.join(" | ")); });
+  if (ME.errors.length !== want.length || !ME.meshes.T || ME.meshes.B || !ME.mats.A || ME.mats.C) p("mesh error lines: " + ME.errors.length + " errors; " + JSON.stringify(Object.keys(ME.meshes)) + " " + JSON.stringify(Object.keys(ME.mats)));
+  if (!ME.meshPieces.length || ME.warnings.some(w => /No mat for layer/.test(w))) p("the good mesh line should still build and no layer is reported missing (every layer was named by a line): " + ME.warnings.join(" | "));
+  // the panel's mesh goes through the same layMesh: the example panel still lays one made-to-size sheet
+  const PM = buildModel(lib.PANEL_CFG);
+  if (PM.meshPieces.length !== 1 || PM.meshPieces[0].cutL !== 5940 || !PM.meshSummary || PM.meshSummary[0].made !== 1 || PM.meshSummary[0].stock !== 0) p("panel through layMesh: " + JSON.stringify(PM.meshSummary));
+  if (problems.length) fail(problems.slice(0, 25).join("\n"));
+  console.log("  mesh (#6): SL82 top on the example (" + MT.meshPieces.length + " sheets, " + MT.wires.length + " wires, " + sm[0].stock + " stock to order, laps exact between whole sheets, stack ≤ 3), RL918 bottom, plain 10 × 8 (" + MP.meshPieces.length + " sheets, waste " + sp.wastePct + " %), T&B, 9 bad lines reported");
 }
 
 // error paths must report, not throw

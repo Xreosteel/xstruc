@@ -47,6 +47,37 @@ const { chromium } = require("playwright");
   await page.waitForTimeout(700);
   const s1 = await stats();
   console.log("after bad line:", JSON.stringify(s1.errs));
+  // mesh in the floor (#6): "SL82 T E-W" lays sheets over both top layers; wires render, the mesh is scheduled with a
+  // cutting list, a sheet is picked by any of its wires, and the step list / legend name the mesh
+  await page.fill("#inCallouts", "N16-200 A E-W\nN12-200 B N-S\nSL82 T E-W");
+  await page.waitForTimeout(900);
+  const fm = await stats();
+  Object.assign(fm, await page.evaluate(() => { const M = window.xstruc.model(); return { pieces: M.meshPieces.length, wires: M.wires.length, layer: M.runs.find(r => r.kind === "mesh").layer, legend: document.getElementById("legend").textContent,
+    meshRow: !!document.querySelector('#sched tr[data-mark="M1"]'), listShown: !document.getElementById("meshsec").hidden, listRows: document.querySelectorAll("#meshsched tr").length, summary: document.getElementById("meshsum").textContent,
+    steps: [...document.querySelectorAll("#steps .step")].map(e => e.textContent) }; }));
+  // step to the top mesh (chairs, then layer C's step) and look at it
+  await page.click("#steps .step[data-step='5']"); await page.waitForTimeout(500);
+  fm.stepLabel = await page.textContent("#steplabel");
+  await page.screenshot({ path: path.join(outDir, "smoke-19-floor-mesh.png") });
+  await page.click(".side [data-cam=plan]"); await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(outDir, "smoke-19-floor-mesh-plan.png") });
+  await page.click(".side [data-cam=iso]");
+  // a mesh row in the cutting list highlights its mark; a sheet picked through the test handle shows its card
+  await page.click('#meshsched tr[data-mark="M1"]'); await page.waitForTimeout(400);
+  fm.markInsp = await page.textContent("#inspector");
+  fm.rowOn = await page.$eval('#meshsched tr[data-mark="M1"]', el => el.classList.contains("on"));
+  fm.picked = await page.evaluate(() => window.xstruc.selectPiece("S1"));
+  fm.pieceInsp = await page.textContent("#inspector");
+  fm.pieceTag = await page.$eval("#tags .tag.bar", el => el.textContent);
+  // the mesh layer's placing sheet
+  await page.click("#tgSheet"); await page.waitForTimeout(600);
+  fm.sheet = await page.evaluate(() => { const S = window.xstruc.sheet(); return { title: S.title.join(" | "), wires: S.bars.filter(x => !x.ghost && x.bar.wire).length, sheets: S.strip.sheets, tags: S.tags.map(t => t.text) }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-19-floor-mesh-sheet.png") });
+  await page.click("#tgSheet"); await page.waitForTimeout(300);
+  await page.click("#all");
+  console.log("floor mesh:", JSON.stringify({ pieces: fm.pieces, wires: fm.wires, layer: fm.layer, rows: fm.listRows, step: fm.stepLabel, errs: fm.errs.filter(e => /^Line/.test(e)) }));
+  await page.fill("#inCallouts", "N16-200 A E-W\nN12-200 B N-S\nN12-150 C N-S\nN12-150 D E-W"); await page.waitForTimeout(900);   // back to the example mats
+  fm.back = (await stats()).bars;
   // a mat without E-W / N-S is an error in the panel, not a guessed direction (#21); the scene keeps the last good model
   await page.fill("#inCallouts", "N16-200 A\nN12-200 B N-S\nN12-150 C N-S\nN12-150 D E-W");
   await page.waitForTimeout(700);
@@ -435,6 +466,12 @@ const { chromium } = require("playwright");
   if (+s0.bars.replace(/\D/g, "") < 800) problems.push("default model has too few bars: " + s0.bars);
   if (s0.steps !== 8) problems.push("expected 8 steps, got " + s0.steps);
   if (!s1.errs.some(e => /mesh/.test(e))) problems.push("mesh line did not produce an error");
+  // mesh in the floor (#6)
+  if (fm.errs.some(e => /^Line/.test(e)) || fm.back !== s0.bars || !(fm.pieces >= 12) || !(fm.wires >= 400) || fm.layer !== "C" || !/C\+D · top mesh/.test(fm.legend) || !fm.meshRow || !fm.listShown || fm.listRows < fm.pieces / 2 || !/stock sheets? 6.0 × 2.4 to order/.test(fm.summary) || !/laps \+ waste \d+ %/.test(fm.summary)) problems.push("floor mesh did not build / schedule: " + JSON.stringify(fm).slice(0, 700));
+  if (!fm.steps.some(t => /Top mesh SL82 · layers C\+D/.test(t) && /SL82 mesh, long wires E–W · add N16/.test(t)) || fm.steps.some(t => /long wires E–W cogged/.test(t)) || !fm.steps.some(t => /Bar chairs/.test(t) && /@800/.test(t)) || !/Top mesh SL82/.test(fm.stepLabel)) problems.push("floor mesh steps: " + JSON.stringify([fm.steps, fm.stepLabel]));
+  if (!fm.rowOn || !/Mesh mark M1/.test(fm.markInsp) || !/cut [\d,]+ × [\d,]+/.test(fm.markInsp)) problems.push("mesh cutting-list row did not highlight its mark: " + fm.markInsp);
+  if (!fm.picked || !/SL82 mesh sheet/.test(fm.pieceInsp) || !/Cut fromstock sheet \d+/.test(fm.pieceInsp) || !/PositionSW corner .*grid/.test(fm.pieceInsp) || !/east–west/.test(fm.pieceInsp) || !/M\d+ · SL82 · [\d,]+ × [\d,]+/.test(fm.pieceTag)) problems.push("mesh sheet inspector / tag wrong: " + fm.pieceInsp + " / " + fm.pieceTag);
+  if (!/TOP MESH SL82 · LAYERS C\+D/.test(fm.sheet.title) || !/MESH LAPS 225 END \/ 325 SIDE/.test(fm.sheet.title) || fm.sheet.wires < 400 || fm.sheet.sheets !== fm.pieces || !fm.sheet.tags.some(t => /SL82 T E–W · \d+ SHEETS/.test(t))) problems.push("floor mesh placing sheet wrong: " + JSON.stringify(fm.sheet));
   if (!/^Line 1 \(N16-200 A\): say which way this mat runs: E-W or N-S/.test(sDir.errs[0] || "") || sDir.errs.some(e => /No mat for layer A/.test(e))) problems.push("undirected mat did not produce the direction error (alone, without a 'no mat' warning): " + JSON.stringify(sDir.errs));
   if (sDir.invalid !== "true" || !sDir.open) problems.push("direction error did not mark the callouts field invalid / open the inputs panel");
   if (sDir.bars !== s0.bars) problems.push("undirected mat rebuilt the scene (" + sDir.bars + " vs " + s0.bars + "); it should keep the last good model");
