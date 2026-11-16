@@ -189,6 +189,13 @@ details.sec:not([open]) { gap: 0; }
 .insp-title .chip { font-family: var(--mono); font-size: 13px; padding: 2px 8px; border-radius: 3px; background: color-mix(in srgb, var(--c) 22%, transparent); border: 1px solid var(--c); }
 .insp-title b { font-size: 17px; font-weight: 600; }
 .note { font-size: 13px; color: var(--muted); margin: 0; }
+/* Panel tag (#33d): the bundle-style tag marked on the element, white card with a black band like a steel tag */
+.ptag { margin: 12px 0 10px; border: 2px solid #1a1e23; border-radius: 4px; background: #f6f3ea; color: #1a1e23; font-family: var(--mono); max-width: 360px; overflow: hidden; }
+.ptag-mark { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 10px; background: #1a1e23; color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 0.04em; }
+.ptag-mark small { font-size: 12px; font-weight: 500; letter-spacing: 0; }
+.ptag-mass { padding: 6px 10px 0; font-size: 20px; font-weight: 700; }
+.ptag-rows { display: grid; gap: 3px; padding: 4px 10px 8px; font-size: 11.5px; }
+.ptag-rows span { display: block; }
 
 /* Schedule */
 .tablewrap { overflow-x: auto; margin: 0 -16px; padding: 0 16px; max-height: 46vh; overflow-y: auto; }
@@ -374,6 +381,16 @@ html.print #sheet { background: #fff; }
           <div id="pnInsRows" class="rows"></div>
           <div class="rowbtns"><button class="btn small" type="button" id="btnAddPnLifter">+ Add lifter</button><button class="btn small" type="button" id="btnAddPnBrace">+ Add brace insert</button><span class="hint">Positions from the erection designer's drawing: an edge anchor by x (top / bottom edge) or y (left / right edge), a face insert by x, y on NF or FF. Checked against the supplier catalogue; failed checks are flagged, never fixed.</span></div>
           <p class="hint" id="pnInsCat"></p>
+        </fieldset>
+        <fieldset class="geom" id="pnApprFs">
+          <legend>Panel sheet · approval block</legend>
+          <div class="grid2">
+            <div class="field"><label for="pnDrawn">Drawn by</label><input id="pnDrawn" type="text" maxlength="28" spellcheck="false" autocomplete="off"></div>
+            <div class="field"><label for="pnChecked">Checked by</label><input id="pnChecked" type="text" maxlength="28" spellcheck="false" autocomplete="off"></div>
+            <div class="field"><label for="pnApproved">Engineer approved by</label><input id="pnApproved" type="text" maxlength="28" spellcheck="false" autocomplete="off"></div>
+            <div class="field"><label for="pnRev">Revision</label><input id="pnRev" type="text" maxlength="4" spellcheck="false" autocomplete="off" placeholder="A"></div>
+          </div>
+          <span class="hint">Printed in the approval block on the panel sheet (2D placing sheet, Inserts step or Finished panel); the date lines stay blank to be signed by hand.</span>
         </fieldset>
         <div class="rowbtns"><button class="btn small" type="button" id="btnPanelReset">Reset to example panel</button></div>
       </div>
@@ -1718,7 +1735,8 @@ html.print #sheet { background: #fff; }
     // pulls it west), their tension bars clear of the window's corner diagonals; two brace inserts on the near face (the face
     // up on the bed) below 60 % of the height, off the lifter lines
     inserts: [{ id: "L1", type: "3DX10", edge: "top", x: 450 }, { id: "L2", type: "3DX10", edge: "top", x: 5364 }, { id: "B1", type: "QF20B", edge: "NF", x: 1000, y: 1600 }, { id: "B2", type: "QF20B", edge: "NF", x: 5600, y: 1600 }],
-    features: { perimeter: true, trims: true }
+    features: { perimeter: true, trims: true },
+    approval: { drawn: "", checked: "", approved: "", rev: "" }   // printed in the sheet's approval block (#33d); blank lines where empty
   };
   const FACE_NAME = { NF: "Near face", FF: "Far face" };
   // Perimeter bar: one continuous N16 round the edge in each face; AS 3850.2 asks for at least one perimeter bar for
@@ -2285,7 +2303,7 @@ html.print #sheet { background: #fff; }
     const beamRect = bm => bm.dir === "X" ? { x0: bm.a, x1: bm.b, y0: bm.at - bm.w / 2, y1: bm.at + bm.w / 2, id: bm.id } : { x0: bm.at - bm.w / 2, x1: bm.at + bm.w / 2, y0: bm.a, y1: bm.b, id: bm.id };
     const S = {
       solid: solid, ghost: ghost, layer: solid.length === 1 ? solid[0] : null,
-      bounds: PNL ? { x0: EXT.x0 - 1300, x1: EXT.x1 + 700, y0: EXT.y0 - 1300, y1: EXT.y1 + 1100 } : { x0: EXT.x0 - 1700, x1: EXT.x1 + 1700, y0: EXT.y0 - 1700, y1: EXT.y1 + 1700 },
+      bounds: PNL ? { x0: EXT.x0 - 1300, x1: EXT.x1 + 700, y0: EXT.y0 - 1300, y1: EXT.y1 + 1500 } : { x0: EXT.x0 - 1700, x1: EXT.x1 + 1700, y0: EXT.y0 - 1700, y1: EXT.y1 + 1700 },
       concrete: {
         slab: rect(SL, PNL ? "PANEL" : "SLAB"), holes: M.HOLES.map(h => rect(h)),
         drops: M.DROPS.map(dd => rect(dd, "SET DOWN " + dd.d)),
@@ -2305,7 +2323,7 @@ html.print #sheet { background: #fff; }
     if (!PNL) for (let i = 1; i < M.gy.length; i++) S.gridDims.push({ measure: "y", a: M.gy[i - 1], b: M.gy[i], at: DXL, text: fmt(M.gy[i] - M.gy[i - 1]) });
     if (PNL) S.gridDims.push({ measure: "x", a: 0, b: M.L, at: DYL, text: fmt(M.L) }, { measure: "y", a: 0, b: M.W, at: DXL, text: fmt(M.W) });
     // feature notes, same wording as the 3D annotations
-    if (PNL) S.notes.push({ x: (SL.x0 + SL.x1) / 2, y: SL.y1 + 550, text: M.name + " · " + fmt(M.L) + " × " + fmt(M.W) + " × " + M.T + " · " + M.panel.castFace + " ON THE BED · TOP EDGE ↑" });
+    if (PNL) S.notes.push({ x: (SL.x0 + SL.x1) / 2, y: SL.y1 + 950, text: M.name + " · " + fmt(M.L) + " × " + fmt(M.W) + " × " + M.T + " · " + M.panel.castFace + " ON THE BED · VIEWED FROM " + M.panel.topFace + " · TOP EDGE ↑" });
     else S.notes.push({ x: (SL.x0 + SL.x1) / 2, y: SL.y0 + M.W * 0.72, text: M.cfg.name.toUpperCase() + " · " + M.T + " THK SLAB" });
     M.DROPS.forEach(dd => S.notes.push({ x: (dd.x0 + dd.x1) / 2, y: (dd.y0 + dd.y1) / 2, text: "SET DOWN " + dd.d + " · " + dd.id }));
     if (M.STEP) S.notes.push({ x: (M.STEP.x0 + M.STEP.x1) / 2, y: (M.STEP.y0 + M.STEP.y1) / 2, text: "STEP UP " + M.STEP.rise });
@@ -2344,12 +2362,14 @@ html.print #sheet { background: #fff; }
         S.dims.push({ measure: X ? "y" : "x", a: g.at, b: g.v, at: r.dist.at, text: fmt(Math.abs(g.d)), grid: g.grid, run: r.id, which: gw[1] });
       });
     });
+    if (PNL) sheetPanelSymbols(M, S, want);   // insert symbols and the CoG cross go first: the run tags keep clear of them (#33d)
     sheetTags(M, S); sheetLaps(S); sheetMarks(S);
+    if (PNL) sheetPanelBlocks(M, S, want);    // notes, approval, legend, insert table and opening setout: outside the panel, bounds grow to hold them
     // title lines
     const LB = M.LBY || LBY, lname = l => (LB[l] ? LB[l].name : l).toUpperCase();
     const mt = S.layer && M.matText ? M.matText[S.layer] : null;
     const mat = mt && mt !== "no mat" ? " · " + (lname(S.layer).indexOf("MESH") >= 0 && /mesh, /.test(mt) ? mt.replace(/^.*mesh, /, "") : mt).toUpperCase() : "";   // a mesh layer's name already says which mesh
-    S.title.push(M.cfg.name.toUpperCase() + " · PLACING SHEET · " + (S.layer ? lname(S.layer) + mat : solid.length ? "ALL LAYERS" : "FORMWORK"));
+    S.title.push(M.cfg.name.toUpperCase() + (PNL ? " · PANEL SHEET · " : " · PLACING SHEET · ") + (S.layer ? lname(S.layer) + mat : solid.length ? "ALL LAYERS" : "FORMWORK"));
     // the lap this layer is placed with (#5): its mat's lap, from the table when one is in use, else the flat lap
     const inkSheets = [...new Set(S.bars.filter(x => !x.ghost && x.bar.wire).map(x => x.bar.sheet))];
     const meshLap = S.layer ? inkSheets.find(pc => pc.laps) : null;   // a mesh layer's sheet is placed with the mesh laps (#6)
@@ -2393,13 +2413,16 @@ html.print #sheet { background: #fff; }
   // to find room; one with a tag anchor (Z-bars, trimmers, extras, beams) starts at that anchor and points a leader at
   // the nearest of its bars. A tag that cannot sit in its first-choice place is pushed outward and gets a leader to
   // its line or bars. No tag of the active layer is ever dropped: the last resort is the first choice, flagged overlap.
+  const noteBoxes = S => S.notes.forEach(n => { n.h = SHEET_TXT.note; n.box = boxAt(n.x, n.y, txtW(n.text, n.h), n.h * 1.4); });
   function sheetTags(M, S) {
     S.tags = []; S.distLines = [];
     // feature notes are paper text too, and tags keep clear of them
-    S.notes.forEach(n => { n.h = SHEET_TXT.note; n.box = boxAt(n.x, n.y, txtW(n.text, n.h), n.h * 1.4); });
+    noteBoxes(S);
     if (!S.layer) return;   // the finished floor and the formwork sheet carry no run tags (the 3D view has them)
     const H = SHEET_TXT.tag, bh = H * 1.5, B = S.bounds, placed = S.notes.map(n => n.box);
     const inB = r => r.x0 >= B.x0 && r.x1 <= B.x1 && r.y0 >= B.y0 && r.y1 <= B.y1;
+    (S.inserts || []).forEach(q => placed.push(q.boxes[0], q.boxes[1]));   // insert symbols and their labels (#33d)
+    if (S.cog) placed.push(S.cog.box);
     const free = r => inB(r) && !placed.some(q => boxHit(r, q, 40));
     const polysOf = r => S.bars.filter(it => !it.ghost && it.bar.run === r).map(it => it.pts);
     const runs = M.runs.filter(r => r.layer === S.layer && r.label && polysOf(r).length);
@@ -2485,6 +2508,153 @@ html.print #sheet { background: #fff; }
       });
       S.runMarks[rid] = out;
     });
+  }
+  // ---------- panel elevation sheet (backlog #33d, Findings 12.6) ----------
+  // A precast panel's sheet carries what the shop drawing and the COP ask for beyond the bars: every cast-in insert as a
+  // symbol with its WLL and its x / y from the bottom-left corner, the centre of gravity, a notes block (mark, size,
+  // mass, f'c in service and at lift, cast face, casting and lift-date fields), an approval block, a legend of the
+  // symbols, and an insert table. The symbols are X Struc's own until the AS 3850.2 symbols are checked (paywalled):
+  // lifter = circle, brace insert = square, ferrule = circled cross, CoG = quartered circle. Everything is paper text
+  // and plan geometry like the rest of the sheet, so it prints at scale and a DXF / PDF export can write it.
+  const PANEL_SHEET = { lifter: 200, brace: 160, ferrule: 150, cog: 170, label: 150, note: 150, notePitch: 215, tableTxt: 130, tablePitch: 200, colW: 4100, colGap: 900 };
+  const PANEL_TABLE_COLS = [["id", "ID", 480], ["kind", "KIND", 1250], ["type", "TYPE", 2400], ["wll", "WLL AT f'c LIFT", 2100], ["x", "X", 650], ["y", "Y", 650], ["where", "WHERE", 850], ["bars", "COMPONENT BARS", 1700], ["checks", "CHECKS", 1600]];
+  function sheetPanelSymbols(M, S, want) {
+    S.inserts = []; S.cog = null;
+    noteBoxes(S);
+    const holes = S.concrete.holes, obstacles = S.notes.map(n => n.box).concat(holes), B = S.bounds;
+    const clear = r => r.x0 >= B.x0 && r.x1 <= B.x1 && r.y0 >= B.y0 && r.y1 <= B.y1 && !obstacles.some(q => boxHit(r, q, 30));
+    const union = (p, q) => ({ x0: Math.min(p.x0, q.x0), x1: Math.max(p.x1, q.x1), y0: Math.min(p.y0, q.y0), y1: Math.max(p.y1, q.y1) });
+    const P = M.panel, H = PANEL_SHEET.label;
+    // one symbol per insert, on the Inserts sheet and the finished panel in ink, faint where the inserts are already in
+    if ("IN" in want) (M.inserts || []).forEach(ins => {
+      const sym = ins.kind === "lifter" ? "lifter" : ins.kind === "brace" ? "brace" : "ferrule", rs = PANEL_SHEET[sym];
+      const label = ins.kind === "lifter" ? "WLL " + (ins.wll.wll != null ? ins.wll.wll + " t" : "n/a") : ins.kind === "brace" ? "BRACE" : "FERRULE";
+      const coord = "x " + fmt(ins.x) + " · y " + fmt(ins.y);
+      const line1 = ins.id + " · " + label, lw = Math.max(txtW(line1, H), txtW(coord, H)), lh = 2 * H * 1.35;
+      // labels sit outside the panel for an edge anchor (above the top edge, below the bottom, beside a side) and under a face insert
+      const out = ins.edge ? { top: [0, 1], bottom: [0, -1], left: [-1, 0], right: [1, 0] }[ins.edge] : [0, -1];
+      const lx = ins.x + out[0] * (rs + 70 + lw / 2), ly = ins.y + out[1] * (rs + 70 + lh / 2);
+      const symBox = boxAt(ins.x, ins.y, 2 * rs, 2 * rs), labBox = boxAt(lx, ly, lw, lh);
+      const q = { id: ins.id, kind: ins.kind, sym: sym, x: ins.x, y: ins.y, r: rs, label: label, line1: line1, coord: coord, lx: lx, ly: ly, lw: lw, lh: lh, h: H, flagged: ins.flagged, ghost: want.IN, edge: ins.edge, face: ins.face, box: union(symBox, labBox), boxes: [symBox, labBox] };
+      obstacles.push(symBox, labBox); S.inserts.push(q);
+    });
+    // the centre of gravity, marked on every panel sheet: the cross at the CoG, its text where it finds room (left, below, right, above)
+    // clear of the notes, the openings and the insert symbols
+    const cg = P.cog, r = PANEL_SHEET.cog;
+    const cogText = "CoG " + fmt(cg.x) + " / " + fmt(cg.y), cw = txtW(cogText, H), ch = H * 1.4;
+    const cogBox = boxAt(cg.x, cg.y, 2 * r, 2 * r);
+    const tries = [];   // left, below, right, above, then the diagonals, each ring a text height further out
+    for (let k = 0; k < 4; k++) [180, 270, 0, 90, 225, 315, 135, 45].forEach(a => {
+      const ca = Math.cos(a * Math.PI / 180), sa = Math.sin(a * Math.PI / 180), d = r + 60 + Math.abs(ca) * cw / 2 + Math.abs(sa) * ch / 2 + k * ch * 1.5;
+      tries.push([Math.round(cg.x + ca * d), Math.round(cg.y + sa * d)]);
+    });
+    let at = tries.find(xy => clear(boxAt(xy[0], xy[1], cw, ch))) || tries[0];
+    S.cog = { x: cg.x, y: cg.y, r: r, text: cogText, tx: at[0], ty: at[1], h: H, box: union(cogBox, boxAt(at[0], at[1], cw, ch)) };
+  }
+  function sheetPanelBlocks(M, S, want) {
+    const P = M.panel, INS = M.inserts || [], PW = M.L, PH = M.W, K = PANEL_SHEET, H = K.note, pitch = K.notePitch;
+    const texts = [], rects = [], lines = [], glyphs = [];
+    const pad = 120;
+    // notes and approval stack down the right of the panel from its top edge; the legend sits under the panel on the
+    // left; the insert table runs under both. Each block is a box with a title line and body lines.
+    let x0 = PW + K.colGap, x1 = x0 + K.colW, y = PH;
+    const block = (title, body, extra) => {
+        const top = y;
+        texts.push({ x: x0 + pad, y: y - pad - 100, h: 200, text: title, align: "left", weight: 700 });
+        y -= pad + 200 + 60;
+        body.forEach(t => { texts.push({ x: x0 + pad, y: y - H * 0.7, h: H, text: t, align: "left", weight: 500, maxW: x1 - x0 - 2 * pad }); y -= pitch; });
+        if (extra) extra();
+        y -= pad - (pitch - H);
+        const r = { x0: x0, x1: x1, y0: y, y1: top }; rects.push(r); y -= 250; return r;
+    };
+    // notes block (12.6 / 12.4: what the COP wants on the drawing)
+    const lifters = INS.filter(q => q.kind === "lifter"), braces = INS.filter(q => q.kind === "brace"), ferrules = INS.filter(q => q.kind === "ferrule");
+    const byType = list => { const g = {}; list.forEach(q => { (g[q.short] = g[q.short] || []).push(q); }); return Object.keys(g).map(k => g[k].map(q => q.id).join(", ") + " " + k.toUpperCase() + (g[k][0].kind === "lifter" ? " · WLL " + (g[k][0].wll.wll != null ? g[k][0].wll.wll + " t AT " + P.fcLift + " MPa" : "NOT PUBLISHED AT " + P.fcLift + " MPa") : "")); };
+    const notes = [
+      fmt(PW) + " × " + fmt(PH) + " × " + M.T + " THK · " + P.area.toFixed(2) + " m² NET",
+      "MASS " + fmt(P.mass) + " kg AT " + fmt(P.density) + " kg/m³ · " + P.volume.toFixed(2) + " m³",
+      "CoG " + fmt(P.cog.x) + " FROM LEFT · " + fmt(P.cog.y) + " FROM BOTTOM",
+      "f'c " + M.cfg.fc + " MPa IN SERVICE · " + P.fcLift + " MPa AT LIFT",
+      "COVER " + M.C + " EACH FACE",
+      P.castFace + " ON THE BED (CAST FACE) · " + P.topFace + " UP",
+      "STEEL " + fmt(M.kg) + " kg · " + fmt(M.sched.length) + " BARS, " + M.marks.filter(m => !m.mesh).length + " MARKS" + (M.meshPieces.length ? " + " + M.meshPieces.length + " MESH SHEET" + (M.meshPieces.length > 1 ? "S" : "") : "")
+    ].concat(byType(lifters), byType(braces), byType(ferrules), INS.length ? [] : ["NO INSERTS"], [
+      "CAST DATE  ____ / ____ / ________",
+      "LIFT NOT BEFORE  ____ / ____ / ________"
+    ]);
+    block("PANEL " + M.name.toUpperCase(), notes);
+    // approval block (QLD COP s3.1: engineer review; fields carried from the inputs, blank lines where empty)
+    const A = M.cfg.approval || {}, field = v => (v == null ? "" : String(v)).trim();
+    const appr = { drawn: field(A.drawn), checked: field(A.checked), approved: field(A.approved), rev: field(A.rev) };
+    const rowH = 300, cols = [x0, x0 + 1750, x0 + 3050, x1];
+    block("APPROVAL · REV " + (appr.rev || "__"), [], () => {
+      const rows = [["", "NAME", "DATE"], ["DRAWN", appr.drawn, ""], ["CHECKED", appr.checked, ""], ["ENGINEER APPROVED", appr.approved, ""]];
+      rows.forEach((cells, i) => {
+        const ry1 = y, ry0 = y - rowH;
+        cells.forEach((t, j) => { texts.push({ x: cols[j] + 90, y: (ry0 + ry1) / 2, h: H, text: t, align: "left", weight: i ? 500 : 700, maxW: cols[j + 1] - cols[j] - 150 }); if (j) lines.push({ x0: cols[j], y0: ry0, x1: cols[j], y1: ry1 }); });
+        lines.push({ x0: x0, y0: ry0, x1: x1, y1: ry0 });
+        y -= rowH;
+      });
+    });
+    const column = { x0: x0, x1: x1, y0: y + 250, y1: PH };
+    // legend of the symbols, under the panel on the left (the overall dimension string sits at -700)
+    const legend = [["lifter", "LIFTER · WLL AT f'c LIFT, x / y FROM THE BOTTOM-LEFT CORNER"], ["brace", "BRACE INSERT"], ["ferrule", "FIXING FERRULE"], ["cog", "CENTRE OF GRAVITY"]];
+    x0 = 0; x1 = Math.max(PW, 5200); y = -1150;
+    block("SYMBOLS", [], () => {
+      legend.forEach(([sym, t]) => { glyphs.push({ sym: sym, x: x0 + pad + 170, y: y - pitch / 2 + 20, r: 120 }); texts.push({ x: x0 + pad + 420, y: y - pitch / 2 + 20, h: H, text: t, align: "left", weight: 500 }); y -= pitch; });
+      texts.push({ x: x0 + pad, y: y - H * 0.7, h: 120, text: "X STRUC SYMBOLS · AS 3850.2 SYMBOLS NOT YET VERIFIED", align: "left", weight: 500, muted: true }); y -= pitch;
+    });
+    // insert table under the panel (Inserts sheet and the finished panel): id, kind, type, WLL at f'c lift, x, y, where, bars, checks
+    const legendBox = { x0: x0, x1: x1, y0: y + 250, y1: -1150 };
+    let table = null;
+    if (want.IN === false) {
+      const T = K.tableTxt, tp = K.tablePitch, tx0 = 0, top = Math.min(column.y0, legendBox.y0) - 300;
+      const colsT = []; let cx = tx0; PANEL_TABLE_COLS.forEach(c => { colsT.push({ key: c[0], head: c[1], x: cx, w: c[2] }); cx += c[2]; });
+      const rows = INS.map(q => ({
+        ins: q.id, flagged: q.flagged, cells: {
+          id: q.id, kind: q.kindName.toUpperCase(), type: q.short.toUpperCase(),
+          wll: q.kind === "lifter" ? (q.wll.wll != null ? q.wll.wll + " t AT " + P.fcLift + " MPa" : "NOT PUBLISHED") : q.cat.wllText ? q.cat.wllText.replace(/^brace WLL /, "").replace(/,[^,]*shear/, "").replace(/ at /, " AT ") : "SEE CATALOGUE",
+          x: fmt(q.x), y: fmt(q.y), where: q.edge ? q.edge.toUpperCase() + " EDGE" : "ON " + q.face,
+          bars: q.bars.length ? q.cat.bars.map(cb => (cb.role === "floating" ? 2 : 1) + " N" + cb.size + " " + (cb.shape === "TB" ? "TB" : cb.shape === "U" ? "U" : "× " + cb.len)).join(" + ") + " (" + [...new Set(q.bars.map(b => b.mark))].sort().join(", ") + ")" : "NONE",
+          checks: q.fails.length ? "FAILS " + q.fails.map(f => f.replace(/^room-/, "").replace(/-/g, " ").toUpperCase()).join(", ") : q.advis.length ? "PASS · NOTE " + q.advis.map(f => f.replace(/-/g, " ").toUpperCase()).join(", ") : "ALL PASS"
+        } }));
+      let ty = top;
+      const title = "INSERTS · " + (INS.length ? INS.length + (INS.length > 1 ? " CAST-IN INSERTS" : " CAST-IN INSERT") : "NO CAST-IN INSERTS") + " · WLL AT f'c LIFT " + P.fcLift + " MPa · " + (M.catalogue.edition + " (" + M.catalogue.date + ")").toUpperCase() + (M.insertFlags.length ? " · NOTE: " + M.insertFlags.map(f => f.rule.replace(/-/g, " ").toUpperCase()).join(", ") : "");
+      texts.push({ x: tx0, y: ty - 100, h: 170, text: title, align: "left", weight: 700 }); ty -= 260;
+      const headY = ty;
+      colsT.forEach(c => texts.push({ x: c.x + 60, y: ty - tp / 2, h: T, text: c.head, align: "left", weight: 700 })); ty -= tp;
+      rows.forEach(rw => { rw.y1 = ty; rw.y0 = ty - tp; colsT.forEach(c => texts.push({ x: c.x + 60, y: ty - tp / 2, h: T, text: rw.cells[c.key], align: "left", weight: 500, maxW: c.w - 100, bad: rw.flagged && c.key === "checks" })); ty -= tp; });
+      if (!rows.length) { texts.push({ x: tx0 + 60, y: ty - tp / 2, h: T, text: "NONE", align: "left", weight: 500 }); ty -= tp; }
+      table = { x0: tx0, x1: cx, y0: ty, y1: headY, cols: colsT, rows: rows, title: title, pitch: tp };
+      rects.push({ x0: tx0, x1: cx, y0: ty, y1: headY });
+      lines.push({ x0: tx0, y0: headY - tp, x1: cx, y1: headY - tp });
+      colsT.slice(1).forEach(c => lines.push({ x0: c.x, y0: ty, x1: c.x, y1: headY }));
+    }
+    // opening setout from the bottom-left corner: a chain below (x) and beside (y) the panel, one row per opening
+    S.openDims = [];
+    M.HOLES.slice().sort((a, b) => a.x0 - b.x0).forEach((h, i) => {
+      const atY = -300 - i * 260, atX = -300 - i * 260;
+      S.openDims.push({ measure: "x", a: 0, b: h.x0, at: atY, text: fmt(h.x0) }, { measure: "x", a: h.x0, b: h.x1, at: atY, text: fmt(h.x1 - h.x0) });
+      S.openDims.push({ measure: "y", a: 0, b: h.y0, at: atX, text: fmt(h.y0) }, { measure: "y", a: h.y0, b: h.y1, at: atX, text: fmt(h.y1 - h.y0) });
+    });
+    S.panel = { texts: texts, rects: rects, lines: lines, glyphs: glyphs, notes: notes, approval: appr, legend: legend.map(l => ({ sym: l[0], text: l[1] })), table: table, column: column, legendBox: legendBox, tag: panelTag(M) };
+    // the sheet grows to hold the blocks (right and below) and the table
+    const B = S.bounds;
+    B.x1 = Math.max(B.x1, column.x1 + 400, legendBox.x1 + 400, table ? table.x1 + 400 : 0);
+    B.y0 = Math.min(B.y0, column.y0 - 400, legendBox.y0 - 400, table ? table.y0 - 400 : 0);
+  }
+  // The panel tag (Findings 10 bundle tag, Findings 12.4): what is marked on the element before it is lifted — mark,
+  // size, mass, cast face, f'c at lift, lifters, and the casting and earliest-lift dates to be written in by hand.
+  function panelTag(M) {
+    const P = M.panel, INS = M.inserts || [], lifters = INS.filter(q => q.kind === "lifter");
+    const wll = lifters.length ? [...new Set(lifters.map(q => q.wll.wll != null ? q.wll.wll + " t" : "n/a"))].join(" / ") : null;
+    return {
+      mark: M.name, size: fmt(P.W) + " × " + fmt(P.H) + " × " + M.T, mass: Math.round(P.mass), massText: fmt(P.mass) + " kg", density: P.density,
+      fc: M.cfg.fc, fcLift: P.fcLift, castFace: P.castFace, cog: fmt(P.cog.x) + " / " + fmt(P.cog.y),
+      lifters: lifters.map(q => q.id), lifterText: lifters.length ? lifters.length + " × " + [...new Set(lifters.map(q => q.short))].join(" / ") + (wll ? " · WLL " + wll : "") : "no lifters",
+      castDate: "", liftDate: "",
+      lines: [M.name, fmt(P.W) + " × " + fmt(P.H) + " × " + M.T + " · " + fmt(P.mass) + " kg", "f'c " + M.cfg.fc + " · LIFT AT " + P.fcLift + " MPa · " + P.castFace + " DOWN", "CoG " + fmt(P.cog.x) + " / " + fmt(P.cog.y) + (lifters.length ? " · " + lifters.map(q => q.id).join(" ") + (wll ? " WLL " + wll : "") : ""), "CAST ____/____/________ · LIFT NOT BEFORE ____/____/________"]
+    };
   }
   // ---------- sheet on site and in print (backlog #9c) ----------
   // The labels of one bar mark across every run of a one-layer sheet (the schedule-mark highlight draws these).
@@ -2814,8 +2984,12 @@ html.print #sheet { background: #fff; }
     rows += "<dt>Concrete</dt><dd>" + P.area.toFixed(2) + " m² net · " + P.volume.toFixed(2) + " m³ · " + fmt(P.mass) + " kg at " + fmt(P.density) + " kg/m³</dd>" +
       "<dt>CoG</dt><dd>" + fmt(P.cog.x) + " from the left edge, " + fmt(P.cog.y) + " from the bottom edge</dd>" +
       "<dt>Steel</dt><dd>" + fmt(M.kgBars) + " kg bars + " + fmt(M.kgMesh) + " kg mesh</dd>";
-    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title"><b>Panel ' + esc(M.name) + (M.cfg.example ? " · example" : "") + '</b></div><dl class="kv">' + rows + "</dl>" +
-      '<p class="note">Shown as cast, lying on its bed: Plan looks down on the ' + P.topFace + " face. Inserts are checked against the supplier catalogue, never designed. The panel sheet with its insert table and edge U-bars between the faces are not modelled yet. Click any bar, mesh sheet, insert or tag for its details.</p>";
+    // the panel tag (#33d): what is marked on the element before it is lifted; the dates are written on by hand
+    const tg = panelTag(M);
+    const tagHtml = '<div class="ptag" aria-label="Panel tag"><div class="ptag-mark">' + esc(tg.mark) + '<small>' + esc(tg.size) + '</small></div><div class="ptag-mass">' + esc(tg.massText) + '</div>' +
+      '<div class="ptag-rows"><span>f\'c ' + esc(String(tg.fc)) + ' · lift at ' + esc(String(tg.fcLift)) + ' MPa</span><span>' + esc(tg.castFace) + ' down · CoG ' + esc(tg.cog) + '</span><span>' + esc(tg.lifterText) + '</span><span>Cast ____ / ____ / ________</span><span>Lift not before ____ / ____ / ________</span></div></div>';
+    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title"><b>Panel ' + esc(M.name) + (M.cfg.example ? " · example" : "") + '</b></div><dl class="kv">' + rows + "</dl>" + tagHtml +
+      '<p class="note">Shown as cast, lying on its bed: Plan looks down on the ' + P.topFace + " face. Inserts are checked against the supplier catalogue, never designed. The 2D placing sheet at the Inserts step or the finished panel is the panel elevation: insert symbols and table, CoG, notes and approval block. Edge U-bars between the faces are not modelled yet. Click any bar, mesh sheet, insert or tag for its details.</p>";
     insp.querySelectorAll("[data-ins]").forEach(b => { b.onclick = () => { const q = (M.inserts || []).find(x => x.id === b.dataset.ins); if (q) selectInsert(q); }; });
   }
   function showBar(b) {
@@ -3293,6 +3467,7 @@ html.print #sheet { background: #fff; }
     const selRunId = state.selRun ? state.selRun.id : state.sel && state.sel.run ? state.sel.run.id : null;
     // feature notes (paper text with a paper halo so they read over the bars)
     sheet.notes.forEach(n => { c.fillStyle = halo(0.85); R(n.box); c.fill(); ptxt(n.text, n.x, n.y, n.h, CONC, 500); });
+    if (sheet.panel) drawPanelSheet(c, R, line, ptxt);   // panel elevation: insert symbols, CoG, notes, approval, legend, table (#33d)
     // distribution lines: the spread of the run's bar lines, a dot on the first and last bar
     sheet.distLines.forEach(d => {
       const on = d.run === selRunId, col = on ? VLBY[sheet.layer].css : INK;
@@ -3344,6 +3519,62 @@ html.print #sheet { background: #fff; }
       c.font = "400 11px " + MONO; c.fillStyle = CONC;
       g.lines.forEach((t, i) => { const col = Math.floor(i / g.rows), row = i % g.rows; c.fillText(t, 14 + col * g.colW, y0 + 24 + row * 15, g.colW - 14); });
     }
+  }
+  // ---- panel elevation sheet (#33d): the headless primitives of sheet.panel / sheet.inserts / sheet.cog drawn on paper ----
+  const BAD_INK = "#b3261e";
+  // a symbol glyph at a plan point: lifter = circle, brace = square, ferrule = circled cross, cog = quartered circle
+  function glyph(c, sym, x, y, r, col, fill) {
+    const X = sx(x), Y = sy(y), rp = Math.max(3, r * sv.s);
+    c.strokeStyle = col; c.fillStyle = fill; c.lineWidth = 1.6;
+    if (sym === "brace") { c.beginPath(); c.rect(X - rp, Y - rp, 2 * rp, 2 * rp); c.fill(); c.stroke(); return; }
+    c.beginPath(); c.arc(X, Y, rp, 0, Math.PI * 2); c.fill(); c.stroke();
+    if (sym === "lifter") { c.fillStyle = col; c.beginPath(); c.arc(X, Y, Math.max(1.5, rp * 0.18), 0, Math.PI * 2); c.fill(); }
+    if (sym === "ferrule") { const d = rp * Math.SQRT1_2; c.beginPath(); c.moveTo(X - d, Y - d); c.lineTo(X + d, Y + d); c.moveTo(X - d, Y + d); c.lineTo(X + d, Y - d); c.stroke(); }
+    if (sym === "cog") {   // the quartered circle, two quadrants filled
+      c.lineWidth = 1.2; c.beginPath(); c.moveTo(X - rp * 1.6, Y); c.lineTo(X + rp * 1.6, Y); c.moveTo(X, Y - rp * 1.6); c.lineTo(X, Y + rp * 1.6); c.stroke();
+      c.fillStyle = col; c.beginPath(); c.moveTo(X, Y); c.arc(X, Y, rp, -Math.PI / 2, 0); c.closePath(); c.fill(); c.beginPath(); c.moveTo(X, Y); c.arc(X, Y, rp, Math.PI / 2, Math.PI); c.closePath(); c.fill();
+    }
+  }
+  function drawPanelSheet(c, R, line, ptxt) {
+    const P = sheet.panel, selIns = state.sel && state.sel.checks ? state.sel.id : null;
+    // left-aligned paper text (the blocks and the table); too small to read → nothing
+    const ltxt = (t) => { const px = t.h * sv.s; if (px < 4.5) return; c.font = (t.weight || 500) + " " + px.toFixed(1) + "px " + MONO; c.fillStyle = t.bad ? BAD_INK : t.muted ? CONC : INK; c.textAlign = t.align === "left" ? "left" : "center"; c.textBaseline = "middle"; c.fillText(t.text, sx(t.x), sy(t.y), t.maxW ? t.maxW * sv.s : undefined); };
+    // opening setout chains from the bottom-left corner
+    const dimC = d => {
+      const vert = d.measure === "y", x0 = vert ? d.at : d.a, x1 = vert ? d.at : d.b, y0 = vert ? d.a : d.at, y1 = vert ? d.b : d.at;
+      c.strokeStyle = GRIDC; c.lineWidth = 1; line(x0, y0, x1, y1);
+      const t = 4; [[x0, y0], [x1, y1]].forEach(p => { c.beginPath(); c.moveTo(sx(p[0]) - t, sy(p[1]) + t); c.lineTo(sx(p[0]) + t, sy(p[1]) - t); c.stroke(); });
+      c.fillStyle = GRIDC; c.font = "400 11px " + MONO; c.textAlign = "center";
+      if (vert) { c.save(); c.translate(sx(d.at) - 4, sy((d.a + d.b) / 2)); c.rotate(-Math.PI / 2); c.textBaseline = "bottom"; c.fillText(d.text, 0, 0); c.restore(); }
+      else { c.textBaseline = "bottom"; c.fillText(d.text, sx((d.a + d.b) / 2), sy(d.at) - 3); }
+    };
+    (sheet.openDims || []).forEach(dimC);
+    // blocks: boxes, rules, text, legend glyphs
+    c.strokeStyle = CONC; c.lineWidth = 1;
+    P.rects.forEach(r => { c.fillStyle = halo(0.6); R(r); c.fill(); c.stroke(); });
+    P.lines.forEach(l => line(l.x0, l.y0, l.x1, l.y1));
+    P.glyphs.forEach(g => glyph(c, g.sym, g.x, g.y, g.r, INK, paper()));
+    // the table: the selected insert's row in the layer colour
+    if (P.table) P.table.rows.forEach(rw => { if (rw.ins === selIns) { c.fillStyle = "rgba(180,140,240,0.22)"; R({ x0: P.table.x0, x1: P.table.x1, y0: rw.y0, y1: rw.y1 }); c.fill(); } });
+    P.texts.forEach(ltxt);
+    // the centre of gravity
+    if (sheet.cog) { const g = sheet.cog; glyph(c, "cog", g.x, g.y, g.r, INK, paper()); c.fillStyle = halo(0.9); R(boxAt(g.tx, g.ty, txtW(g.text, g.h), g.h * 1.4)); c.fill(); ptxt(g.text, g.tx, g.ty, g.h, INK, 600); }
+    // insert symbols with their WLL and position; a flagged insert in red, the inserts already in faint, the selected one in the layer colour
+    (sheet.inserts || []).forEach(q => {
+      const on = q.id === selIns, col = q.ghost ? GHOSTC : on ? VLBY.IN.css : q.flagged ? BAD_INK : INK;
+      glyph(c, q.sym, q.x, q.y, q.r, col, q.ghost ? paper() : halo(0.9));
+      if (q.ghost) return;
+      c.fillStyle = halo(0.85); R(boxAt(q.lx, q.ly, q.lw, q.lh)); c.fill();
+      ptxt(q.line1, q.lx, q.ly + q.h * 0.68, q.h, col, 600);
+      ptxt(q.coord, q.lx, q.ly - q.h * 0.68, q.h, on ? col : CONC, 500);
+    });
+  }
+  // the insert symbol under the pointer on a panel sheet (44 px target in site mode)
+  function sheetInsertAt(px, py) {
+    if (!sheet || !sheet.inserts) return null;
+    const mx = (px - sv.tx) / sv.s, my = (sv.ty - py) / sv.s, min = (state.site ? 22 : 8) / sv.s;
+    const q = sheet.inserts.find(q => !q.ghost && (Math.hypot(mx - q.x, my - q.y) <= q.r + min || (mx >= q.box.x0 && mx <= q.box.x1 && my >= q.box.y0 && my <= q.box.y1)));
+    return q ? (M.inserts || []).find(i => i.id === q.id) || null : null;
   }
   // the strip's size on a w × h stage: callouts in one or two columns, at most a third of the stage high
   let drawnMarks = 0;   // mark labels drawn on the last frame (test handle)
@@ -3415,6 +3646,8 @@ html.print #sheet { background: #fff; }
       if (sdown.moved) { sv.tx = sdown.tx + (e.clientX - sdown.x); sv.ty = sdown.ty + (e.clientY - sdown.y); drawSheet(); }
       return;
     }
+    const qi = sheetInsertAt(e.clientX - rect.left, e.clientY - rect.top);
+    if (qi) { tip.textContent = qi.id + " · " + qi.short + (qi.kind === "lifter" && qi.wll.wll != null ? " · WLL " + qi.wll.wll + " t" : "") + (qi.flagged ? " · FAILS A CHECK" : ""); tip.style.left = (e.clientX - rect.left) + "px"; tip.style.top = (e.clientY - rect.top) + "px"; tip.hidden = false; return; }
     const tr = sheetTagAt(e.clientX - rect.left, e.clientY - rect.top);
     if (tr) { tip.textContent = tr.callout + " · " + tr.bars.length + " bars"; tip.style.left = (e.clientX - rect.left) + "px"; tip.style.top = (e.clientY - rect.top) + "px"; tip.hidden = false; return; }
     const b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
@@ -3428,7 +3661,9 @@ html.print #sheet { background: #fff; }
     if (!sdown) return;
     const d = sdown; sdown = null; sheetCv.classList.remove("pan");
     if (d.moved) return;
-    const rect = sheetCv.getBoundingClientRect(), tr = sheetTagAt(e.clientX - rect.left, e.clientY - rect.top);
+    const rect = sheetCv.getBoundingClientRect(), qi = sheetInsertAt(e.clientX - rect.left, e.clientY - rect.top);
+    if (qi) { selectInsert(qi); return; }
+    const tr = sheetTagAt(e.clientX - rect.left, e.clientY - rect.top);
     if (tr) { selectRun(tr); return; }
     const b = sheetPick(e.clientX - rect.left, e.clientY - rect.top);
     if (b) selectBar(b); else { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); }
@@ -3749,7 +3984,8 @@ html.print #sheet { background: #fff; }
   };
   // ---- precast panel inputs (#33): size, the face on the bed, each face as bars or mesh, openings ----
   let mode = "floor";
-  const PN = { name: $("pnName"), cast: $("pnCast"), W: $("pnW"), H: $("pnH"), T: $("pnT"), cover: $("pnCover"), fc: $("pnFc"), fcLift: $("pnFcLift"), lap: $("pnLap"), NF: $("pnNF"), FF: $("pnFF"), sheets: $("pnSheets"), perim: $("pnPerim"), trims: $("pnTrims"), rows: $("pnOpenRows"), insRows: $("pnInsRows") };
+  const PN = { name: $("pnName"), cast: $("pnCast"), W: $("pnW"), H: $("pnH"), T: $("pnT"), cover: $("pnCover"), fc: $("pnFc"), fcLift: $("pnFcLift"), lap: $("pnLap"), NF: $("pnNF"), FF: $("pnFF"), sheets: $("pnSheets"), perim: $("pnPerim"), trims: $("pnTrims"), rows: $("pnOpenRows"), insRows: $("pnInsRows"),
+    drawn: $("pnDrawn"), checked: $("pnChecked"), approved: $("pnApproved"), rev: $("pnRev") };
   $("pnInsCat").textContent = "Catalogue: " + INSERT_CAT.edition + " (" + INSERT_CAT.date + ") — Reid 3Dx and JAWS edge lifters, Reid face lifter, Ancon QwikFoot / QwikFix inserts, from the suppliers' published compliance documents. WLL is printed, never designed to.";
   const FACE_DEFAULT = { bar: "N12-200 H\nN12-200 V", mesh: "SL82 H" };
   const faceKind = { NF: "bar", FF: "mesh" }, faceMem = { NF: {}, FF: {} };   // each face remembers what was typed for bars and for mesh
@@ -3767,13 +4003,15 @@ html.print #sheet { background: #fff; }
     PN.sheets.value = cfg.meshSheets === "stock" ? "stock" : "made"; PN.perim.checked = !!cfg.features.perimeter; PN.trims.checked = !!cfg.features.trims;
     PN.rows.innerHTML = ""; (cfg.openings || []).forEach(o => PN.rows.appendChild(openRow(o)));
     PN.insRows.innerHTML = ""; (cfg.inserts || []).forEach(o => PN.insRows.appendChild(geoRow("ins", o)));
+    const A = cfg.approval || {}; PN.drawn.value = A.drawn || ""; PN.checked.value = A.checked || ""; PN.approved.value = A.approved || ""; PN.rev.value = A.rev || "";
   }
   function readPanel() {
     return { kind: "panel", name: PN.name.value, castFace: PN.cast.value, W: numOf(PN.W), H: numOf(PN.H), T: numOf(PN.T), cover: numOf(PN.cover), fc: numOf(PN.fc), fcLift: PN.fcLift.value.trim() === "" ? "" : numOf(PN.fcLift), lap: numOf(PN.lap),
       meshSheets: PN.sheets.value, features: { perimeter: PN.perim.checked, trims: PN.trims.checked },
-      faces: { NF: { kind: faceKind.NF, callouts: PN.NF.value }, FF: { kind: faceKind.FF, callouts: PN.FF.value } }, openings: readRows(PN.rows), inserts: readRows(PN.insRows) };
+      faces: { NF: { kind: faceKind.NF, callouts: PN.NF.value }, FF: { kind: faceKind.FF, callouts: PN.FF.value } }, openings: readRows(PN.rows), inserts: readRows(PN.insRows),
+      approval: { drawn: PN.drawn.value, checked: PN.checked.value, approved: PN.approved.value, rev: PN.rev.value } };
   }
-  [PN.name, PN.W, PN.H, PN.T, PN.cover, PN.fc, PN.fcLift, PN.lap, PN.NF, PN.FF].forEach(el => el.addEventListener("input", scheduleRebuild));
+  [PN.name, PN.W, PN.H, PN.T, PN.cover, PN.fc, PN.fcLift, PN.lap, PN.NF, PN.FF, PN.drawn, PN.checked, PN.approved, PN.rev].forEach(el => el.addEventListener("input", scheduleRebuild));
   [PN.cast, PN.sheets, PN.perim, PN.trims].forEach(el => el.addEventListener("change", scheduleRebuild));
   $("btnAddPnOpen").onclick = () => addGeoRow("open", PN.rows, 600, 400, 300);
   // a new lifter goes in the top edge at the first free position from the left that keeps the catalogue edge distance and

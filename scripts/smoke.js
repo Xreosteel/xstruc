@@ -388,7 +388,25 @@ const { chromium } = require("playwright");
   pn.sheet = await page.evaluate(() => { const S = window.xstruc.sheet(); return { title: S.title.join(" / "), tags: S.tags.map(t => t.text), sheets: S.strip.sheets, wires: S.bars.length }; });
   await page.screenshot({ path: path.join(outDir, "smoke-18-panel-sheet.png") });
   await page.click('#steps .step[data-step="5"]'); await page.waitForTimeout(600);
-  pn.sheet4 = await page.evaluate(() => { const S = window.xstruc.sheet(); return { tags: S.tags.map(t => t.text).sort(), dims: S.dims.length, overlap: S.tags.some(t => t.overlap) }; });
+  pn.sheet4 = await page.evaluate(() => { const S = window.xstruc.sheet(); return { tags: S.tags.map(t => t.text).sort(), dims: S.dims.length, overlap: S.tags.some(t => t.overlap), symbolsGhost: S.inserts.map(q => q.ghost), table: !!S.panel.table, cog: !!S.cog }; });
+  // the panel elevation (#33d): the Inserts step's sheet carries the insert symbols, the CoG, the notes / approval /
+  // legend blocks and the insert table; tapping a lifter symbol opens its inspector; the finished panel has it all too
+  await page.click('#steps .step[data-step="4"]'); await page.waitForTimeout(600);
+  pn.elev = await page.evaluate(() => { const S = window.xstruc.sheet(); return { title: S.title[0], symbols: S.inserts.map(q => q.id + ":" + q.sym + (q.ghost ? "~" : "")).join(), cog: S.cog && S.cog.text, rows: S.panel.table.rows.length, tableTitle: S.panel.table.title, notes: S.panel.notes.length, legend: S.panel.legend.length, rev: S.panel.approval.rev, bounds: S.bounds, texts: S.panel.texts.length }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-21-panel-elevation.png") });
+  { const r = await page.evaluate(() => { const S = window.xstruc.sheet(), q = S.inserts.find(i => i.id === "L1"), c = document.getElementById("sheet").getBoundingClientRect(), p = window.xstruc.sheetXY(q.x, q.y); return [c.left + p[0], c.top + p[1]]; });
+    await page.mouse.click(r[0], r[1]); await page.waitForTimeout(300); }
+  pn.elevTap = await page.evaluate(() => ({ insp: document.getElementById("inspector").textContent.replace(/\s+/g, " ").slice(0, 80), sel: window.xstruc.state.sel && window.xstruc.state.sel.id }));
+  // the approval fields print on the sheet
+  await page.fill("#pnApproved", "I. Engineer"); await page.fill("#pnRev", "B"); await page.waitForTimeout(900);
+  pn.elevAppr = await page.evaluate(() => { const S = window.xstruc.sheet(); return { appr: S.panel.approval, hasName: S.panel.texts.some(t => t.text === "I. Engineer"), rev: S.panel.texts.some(t => t.text === "APPROVAL · REV B"), bars: document.getElementById("stBars").textContent }; });
+  await page.fill("#pnApproved", ""); await page.fill("#pnRev", ""); await page.waitForTimeout(900);
+  await page.click("#all"); await page.waitForTimeout(600);
+  pn.elevAll = await page.evaluate(() => { const S = window.xstruc.sheet(); return { title: S.title[0], symbols: S.inserts.length, rows: S.panel.table.rows.length }; });
+  // it prints on A3 at a standard scale
+  pn.elevPrint = await page.evaluate(() => { window.xstruc.printPrep(true); const p = window.xstruc.printing(), S = window.xstruc.sheet(), s = window.xstruc.sheetScale(), st = document.querySelector(".stage"); const r = { den: p.den, fits: p.fits, w: (S.bounds.x1 - S.bounds.x0) * s, h: (S.bounds.y1 - S.bounds.y0) * s, stageW: st.clientWidth, stageH: st.clientHeight }; window.xstruc.printPrep(false); return r; });
+  await page.click('#steps .step[data-step="4"]'); await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(outDir, "smoke-21-panel-elevation-tag.png"), clip: { x: 1040, y: 60, width: 400, height: 840 } });
   await page.click(".side [data-cam=iso]"); await page.click("#all");
   // inserts (#33c): the example's lifters and braces, the Inserts step, an insert picked, a brace added, a lifter moved
   // too close to the corner (flagged amber, warning, scene kept), a bad row (error), and back to the example
@@ -419,6 +437,7 @@ const { chromium } = require("playwright");
   await page.click("#modeFloor"); await page.waitForTimeout(900);
   pn.floor = await stats();
   console.log("panel:", JSON.stringify(pn).slice(0, 1500));
+  console.log("panel elevation:", JSON.stringify({ elev: pn.elev, tap: pn.elevTap, appr: pn.elevAppr, all: pn.elevAll, print: pn.elevPrint }));
 
   await browser.close();
   const problems = [];
@@ -439,7 +458,13 @@ const { chromium } = require("playwright");
   if (pn.back.text !== "N12-200 H\nN12-200 V" || pn.back.errs.length || pn.back.bars !== "85") problems.push("back to bars did not restore the bar lines: " + JSON.stringify(pn.back));
   if (pn.flip.order !== "NF1,NF2,CH,IN,FF2,FF1" || pn.flip.first !== "Near face outer bars") problems.push("NF on the bed did not flip the order: " + JSON.stringify(pn.flip));
   if (!/FAR FACE · MESH SL82 H/.test(pn.sheet.title) || pn.sheet.sheets !== 1 || pn.sheet.tags.join() !== "SL82 H · FF" || pn.sheet.wires < 40) problems.push("panel mesh sheet wrong: " + JSON.stringify(pn.sheet));
-  if (pn.sheet4.tags.join() !== "30 N12-200 V · NF,N16 PERIMETER · NF,OPENING BARS · NF" || pn.sheet4.dims !== 2 || pn.sheet4.overlap) problems.push("panel near-face sheet wrong: " + JSON.stringify(pn.sheet4));
+  if (pn.sheet4.tags.join() !== "30 N12-200 V · NF,N16 PERIMETER · NF,OPENING BARS · NF" || pn.sheet4.dims !== 2 || pn.sheet4.overlap || pn.sheet4.symbolsGhost.join() !== "true,true,true,true" || pn.sheet4.table || !pn.sheet4.cog) problems.push("panel near-face sheet wrong: " + JSON.stringify(pn.sheet4));
+  // the panel elevation (#33d)
+  if (!/^P1 · PANEL SHEET · INSERTS/.test(pn.elev.title) || pn.elev.symbols !== "L1:lifter,L2:lifter,B1:brace,B2:brace" || pn.elev.cog !== "CoG 2,907 / 1,479" || pn.elev.rows !== 4 || !/^INSERTS · 4 CAST-IN INSERTS · WLL AT f'c LIFT 25 MPa/.test(pn.elev.tableTitle) || pn.elev.notes !== 11 || pn.elev.legend !== 4 || pn.elev.rev !== "" || pn.elev.texts < 60) problems.push("panel elevation sheet wrong: " + JSON.stringify(pn.elev));
+  if (pn.elevTap.sel !== "L1" || !/^InspectorL1Reid 3Dx 10 t/.test(pn.elevTap.insp)) problems.push("tapping the L1 symbol did not open its inspector: " + JSON.stringify(pn.elevTap));
+  if (pn.elevAppr.appr.approved !== "I. Engineer" || pn.elevAppr.appr.rev !== "B" || !pn.elevAppr.hasName || !pn.elevAppr.rev || pn.elevAppr.bars !== "85") problems.push("approval fields did not reach the sheet: " + JSON.stringify(pn.elevAppr));
+  if (!/^P1 · PANEL SHEET · ALL LAYERS/.test(pn.elevAll.title) || pn.elevAll.symbols !== 4 || pn.elevAll.rows !== 4) problems.push("finished panel sheet wrong: " + JSON.stringify(pn.elevAll));
+  if (!pn.elevPrint.fits || ![50, 75, 100].includes(pn.elevPrint.den) || pn.elevPrint.w > pn.elevPrint.stageW || pn.elevPrint.h > pn.elevPrint.stageH - 50) problems.push("panel elevation does not print on A3 at a standard scale: " + JSON.stringify(pn.elevPrint));
   if (pn.site.chips.join("|") !== "Formwork|Far face mesh|Far face edge bars|Bar chairs|Inserts|Near face inner bars|Near face outer bars|Finished panel" || pn.site.overflow) problems.push("panel site mode: " + JSON.stringify(pn.site));
   if (pn.floor.bars !== s0.bars || pn.floor.steps !== 8 || JSON.stringify(pn.floor.errs) !== JSON.stringify(s0.errs)) problems.push("back to the floor did not restore the example: " + JSON.stringify(pn.floor));
   siteRuns.forEach(r => {

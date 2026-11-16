@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Precast panel checks (backlog #33a/#33b/#33c): the panel builder between the MODEL markers, run headlessly.
+// Precast panel checks (backlog #33a/#33b/#33c/#33d): the panel builder between the MODEL markers, run headlessly.
 // A panel lies on its casting bed (x along the width, y up the height, z from the bed); each face (NF near, FF far)
 // is bars or one mesh; perimeter and opening bars sit just inside each face; cast-in inserts are checked against the
-// catalogue and bring their component bars. Exit 0 = pass.
+// catalogue and bring their component bars; the panel sheet carries the insert symbols and table, the CoG, the notes,
+// approval and legend blocks and the panel tag. Exit 0 = pass.
 "use strict";
 const { loadModel } = require("./model-lib");
 const L = loadModel();
-const { buildModel, buildPanel, PANEL_CFG, MESH, meshStock, wireKgm, buildSheet, parseCallout, DEFAULT_CFG, INSERT_CAT, insertWll } = L;
+const { buildModel, buildPanel, PANEL_CFG, MESH, meshStock, wireKgm, buildSheet, parseCallout, DEFAULT_CFG, INSERT_CAT, insertWll, panelTag, PANEL_TABLE_COLS } = L;
 const problems = [];
 const ok = (cond, msg) => { if (!cond) problems.push(msg); };
 const cfgWith = o => Object.assign(JSON.parse(JSON.stringify(PANEL_CFG)), o);
@@ -236,8 +237,8 @@ const Mface = buildModel(cfgWith({ openings: [], inserts: [{ id: "F1", type: "RF
 ok(!Mface.errors.length && insOf(Mface, "F1").bars.length === 2 && insOf(Mface, "F1").bars.every(b => b.size === 12 && b.len === 300 && b.pts[0][2] === 100) && Math.abs(insOf(Mface, "F1").bars[0].pts[0][1] - insOf(Mface, "F1").bars[1].pts[0][1]) === 60, "face lifter floating bars " + JSON.stringify(insOf(Mface, "F1").bars.map(b => b.pts)));
 ok(Mface.insertFlags.map(f => f.rule).sort().join() === "brace-count,brace-height" && !Mface.inserts.some(q => q.fails.length), "one brace, high up: advisories only " + JSON.stringify(Mface.insertFlags));
 checkSteel(Mface, "face lifters");
-const Msym = buildModel(cfgWith({ openings: [], inserts: [{ id: "L1", type: "3DX10", edge: "top", x: 1000 }, { id: "L2", type: "3DX10", edge: "top", x: 4000 }] }));
-ok(Msym.insertFlags.map(f => f.rule).join() === "lifter-symmetry" && /centre \(2,500 from the left edge\) is 500 off the centre of gravity \(3,000\)/.test(Msym.insertFlags[0].text), "lifters off the CoG: " + JSON.stringify(Msym.insertFlags));
+const Msy = buildModel(cfgWith({ openings: [], inserts: [{ id: "L1", type: "3DX10", edge: "top", x: 1000 }, { id: "L2", type: "3DX10", edge: "top", x: 4000 }] }));
+ok(Msy.insertFlags.map(f => f.rule).join() === "lifter-symmetry" && /centre \(2,500 from the left edge\) is 500 off the centre of gravity \(3,000\)/.test(Msy.insertFlags[0].text), "lifters off the CoG: " + JSON.stringify(Msy.insertFlags));
 ok(!buildModel(cfgWith({ openings: [], inserts: [{ id: "L1", type: "3DX10", edge: "top", x: 1000 }, { id: "L2", type: "3DX10", edge: "top", x: 5000 }] })).insertFlags.length, "symmetric lifters raise nothing");
 ok(buildModel(cfgWith({ inserts: [{ id: "L1", type: "3DX10", edge: "top", x: 2900 }] })).insertFlags.map(f => f.rule).join() === "lifter-count", "one lifter is advised against");
 // a lifter in a side edge: y along it; a lifter whose mesh assumption is not met is advised
@@ -260,10 +261,78 @@ const wantI = [/^Insert 2 \(X1\): unknown insert type "NOPE"/, /^Insert 3 \(X2\)
 ok(Mie.errors.length === wantI.length && wantI.every((re, i) => re.test(Mie.errors[i] || "")) && Mie.inserts.length === 1, "insert row errors:\n  " + Mie.errors.join("\n  "));
 // the inserts step on its sheet: the component bars drawn, one tag per insert
 const S4 = buildSheet(M, ["IN"], ["FF1", "FF2", "CH"]);
-ok(S4.bars.filter(b => !b.ghost).length === 2 && S4.tags.length === 2 && S4.tags.map(t => t.text).sort().join() === "L1 · 3Dx 10 t,L2 · 3Dx 10 t" && /INSERTS/.test(S4.title[0]), "inserts sheet (insert symbols come with #33d) " + JSON.stringify([S4.bars.length, S4.tags.map(t => t.text), S4.title]));
+ok(S4.bars.filter(b => !b.ghost).length === 2 && S4.tags.length === 2 && S4.tags.map(t => t.text).sort().join() === "L1 · 3Dx 10 t,L2 · 3Dx 10 t" && /PANEL SHEET · INSERTS/.test(S4.title[0]), "inserts sheet " + JSON.stringify([S4.bars.length, S4.tags.map(t => t.text), S4.title]));
+
 // no inserts at all: the step stays, empty
 const Mno = buildModel(cfgWith({ inserts: [] }));
 ok(!Mno.errors.length && Mno.ORDER.indexOf("IN") === 3 && Mno.steps[4].sub === "none" && Mno.LBY.IN.name === "Inserts · none" && Mno.bars.length === 83, "no inserts: " + JSON.stringify([Mno.steps[4], Mno.LBY.IN.name, Mno.bars.length]));
+
+// ---- the panel elevation sheet (#33d, Findings 12.6): symbols, CoG, notes, approval, legend, insert table, tag ----
+const hit = (p, q, m) => p.x0 < q.x1 + m && q.x0 < p.x1 + m && p.y0 < q.y1 + m && q.y0 < p.y1 + m;
+const txtW = (t, h) => t.length * 0.6 * h + 120;   // the sheet's monospace width rule (SHEET_TXT)
+// every insert is a symbol on the Inserts sheet, in ink, at the insert, with its WLL / kind and x / y from the bottom-left corner
+const sy4 = S4.inserts.slice().sort((a, b) => a.id.localeCompare(b.id));
+ok(sy4.map(q => [q.id, q.sym, q.x, q.y, q.label, q.coord, q.ghost, q.flagged].join("|")).join(";") === "B1|brace|1000|1600|BRACE|x 1,000 · y 1,600|false|false;B2|brace|5600|1600|BRACE|x 5,600 · y 1,600|false|false;L1|lifter|450|3000|WLL 10 t|x 450 · y 3,000|false|false;L2|lifter|5364|3000|WLL 10 t|x 5,364 · y 3,000|false|false",
+  "insert symbols on the Inserts sheet: " + JSON.stringify(sy4.map(q => [q.id, q.sym, q.x, q.y, q.label, q.coord, q.ghost, q.flagged])));
+ok(sy4.every(q => q.r > 0 && q.box && q.box.x0 < q.x && q.box.x1 > q.x && q.line1 === q.id + " · " + q.label) && sy4.filter(q => q.edge === "top").every(q => q.ly > q.y + q.r) && sy4.filter(q => q.face).every(q => q.ly < q.y - q.r), "symbol boxes and label sides (edge anchors labelled outside the panel, face inserts below)");
+const symBoxes = [].concat(...sy4.map(q => q.boxes));
+ok(!symBoxes.some((b, i) => symBoxes.some((o, j) => j > i && hit(b, o, 0))) && !S4.tags.some(t => symBoxes.some(b => hit(t.box, b, 0))) && !S4.notes.some(n => symBoxes.some(b => hit(n.box, b, 0))) && !S4.tags.some(t => t.overlap), "symbols, run tags and notes keep clear of each other");
+// the CoG cross at the computed centre of gravity, its text clear of the window, the symbols and the notes
+ok(S4.cog && S4.cog.x === M.panel.cog.x && S4.cog.y === M.panel.cog.y && S4.cog.text === "CoG 2,907 / 1,479" && S4.cog.r > 0, "CoG cross " + JSON.stringify(S4.cog));
+{ const tb = { x0: S4.cog.tx - txtW(S4.cog.text, S4.cog.h) / 2, x1: S4.cog.tx + txtW(S4.cog.text, S4.cog.h) / 2, y0: S4.cog.ty - S4.cog.h * 0.7, y1: S4.cog.ty + S4.cog.h * 0.7 };
+  ok(!S4.concrete.holes.some(h => hit(tb, h, 0)) && !symBoxes.some(b => hit(tb, b, 0)) && !S4.notes.some(n => hit(tb, n.box, 0)) && tb.x0 > 0 && tb.x1 < M.L && tb.y0 > 0 && tb.y1 < M.W, "CoG text finds room inside the panel clear of the window and the symbols: " + JSON.stringify(tb)); }
+// the notes block: size, mass, CoG, f'c in service and at lift, cover, cast face, steel, the inserts by type, date fields
+const PNS = S4.panel;
+ok(PNS && PNS.notes.join("\n") === ["6,000 × 3,000 × 200 THK · 16.32 m² NET", "MASS 7,834 kg AT 2,400 kg/m³ · 3.26 m³", "CoG 2,907 FROM LEFT · 1,479 FROM BOTTOM", "f'c 40 MPa IN SERVICE · 25 MPa AT LIFT", "COVER 30 EACH FACE", "FF ON THE BED (CAST FACE) · NF UP",
+  "STEEL 282 kg · 85 BARS, 12 MARKS + 1 MESH SHEET", "L1, L2 REID 3DX 10 T · WLL 10 t AT 25 MPa", "B1, B2 ANCON QWIKFOOT 96 LONG (M20)", "CAST DATE  ____ / ____ / ________", "LIFT NOT BEFORE  ____ / ____ / ________"].join("\n"), "panel notes block:\n  " + (PNS ? PNS.notes.join("\n  ") : "none"));
+ok(Math.round(M.panel.mass) === 7834 && near(M.panel.mass, 16.32 * 0.2 * 2400, 20), "the notes' mass is the model's mass at 2,400 kg/m³");
+// approval block blank on the example (name and date lines to be filled by hand), the fields from cfg.approval when given
+ok(JSON.stringify(PNS.approval) === JSON.stringify({ drawn: "", checked: "", approved: "", rev: "" }) && PNS.texts.some(t => t.text === "APPROVAL · REV __") && ["DRAWN", "CHECKED", "ENGINEER APPROVED", "NAME", "DATE"].every(w => PNS.texts.some(t => t.text === w)), "blank approval block on the example");
+const Mapp = buildModel(cfgWith({ approval: { drawn: "J. Fixer", checked: " A. Scheduler ", approved: "I. Engineer RPEQ 1234", rev: "B" } }));
+const Sapp = buildSheet(Mapp, ["IN"], ["FF1", "FF2", "CH"]);
+ok(Sapp.panel.approval.drawn === "J. Fixer" && Sapp.panel.approval.checked === "A. Scheduler" && Sapp.panel.approval.approved === "I. Engineer RPEQ 1234" && Sapp.panel.approval.rev === "B" && Sapp.panel.texts.some(t => t.text === "APPROVAL · REV B") && Sapp.panel.texts.some(t => t.text === "I. Engineer RPEQ 1234"), "approval fields printed from the inputs: " + JSON.stringify(Sapp.panel.approval));
+// legend: the four symbols, each drawn once as a glyph beside its words
+ok(PNS.legend.map(l => l.sym).join() === "lifter,brace,ferrule,cog" && PNS.glyphs.map(g => g.sym).join() === "lifter,brace,ferrule,cog" && PNS.texts.some(t => /AS 3850.2 SYMBOLS NOT YET VERIFIED/.test(t.text)), "symbol legend " + JSON.stringify(PNS.legend));
+// the insert table: one row per insert with the Findings 12.6 columns, the text fitting its column at the table's text size
+const tbl = PNS.table;
+ok(tbl && tbl.cols.map(c => c.key).join() === PANEL_TABLE_COLS.map(c => c[0]).join() && tbl.cols.map(c => c.head).join("|") === "ID|KIND|TYPE|WLL AT f'c LIFT|X|Y|WHERE|COMPONENT BARS|CHECKS", "insert table columns " + JSON.stringify(tbl && tbl.cols.map(c => c.head)));
+ok(tbl && tbl.rows.map(r => Object.values(r.cells).join("|")).join(";") === "L1|LIFTER|REID 3DX 10 T|10 t AT 25 MPa|450|3,000|TOP EDGE|1 N16 TB (P1-01)|ALL PASS;L2|LIFTER|REID 3DX 10 T|10 t AT 25 MPa|5,364|3,000|TOP EDGE|1 N16 TB (P1-01)|ALL PASS;B1|BRACE INSERT|ANCON QWIKFOOT 96 LONG (M20)|27.4 kN AT 20 MPa|1,000|1,600|ON NF|NONE|ALL PASS;B2|BRACE INSERT|ANCON QWIKFOOT 96 LONG (M20)|27.4 kN AT 20 MPa|5,600|1,600|ON NF|NONE|ALL PASS",
+  "insert table rows:\n  " + (tbl ? tbl.rows.map(r => Object.values(r.cells).join(" | ")).join("\n  ") : "none"));
+ok(tbl && /^INSERTS · 4 CAST-IN INSERTS · WLL AT f'c LIFT 25 MPa · FINDINGS 12.2 SEED \(2026-11-16\)$/.test(tbl.title) && tbl.rows.every(r => r.y1 > r.y0 && r.y1 <= tbl.y1 && r.y0 >= tbl.y0) && tbl.y1 < -700, "insert table title and row geometry under the panel: " + JSON.stringify([tbl && tbl.title, tbl && [tbl.x0, tbl.x1, tbl.y0, tbl.y1]]));
+ok(tbl && tbl.rows.every(r => tbl.cols.every(c => txtW(r.cells[c.key], 130) <= c.w)) && tbl.cols.every(c => txtW(c.head, 130) <= c.w), "every table cell fits its column at 130 mm text: " + JSON.stringify(tbl && tbl.rows.map(r => tbl.cols.filter(c => txtW(r.cells[c.key], 130) > c.w).map(c => c.key))));
+// the blocks sit outside the panel and the sheet bounds hold them all
+const inPanel = r => r.x1 > 0 && r.x0 < M.L && r.y1 > 0 && r.y0 < M.W;
+ok(!PNS.rects.some(inPanel) && PNS.column.x0 >= M.L + 500 && PNS.column.y1 === M.W && PNS.legendBox.y1 < -700 && tbl.y1 < Math.min(PNS.column.y0, PNS.legendBox.y0), "blocks outside the panel: column right, legend and table below " + JSON.stringify([PNS.column, PNS.legendBox, [tbl.x0, tbl.x1, tbl.y0, tbl.y1]]));
+ok(PNS.rects.concat([tbl, PNS.column, PNS.legendBox]).every(r => r.x0 >= S4.bounds.x0 && r.x1 <= S4.bounds.x1 && r.y0 >= S4.bounds.y0 && r.y1 <= S4.bounds.y1) && PNS.texts.every(t => t.x >= S4.bounds.x0 && t.x <= S4.bounds.x1 && t.y >= S4.bounds.y0 && t.y <= S4.bounds.y1), "sheet bounds hold every block and text");
+// opening setout chains from the bottom-left corner (x to the opening and its width; y likewise)
+ok(S4.openDims.map(d => d.measure + ":" + d.a + "-" + d.b + "=" + d.text).join() === "x:0-3200=3,200,x:3200-4600=1,400,y:0-1100=1,100,y:1100-2300=1,200" && S4.openDims.every(d => d.at < 0 && d.at > -700), "opening setout dims " + JSON.stringify(S4.openDims));
+// a face sheet carries the CoG, the notes and the legend but no insert symbols or table; with the inserts already in they are faint
+const S6 = buildSheet(M, ["FF1"], []);
+ok(S6.inserts.length === 0 && S6.cog && S6.panel && !S6.panel.table && S6.panel.notes.length === PNS.notes.length && S6.panel.legend.length === 4 && S6.bounds.y0 > S4.bounds.y0, "a face sheet: CoG and notes, no symbols or table " + JSON.stringify([S6.inserts.length, !!S6.panel.table, S6.bounds]));
+const S7 = buildSheet(M, ["NF2"], ["FF1", "FF2", "CH", "IN"]);
+ok(S7.inserts.length === 4 && S7.inserts.every(q => q.ghost) && !S7.panel.table, "inserts already in: symbols faint, no table");
+const S8 = buildSheet(M, M.ORDER.slice(), []);
+ok(S8.inserts.length === 4 && S8.inserts.every(q => !q.ghost) && S8.panel.table && S8.panel.table.rows.length === 4 && /PANEL SHEET · ALL LAYERS/.test(S8.title[0]) && /VIEWED FROM NF/.test(S8.notes[0].text), "the finished panel is the full elevation " + JSON.stringify([S8.inserts.length, S8.title, S8.notes[0].text]));
+// a flagged lifter: red symbol, its table row says which check fails; the panel-level advisories head the table
+const Sx = buildSheet(Mx, ["IN"], ["FF1", "FF2", "CH"]);
+ok(Sx.inserts.find(q => q.id === "L1").flagged && Sx.panel.table.rows.find(r => r.ins === "L1").cells.checks === "FAILS EDGE, SPACING" && Sx.panel.table.rows.find(r => r.ins === "B1").cells.checks === "FAILS EDGE, LIFTER LINE" && Sx.panel.table.rows.find(r => r.ins === "B2").cells.checks === "ALL PASS" && / · NOTE: LIFTER COUNT, LIFTER SYMMETRY$/.test(Sx.panel.table.title) && Sx.panel.table.rows.find(r => r.ins === "L1").flagged, "flagged inserts in the table " + JSON.stringify([Sx.panel.table.title, Sx.panel.table.rows.map(r => r.cells.checks)]));
+// no inserts: no symbols, an empty table that says so, the notes say so
+const Sno = buildSheet(Mno, ["IN"], ["FF1", "FF2", "CH"]);
+ok(Sno.inserts.length === 0 && Sno.panel.table && Sno.panel.table.rows.length === 0 && /^INSERTS · NO CAST-IN INSERTS/.test(Sno.panel.table.title) && Sno.panel.notes.indexOf("NO INSERTS") >= 0 && Sno.panel.texts.some(t => t.text === "NONE"), "no inserts on the sheet " + JSON.stringify([Sno.panel.table && Sno.panel.table.title, Sno.panel.notes]));
+// a ferrule and a side-edge lifter: their symbols, labels and table rows
+const Msf = buildModel(cfgWith({ inserts: [{ id: "L1", type: "SJU", edge: "left", y: 1500 }, { id: "F1", type: "QX20", edge: "NF", x: 3000, y: 500 }] }));
+const Ssf = buildSheet(Msf, ["IN"], ["FF1", "FF2", "CH"]);
+ok(!Msf.errors.length && Ssf.inserts.map(q => [q.id, q.sym, q.x, q.y, q.label, q.coord].join("|")).join(";") === "L1|lifter|0|1500|WLL 10 t|x 0 · y 1,500;F1|ferrule|3000|500|FERRULE|x 3,000 · y 500" && Ssf.inserts[0].lx < 0 && Ssf.panel.table.rows.map(r => r.cells.where + "/" + r.cells.bars + "/" + r.cells.wll).join(";") === "LEFT EDGE/1 N16 × 500 + 1 N16 U (P1-01, P1-02)/10 t AT 25 MPa;ON NF/1 N12 × 300 (P1-03)/46.3 kN tension AT 50 MPa",
+  "side-edge lifter and ferrule symbols " + JSON.stringify([Msf.errors, Ssf.inserts.map(q => [q.id, q.sym, q.x, q.y, q.label, q.coord, q.lx]), Ssf.panel.table.rows.map(r => r.cells)]));
+// the CoG of a panel with one off-centre opening moves away from it (Findings 12.7)
+const Mcg = buildModel(cfgWith({ openings: [{ name: "WINDOW", x0: 4500, y0: 300, x1: 5500, y1: 2500 }], inserts: [] }));
+ok(!Mcg.errors.length && Mcg.panel.cog.x < 3000 - 100 && Mcg.panel.cog.y > 1500 && buildSheet(Mcg, ["IN"], []).cog.x === Mcg.panel.cog.x, "CoG moves away from an off-centre window: " + JSON.stringify([Mcg.errors, Mcg.panel.cog]));
+// the panel tag: what is marked on the element (mark, size, mass, f'c at lift, cast face, CoG, lifters, date fields)
+const tg = panelTag(M);
+ok(tg.mark === "P1" && tg.size === "6,000 × 3,000 × 200" && tg.mass === 7834 && tg.massText === "7,834 kg" && tg.fc === 40 && tg.fcLift === 25 && tg.castFace === "FF" && tg.cog === "2,907 / 1,479" && tg.lifters.join() === "L1,L2" && tg.lifterText === "2 × Reid 3Dx 10 t · WLL 10 t" && tg.castDate === "" && tg.liftDate === "",
+  "panel tag fields " + JSON.stringify(tg));
+ok(tg.lines.join("\n") === "P1\n6,000 × 3,000 × 200 · 7,834 kg\nf'c 40 · LIFT AT 25 MPa · FF DOWN\nCoG 2,907 / 1,479 · L1 L2 WLL 10 t\nCAST ____/____/________ · LIFT NOT BEFORE ____/____/________" && PNS.tag.lines.join() === tg.lines.join(), "panel tag lines:\n  " + tg.lines.join("\n  "));
+ok(panelTag(Mno).lifterText === "no lifters" && /^CoG [\d,]+ \/ [\d,]+$/.test(panelTag(Mno).lines[3]), "panel tag without lifters");
 
 // ---- grammar on panel lines ----
 const pg = s => parseCallout(s, { scheme: "TB" });
@@ -283,4 +352,4 @@ const F = buildModel(DEFAULT_CFG);
 ok(F.kind === undefined && F.bars.filter(b => !b.existing).length === 1458 && F.marks.length === 78 && Math.round(F.kg) === 5300, "the Level 1 floor changed: " + [F.bars.filter(b => !b.existing).length, F.marks.length, Math.round(F.kg)]);
 
 if (problems.length) { console.error("panel: FAIL\n" + problems.slice(0, 30).join("\n") + (problems.length > 30 ? "\n…and " + (problems.length - 30) + " more" : "")); process.exit(1); }
-console.log("panel: OK (" + M.bars.length + " bars + " + M.meshPieces.length + " mesh sheet on the example; " + [Ms, Mbig].reduce((s, m) => s + m.meshPieces.length, 0) + " stock pieces checked)");
+console.log("panel: OK (" + M.bars.length + " bars + " + M.meshPieces.length + " mesh sheet on the example; " + [Ms, Mbig].reduce((s, m) => s + m.meshPieces.length, 0) + " stock pieces checked; elevation sheet: " + S4.inserts.length + " symbols, " + tbl.rows.length + " table rows)");
