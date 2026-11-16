@@ -98,6 +98,19 @@ details.sec:not([open]) { gap: 0; }
 .orow .del { padding: 0; height: 30px; line-height: 1; font-size: 18px; color: var(--muted); }
 .orow .del:hover { color: var(--bad); border-color: var(--bad); }
 .orow[data-invalid="true"] input { border-color: var(--bad); }
+/* insert rows (#33c): id · in / on · ×, then the catalogue type across the row, then x / y; a flagged insert is marked amber */
+#pnInsRows:empty::before { content: "No inserts. Add the lifters and brace inserts from the erection designer's drawing."; font-size: 12px; color: var(--muted); }
+.orow.withtype { grid-template-columns: minmax(0, 1fr) 84px 30px; }
+.orow.withtype .field.wide { grid-column: 1 / -1; }
+.orow.withtype .field.wide select { font-family: inherit; font-size: 12.5px; }
+.orow[data-flag="true"] input, .orow[data-flag="true"] select { border-color: var(--warn); }
+.orow[data-invalid="true"] select { border-color: var(--bad); }
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--accent, inherit); text-decoration: underline; cursor: pointer; }
+.checks { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12.5px; }
+.checks li { padding: 3px 0 3px 18px; position: relative; color: var(--muted); }
+.checks li::before { content: "✓"; position: absolute; left: 0; color: var(--ok, #3fa66b); font-weight: 700; }
+.checks li.fail { color: var(--bad); } .checks li.fail::before { content: "✗"; color: var(--bad); }
+.checks li.advis { color: var(--warn); } .checks li.advis::before { content: "!"; color: var(--warn); }
 /* lap report (#5): the laps in use beside the AS 3600 value */
 .laprep { display: grid; gap: 4px; min-width: 0; }
 .laprep .hint b { color: var(--fg); font-weight: 500; }
@@ -330,6 +343,7 @@ html.print #sheet { background: #fff; }
           <div class="field"><label for="pnCover">Cover mm, each face</label><input id="pnCover" type="number" min="15" max="75" step="5" inputmode="numeric"></div>
           <div class="field"><label for="pnFc">Concrete f'c MPa</label><input id="pnFc" type="number" min="20" max="80" step="5" inputmode="numeric"></div>
           <div class="field"><label for="pnLap">Lap, all bars mm</label><input id="pnLap" type="number" min="300" max="2500" step="50" inputmode="numeric"></div>
+          <div class="field"><label for="pnFcLift">f'c at lift MPa (lifter WLL is read at this strength)</label><input id="pnFcLift" type="number" min="10" max="80" step="5" inputmode="numeric"></div>
         </div>
         <fieldset class="face" id="faceNF" style="--c:#e5534b">
           <legend>Near face · NF</legend>
@@ -354,6 +368,12 @@ html.print #sheet { background: #fff; }
           <legend>Openings · mm from the bottom-left corner</legend>
           <div id="pnOpenRows" class="rows"></div>
           <div class="rowbtns"><button class="btn small" type="button" id="btnAddPnOpen">+ Add opening</button><span class="hint">x from the left edge, y from the bottom edge, looking down on the panel on its bed.</span></div>
+        </fieldset>
+        <fieldset class="geom" id="pnInsFs">
+          <legend>Inserts · lifters, brace inserts, ferrules</legend>
+          <div id="pnInsRows" class="rows"></div>
+          <div class="rowbtns"><button class="btn small" type="button" id="btnAddPnLifter">+ Add lifter</button><button class="btn small" type="button" id="btnAddPnBrace">+ Add brace insert</button><span class="hint">Positions from the erection designer's drawing: an edge anchor by x (top / bottom edge) or y (left / right edge), a face insert by x, y on NF or FF. Checked against the supplier catalogue; failed checks are flagged, never fixed.</span></div>
+          <p class="hint" id="pnInsCat"></p>
         </fieldset>
         <div class="rowbtns"><button class="btn small" type="button" id="btnPanelReset">Reset to example panel</button></div>
       </div>
@@ -536,7 +556,7 @@ html.print #sheet { background: #fff; }
     return len;
   }
   // Shape codes: CIA Z6 core letters (Reinforcement Detailing Handbook ch. 9, via the research note); ZL for cog + crank follows Best Bar's 2024 guide.
-  const SHAPES = { S: "straight", L: "cog one end", LL: "cog both ends", U: "U-bar", CC: "cranked (offset)", ZL: "cog + crank", T: "closed tie, 135° hooks", H: "hook one end", HH: "hook both ends" };
+  const SHAPES = { S: "straight", L: "cog one end", LL: "cog both ends", U: "U-bar", CC: "cranked (offset)", ZL: "cog + crank", T: "closed tie, 135° hooks", H: "hook one end", HH: "hook both ends", TB: "tension bar, two legs bent at the anchor" };
   // Which code a drawn bar gets, and its bending dimensions measured to the bar extremities (outside), per Australian practice
   // (TMR Vol 3 Ch 4 Cl 4.5): a centreline leg + db/2 for each bent corner it touches.
   function classify(b, g) {
@@ -552,6 +572,10 @@ html.print #sheet { background: #fff; }
     else if (sh === "Z-bar") { code = "CC"; dims = [["A", out[0]], ["B", out[1]], ["C", out[2]], ["D", Math.round(Math.abs(b.pts[0][2] - b.pts[n][2]))]]; }
     else if (sh === "cog + Z") { code = "ZL"; dims = [["A", out[0]], ["B", out[1]], ["C", out[2]], ["D", out[3]], ["E", Math.round(Math.abs(b.pts[2][2] - b.pts[3][2]))]]; cogCheck(out[0], "edge"); }
     else if (sh === "closed lig" || sh === "closed tie") { code = "T"; dims = [["A", Math.round(segs[0] + g.db)], ["B", Math.round(segs[1] + g.db)]]; }
+    // insert component bars (#33c, Findings 12.5 step 6): a U over an anchor (legs A and C, base B outside) and the
+    // two-leg tension bar bent at the anchor's hole (legs A and B outside, the included angle between them)
+    else if (sh === "U-bar") { code = "U"; dims = [["A", out[0]], ["B", out[1]], ["C", out[2]]]; }
+    else if (sh === "TB") { const u = [b.pts[0][0] - b.pts[1][0], b.pts[0][1] - b.pts[1][1], b.pts[0][2] - b.pts[1][2]], v = [b.pts[2][0] - b.pts[1][0], b.pts[2][1] - b.pts[1][1], b.pts[2][2] - b.pts[1][2]]; const ang = Math.round(Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (Math.hypot(...u) * Math.hypot(...v))))) * 180 / Math.PI); code = "TB"; dims = [["A", out[0]], ["B", out[1]], ["angle", ang + "°"]]; }
     else if (sh === "L-bar" || sh === "L starter" || sh === "cogged top") { code = "L"; const ci = out[0] < out[n - 1] ? 0 : n - 1, mi = ci === 0 ? 1 : 0; dims = [["A", out[mi]], ["C", out[ci]]]; if (n > 2) dims = out.map((v, i) => [String.fromCharCode(65 + i), v]); }
     else { code = n <= 1 ? "S" : "V"; dims = out.map((v, i) => [String.fromCharCode(65 + i), v]); }
     return { code: code, name: SHAPES[code] || sh, dims: dims, dimStr: dims.map(d => d[0] + " " + d[1]).join(" · "), flags: flags };
@@ -1686,10 +1710,14 @@ html.print #sheet { background: #fff; }
   }
 
   const PANEL_CFG = {
-    kind: "panel", name: "P1", W: 6000, H: 3000, T: 200, cover: 30, fc: 40, lap: 600, castFace: "FF", density: 2400,
+    kind: "panel", name: "P1", W: 6000, H: 3000, T: 200, cover: 30, fc: 40, fcLift: 25, lap: 600, castFace: "FF", density: 2400,
     meshSheets: "made",
     faces: { NF: { kind: "bar", callouts: "N12-200 H\nN12-200 V" }, FF: { kind: "mesh", callouts: "SL82 H" } },
-    openings: [{ name: "WINDOW", x0: 3600, y0: 1100, x1: 5000, y1: 2300 }],
+    openings: [{ name: "WINDOW", x0: 3200, y0: 1100, x1: 4600, y1: 2300 }],
+    // two 10 t edge lifters in the top edge in the piers beside the window, symmetric about the centre of gravity (the window
+    // pulls it west), their tension bars clear of the window's corner diagonals; two brace inserts on the near face (the face
+    // up on the bed) below 60 % of the height, off the lifter lines
+    inserts: [{ id: "L1", type: "3DX10", edge: "top", x: 450 }, { id: "L2", type: "3DX10", edge: "top", x: 5364 }, { id: "B1", type: "QF20B", edge: "NF", x: 1000, y: 1600 }, { id: "B2", type: "QF20B", edge: "NF", x: 5600, y: 1600 }],
     features: { perimeter: true, trims: true }
   };
   const FACE_NAME = { NF: "Near face", FF: "Far face" };
@@ -1700,6 +1728,55 @@ html.print #sheet { background: #fff; }
   // cited standard; question for Baji).
   const PANEL_EDGE = { perim: 16, trimSmall: 12, trimBig: 16, big: 1500, ext: 600, diag: 12, diagLen: 1200 };
 
+  // ---------- cast-in inserts: catalogue, checks and component bars (backlog #33c) ----------
+  // Seeded from Findings 12.2 (research/12-precast-panel-reinforcement.md), which read the suppliers' own published
+  // compliance documents and design guides; each entry names its document and the AS 3850.1 edition it is written to.
+  // Capacities (WLL) are the suppliers' at the lifting strength and are stored to be printed in the insert table; X Struc
+  // never compares them with a load — lifting design stays with the Erection Designer under AS 3850.2.
+  //   em / am  minimum edge distance / spacing between anchors (mm) as published for the edge lifters.
+  //   c1 / s1  minimum edge distance / spacing for the threaded inserts (Ancon guide, by insert length).
+  //   T        panel thickness range the lifter is published for.  wllAt: WLL (t) by f'c at lift (MPa), the 150 panel series.
+  //   bars     the component reinforcement each anchor needs: shape, size, legs (outside, mm), included angle, base width.
+  //   embed    PLACEHOLDER: how far the anchor reaches into the panel from the edge (where the tension bar passes through its
+  //            lower hole); not in the compliance documents read. Question for Baji / the supplier drawings.
+  // Where a document gave a choice (SJU tension bar N16 × 500 / × 750 / N20 × 750) the first option is seeded.
+  const INSERT_CAT = {
+    edition: "Findings 12.2 seed", date: "2026-11-16",
+    items: {
+      "3DX10": { brand: "Reid", name: "SwiftLift 3Dx 10 t edge lift", code: "3DX10A, void former 3DX85VF", kind: "lifter", place: "edge", wll: 10, wllAt: { 15: 8.9, 20: 9.5, 25: 10 }, wllNote: "150 panel; a 120 panel 6.3–10 t; shear 2.2–2.9 t", T: [120, 300], em: 420, am: 840, embed: 300, body: 40,
+        bars: [{ role: "tension", shape: "TB", size: 16, leg: 500, angle: 45 }], assumes: "SL82 + N16 perimeter bar centrally placed (double mesh at 250–300)", doc: "Reid SwiftLift 3Dx 10 t compliance document", std: "AS 3850.1:2024" },
+      "SJL": { brand: "Reid", name: "SwiftLift JAWS SJL 3 t edge lift", kind: "lifter", place: "edge", wll: 3, wllAt: { 15: 2.4, 20: 3 }, wllNote: "2.4 t at 15 MPa in a 100 panel", T: [100, 150], em: 300, am: 700, embed: 150, body: 30,
+        bars: [{ role: "tension", shape: "S", size: 12, len: 300 }, { role: "shear", shape: "U", size: 10, leg: 200, width: 60 }], assumes: "SL82 + N16 perimeter bar, central", doc: "Reid SwiftLift JAWS edge lift anchor compliance document", std: "AS 3850.1:2015" },
+      "SJS": { brand: "Reid", name: "SwiftLift JAWS SJS 7 t edge lift", kind: "lifter", place: "edge", wll: 7, wllAt: { 15: 7 }, T: [125, 200], em: 420, am: 840, embed: 220, body: 36,
+        bars: [{ role: "tension", shape: "S", size: 16, len: 500 }, { role: "shear", shape: "U", size: 12, leg: 250, width: 90 }], assumes: "SL82 + N16 perimeter bar, central", doc: "Reid SwiftLift JAWS edge lift anchor compliance document", std: "AS 3850.1:2015" },
+      "SJU": { brand: "Reid", name: "SwiftLift JAWS SJU 10 t edge lift", kind: "lifter", place: "edge", wll: 10, wllAt: { 15: 7.1, 25: 10 }, wllNote: "7.1–10 t by thickness and f'c", T: [125, 200], em: 450, am: 900, embed: 300, body: 40,
+        bars: [{ role: "tension", shape: "S", size: 16, len: 500 }, { role: "shear", shape: "U", size: 16, leg: 300, width: 90 }], assumes: "SL82 + N16 perimeter bar, central", doc: "Reid SwiftLift JAWS edge lift anchor compliance document", std: "AS 3850.1:2015" },
+      "RFL5": { brand: "Reid", name: "face-lift foot anchor RFL / FL0 5 t", kind: "lifter", place: "face", wll: 5, wllNote: "preassembled per panel thickness; edge distance not published", em: null, am: null, body: 30,
+        bars: [{ role: "floating", shape: "S", size: 12, len: 300, pair: 60 }], doc: "Reid lifting anchor systems installation guide", std: "AS 3850.1" },
+      "QF20B": { brand: "Ancon", name: "QwikFoot brace insert 96 long (M20)", kind: "brace", place: "face", len: 96, c1: 155, s1: 305, body: 28, wllText: "brace WLL 27.4 kN at 20 MPa", bars: [], doc: "Ancon QwikFoot and QwikFix threaded inserts design guide v2", std: "AS 3850.1" },
+      "QX20B": { brand: "Ancon", name: "QwikFix brace insert 96 long (M20)", kind: "brace", place: "face", len: 96, c1: 135, s1: 270, body: 28, wllText: "46.3 kN tension at 50 MPa", bars: [{ role: "cross", shape: "S", size: 12, len: 300 }], doc: "Ancon QwikFoot and QwikFix threaded inserts design guide v2", std: "AS 3850.1" },
+      "QF20": { brand: "Ancon", name: "QwikFoot ferrule 96 long (M20)", kind: "ferrule", place: "face", len: 96, c1: 155, s1: 305, body: 28, wllText: "55.6 kN tension, 48.6 kN shear at 50 MPa", bars: [], doc: "Ancon QwikFoot and QwikFix threaded inserts design guide v2", std: "AS 3850.1" },
+      "QF16": { brand: "Ancon", name: "QwikFoot ferrule 70 long", kind: "ferrule", place: "face", len: 70, c1: 115, s1: 225, body: 24, bars: [], doc: "Ancon QwikFoot and QwikFix threaded inserts design guide v2", std: "AS 3850.1" },
+      "QF12": { brand: "Ancon", name: "QwikFoot ferrule 50 long", kind: "ferrule", place: "face", len: 50, c1: 85, s1: 165, body: 20, bars: [], doc: "Ancon QwikFoot and QwikFix threaded inserts design guide v2", std: "AS 3850.1" },
+      "QX16": { brand: "Ancon", name: "QwikFix ferrule 76 long", kind: "ferrule", place: "face", len: 76, c1: 105, s1: 205, body: 24, wllText: "31.6 kN tension at 50 MPa", bars: [{ role: "cross", shape: "S", size: 12, len: 300 }], doc: "Ancon QwikFoot and QwikFix threaded inserts design guide v2", std: "AS 3850.1" },
+      "QX20": { brand: "Ancon", name: "QwikFix ferrule 96 long (M20)", kind: "ferrule", place: "face", len: 96, c1: 135, s1: 270, body: 28, wllText: "46.3 kN tension at 50 MPa", bars: [{ role: "cross", shape: "S", size: 12, len: 300 }], doc: "Ancon QwikFoot and QwikFix threaded inserts design guide v2", std: "AS 3850.1" }
+    }
+  };
+  Object.keys(INSERT_CAT.items).forEach(k => { INSERT_CAT.items[k].key = k; });
+  const INSERT_KIND = { lifter: "lifter", brace: "brace insert", ferrule: "fixing ferrule" };
+  // Placement rules that are not the catalogue's: brace inserts at least 300 from any edge and 200 horizontally off every
+  // lifter line so the braces hang clear (NT COP 5.1.5 / QLD COP s4 via Findings 12.1); at least two braces per element
+  // (COP, advisory here); brace centroid under 60 % of the height (US rule, advisory); lifters not 3, 6, 9 or 12 (the
+  // any-two-of-four rule, QLD COP s14.1.1, advisory) and symmetric about the CoG within 50 (advisory).
+  const INSERT_RULES = { braceEdge: 300, braceOffLifter: 200, braceMin: 2, braceHeight: 0.6, lifterCounts: [3, 6, 9, 12], symmetry: 50 };
+  // WLL at the lifting strength: the largest published f'c step at or below fcLift; null below the lowest step
+  function insertWll(cat, fcLift) {
+    if (!cat.wllAt) return { wll: cat.wll || null, at: null, text: cat.wllText || (cat.wll ? cat.wll + " t" : "not published") };
+    const steps = Object.keys(cat.wllAt).map(Number).sort((a, b) => a - b), at = steps.filter(s => s <= fcLift).pop();
+    if (at == null) return { wll: null, at: null, text: "no WLL published below " + steps[0] + " MPa", below: steps[0] };
+    return { wll: cat.wllAt[at], at: at, text: cat.wllAt[at] + " t at " + fcLift + " MPa (table step " + at + ")" };
+  }
+
   function buildPanel(cfg) {
     cfg = Object.assign({}, PANEL_CFG, cfg || {});
     cfg.features = Object.assign({}, PANEL_CFG.features, cfg.features || {});
@@ -1707,6 +1784,7 @@ html.print #sheet { background: #fff; }
     const F = cfg.features, errors = [], warnings = [];
     const num = v => (v === "" || v == null) ? NaN : +v;
     const PW = num(cfg.W), PH = num(cfg.H), T = num(cfg.T), C = num(cfg.cover), FC = num(cfg.fc), LAPLEN = num(cfg.lap);
+    const FCL = cfg.fcLift === "" || cfg.fcLift == null ? FC : num(cfg.fcLift);   // strength at lift: blank = the service f'c
     const name = String(cfg.name == null ? "P1" : cfg.name).trim().toUpperCase().replace(/\s+/g, " ").slice(0, 12) || "P1";
     cfg.name = name;
     const bed = cfg.castFace === "NF" ? "NF" : "FF", top = bed === "FF" ? "NF" : "FF";
@@ -1714,6 +1792,7 @@ html.print #sheet { background: #fff; }
     if (!(T >= 100 && T <= 400)) errors.push("Panel thickness must be 100–400 mm.");
     if (!(C >= 15 && C <= 75)) errors.push("Cover must be 15–75 mm.");
     if (!(FC >= 20 && FC <= 100)) errors.push("Concrete f'c must be 20–100 MPa.");
+    if (!(FCL >= 10 && FCL <= FC)) errors.push("Concrete f'c at lift must be 10 MPa or more and not above the service f'c (" + (isFinite(FC) ? FC : "?") + ").");
     if (!(LAPLEN >= 300 && LAPLEN <= 2500)) errors.push("Lap must be 300–2500 mm.");
     if (errors.length) return { kind: "panel", cfg: cfg, errors: errors, warnings: warnings };
 
@@ -1838,7 +1917,7 @@ html.print #sheet { background: #fff; }
     function addRun(r) { r.id = "R" + runs.length; r.bars = []; runs.push(r); return r; }
     function addBar(run, o) {
       const b = Object.assign({ id: bars.length, layer: run.layer, run: run, size: run.size, type: "N", shape: "straight" }, o);
-      b.geom = bendGeom(b.type, b.size, "main");
+      b.geom = bendGeom(b.type, b.size, b.role || "main");   // insert component bars bend on fitment (4 db) pins
       b.geomLen = Math.round(polyLen(b.pts));
       b.len = Math.ceil(cutLength(b.pts, b.geom, 0) / 5) * 5;
       b.kg = b.len / 1000 * (KGM[b.type + b.size] || 0);
@@ -1957,6 +2036,174 @@ html.print #sheet { background: #fff; }
       MSUM.push(meshSummary(run, res.area));
     });
 
+    // ---- concrete: net area, mass and centre of gravity (Findings 12.1; density 2,400 is an open question) ----
+    const DENS = num(cfg.density) || 2400;
+    const gross = PW * PH, holeA = HOLES.map(h => (h.x1 - h.x0) * (h.y1 - h.y0)), net = gross - holeA.reduce((s, a) => s + a, 0);
+    const cogX = (gross * PW / 2 - HOLES.reduce((s, h, i) => s + holeA[i] * (h.x0 + h.x1) / 2, 0)) / net;
+    const cogY = (gross * PH / 2 - HOLES.reduce((s, h, i) => s + holeA[i] * (h.y0 + h.y1) / 2, 0)) / net;
+    const panel = { W: PW, H: PH, T: T, area: net / 1e6, volume: net * T / 1e9, mass: net * T / 1e9 * DENS, density: DENS, cog: { x: Math.round(cogX), y: Math.round(cogY) }, castFace: bed, topFace: top, sheets: cfg.meshSheets === "stock" ? "stock" : "made", fcLift: FCL };
+
+    // ---- cast-in inserts (#33c): positions from the erection designer's drawing, checked against the catalogue ----
+    // Each row names a catalogue type and where it goes: an edge anchor by its position along the top / bottom / left /
+    // right edge (centred in the thickness), a face insert by x, y on NF or FF. Hard checks (catalogue minimums, the COP
+    // placement rules) and advisory checks are listed on the insert and repeated as warnings; a failed hard check never
+    // stops the build — the engineer moves the insert. Component bars come from the catalogue entry, are tagged with the
+    // insert's id and scheduled with the panel's bars (Findings 12.5 steps 5–7).
+    const INS = [], insBodies = [], insFlags = [];
+    const EDGE_WORD = { top: "top edge", bottom: "bottom edge", left: "left edge", right: "right edge" };
+    const EDGE_IN = { top: [0, -1], bottom: [0, 1], left: [1, 0], right: [-1, 0] };   // unit vector from the edge into the panel
+    (Array.isArray(cfg.inserts) ? cfg.inserts : []).forEach((o, i) => {
+      const id = (String(o.id == null ? "" : o.id).trim().toUpperCase().replace(/\s+/g, "") || "I" + (i + 1)).slice(0, 8);
+      const where = "Insert " + (i + 1) + " (" + id + "): ";
+      const cat = INSERT_CAT.items[String(o.type == null ? "" : o.type).trim().toUpperCase()];
+      if (!cat) { errors.push(where + "unknown insert type " + JSON.stringify(o.type == null ? "" : String(o.type)) + "; pick one from the catalogue."); return; }
+      const at = String(o.edge == null ? "" : o.edge).trim(), isEdge = !!EDGE_WORD[at], isFace = at === "NF" || at === "FF";
+      if (cat.place === "edge" && !isEdge) { errors.push(where + cat.name + " is an edge anchor; place it in the top, bottom, left or right edge."); return; }
+      if (cat.place === "face" && !isFace) { errors.push(where + cat.name + " sits in a face; place it on NF or FF."); return; }
+      let x = num(o.x), y = num(o.y);
+      if (isEdge) { if (at === "top") y = PH; else if (at === "bottom") y = 0; else if (at === "left") x = 0; else x = PW; }
+      const alongX = at === "top" || at === "bottom";
+      if (!isFinite(x) || !isFinite(y)) { errors.push(where + (isEdge ? "give its position along the " + EDGE_WORD[at] + " (" + (alongX ? "x from the left edge" : "y from the bottom edge") + ")." : "give x (from the left edge) and y (from the bottom edge).")); return; }
+      if (x < 0 || x > PW || y < 0 || y > PH) { errors.push(where + "is off the panel."); return; }
+      if (INS.some(q => q.id === id)) { errors.push(where + "another insert already has this id."); return; }
+      if (isFace && HOLES.some(h => x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1)) { errors.push(where + "sits in an opening."); return; }
+      const face = isFace ? at : null;
+      if (isFace && !has(faces[face])) warnings.push(where + "placed on the " + FACE_NAME[face].toLowerCase() + ", which has no reinforcement.");
+      const ins = { id: id, row: i + 1, type: cat.key, cat: cat, kind: cat.kind, kindName: INSERT_KIND[cat.kind], place: cat.place, edge: isEdge ? at : null, face: face, x: x, y: y,
+        z: isEdge ? T / 2 : (faces[face].down ? 0 : T), along: isEdge ? (alongX ? x : y) : null, checks: [], fails: [], advis: [], bars: [], layer: "IN",
+        pos: isEdge ? fmt(alongX ? x : y) + " from the " + (alongX ? "left" : "bottom") + " edge, in the " + EDGE_WORD[at] : fmt(x) + " from the left edge, " + fmt(y) + " from the bottom edge, on " + face,
+        short: cat.brand + " " + cat.name.replace(/^SwiftLift /, "").replace(/ edge lift$/, "").replace(/ (brace insert|ferrule)/, "") };
+      ins.wll = cat.kind === "lifter" ? insertWll(cat, FCL) : { wll: null, at: null, text: cat.wllText || "see the catalogue" };
+      INS.push(ins);
+    });
+    const rectDist = (x, y, h) => Math.hypot(Math.max(h.x0 - x, 0, x - h.x1), Math.max(h.y0 - y, 0, y - h.y1));
+    const nearestHole = ins => HOLES.reduce((b, h) => { const d = rectDist(ins.x, ins.y, h); return !b || d < b.d ? { d: d, h: h } : b; }, null);
+    // one check: value against its minimum (or a plain pass / fail); a failed hard check is a flag, a failed advisory a note
+    function check(ins, rule, hard, pass, text, value, min) {
+      ins.checks.push({ rule: rule, hard: hard, pass: pass, text: text, value: value == null ? null : Math.round(value), min: min == null ? null : min });
+      if (!pass) (hard ? ins.fails : ins.advis).push(rule);
+      return pass;
+    }
+    const ge = (v, m) => v + 1e-6 >= m;
+    INS.forEach(ins => {
+      const cat = ins.cat, who = "Insert " + ins.row + " (" + ins.id + ", " + ins.short + ")";
+      if (cat.T) check(ins, "thickness", true, T >= cat.T[0] && T <= cat.T[1], "panel " + T + " thick; published for " + cat.T[0] + "–" + cat.T[1], T, cat.T[0]);
+      if (ins.kind === "lifter" && ins.wll.below) check(ins, "fc-lift", true, false, "no WLL published below " + ins.wll.below + " MPa; f'c at lift is " + FCL, FCL, ins.wll.below);
+      if (ins.edge) {
+        check(ins, "centred", true, true, "centred in the thickness (" + T / 2 + " from each face)", T / 2, null);
+        const L = ins.edge === "top" || ins.edge === "bottom" ? PW : PH, dEnd = Math.min(ins.along, L - ins.along);
+        if (cat.em) check(ins, "edge", true, ge(dEnd, cat.em), fmt(dEnd) + " to the panel corner; catalogue edge distance " + cat.em, dEnd, cat.em);
+        const nh = nearestHole(ins);
+        if (nh && cat.em) check(ins, "opening", true, ge(nh.d, cat.em), fmt(nh.d) + " to " + nh.h.id + "; catalogue edge distance " + cat.em, nh.d, cat.em);
+        const others = INS.filter(q => q !== ins && q.kind === "lifter");
+        if (others.length && cat.am) {
+          const q = others.reduce((b, o) => { const d = Math.hypot(o.x - ins.x, o.y - ins.y); return !b || d < b.d ? { d: d, o: o } : b; }, null), am = Math.max(cat.am, q.o.cat.am || 0);
+          check(ins, "spacing", true, ge(q.d, am), fmt(q.d) + " to " + q.o.id + "; catalogue spacing " + am, q.d, am);
+        }
+      } else {
+        const dEdge = Math.min(ins.x, PW - ins.x, ins.y, PH - ins.y), c1 = cat.c1 || 0, minE = ins.kind === "brace" ? Math.max(INSERT_RULES.braceEdge, c1) : c1;
+        if (minE) check(ins, "edge", true, ge(dEdge, minE), fmt(dEdge) + " to the nearest panel edge; minimum " + minE + (ins.kind === "brace" && INSERT_RULES.braceEdge >= c1 ? " (brace inserts 300 from an edge, COP)" : " (catalogue c1)"), dEdge, minE);
+        const nh = nearestHole(ins);
+        if (nh && c1) check(ins, "opening", true, ge(nh.d, c1), fmt(nh.d) + " to " + nh.h.id + "; catalogue c1 " + c1, nh.d, c1);
+        const same = INS.filter(q => q !== ins && q.face === ins.face && q.kind !== "lifter");
+        if (same.length && cat.s1) {
+          const q = same.reduce((b, o) => { const d = Math.hypot(o.x - ins.x, o.y - ins.y); return !b || d < b.d ? { d: d, o: o } : b; }, null), s1 = Math.max(cat.s1, q.o.cat.s1 || 0);
+          check(ins, "spacing", true, ge(q.d, s1), fmt(q.d) + " to " + q.o.id + "; catalogue spacing s1 " + s1, q.d, s1);
+        }
+        if (ins.kind === "brace") {
+          const lifters = INS.filter(q => q.kind === "lifter" && q.edge);
+          if (lifters.length) {
+            const q = lifters.reduce((b, o) => { const d = o.edge === "top" || o.edge === "bottom" ? Math.abs(o.x - ins.x) : Math.abs(o.y - ins.y); return !b || d < b.d ? { d: d, o: o } : b; }, null);
+            check(ins, "lifter-line", true, ge(q.d, INSERT_RULES.braceOffLifter), fmt(q.d) + " off the line of lifter " + q.o.id + "; at least " + INSERT_RULES.braceOffLifter + " so the brace hangs clear (COP)", q.d, INSERT_RULES.braceOffLifter);
+          }
+        }
+      }
+      if (ins.kind === "lifter" && ins.face) check(ins, "edge", false, ge(Math.min(ins.x, PW - ins.x, ins.y, PH - ins.y), 300), "face lifter: edge distance not published for this anchor; " + fmt(Math.min(ins.x, PW - ins.x, ins.y, PH - ins.y)) + " to the nearest edge", null, null);
+      // the assumed panel reinforcement behind the published capacity (mesh + perimeter bar, centrally placed)
+      if (cat.assumes) { const okA = F.perimeter && ["NF", "FF"].some(f => faces[f].mesh); check(ins, "assumes", false, okA, "WLL assumes " + cat.assumes + (okA ? "" : "; this panel has " + (F.perimeter ? "" : "no perimeter bars and ") + (["NF", "FF"].some(f => faces[f].mesh) ? "mesh" : "bars, no mesh")), null, null); }
+      ins.fails.forEach(rule => { const c = ins.checks.find(k => k.rule === rule); warnings.push(who + " fails the " + rule.replace("-", " ") + " check: " + c.text + "."); });
+    });
+    // panel-level lifter and brace rules (advisory)
+    const lifters = INS.filter(q => q.kind === "lifter"), braces = INS.filter(q => q.kind === "brace");
+    const advise = (rule, text) => { insFlags.push({ rule: rule, text: text }); warnings.push(text); };
+    if (lifters.length === 1) advise("lifter-count", "Lifters: one lifter only; panels are lifted on 2 to 16 anchors (COP). Check with the erection designer.");
+    if (INSERT_RULES.lifterCounts.indexOf(lifters.length) >= 0) advise("lifter-count", "Lifters: " + lifters.length + " lifters; the any-two-of-four rule avoids 3, 6, 9 or 12 lifting points (QLD COP s14.1.1). Check with the erection designer.");
+    if (lifters.length >= 2) {
+      const horiz = lifters.filter(q => !q.edge || q.edge === "top" || q.edge === "bottom"), vert = lifters.filter(q => q.edge === "left" || q.edge === "right");
+      const mx = horiz.length ? horiz.reduce((s, q) => s + q.x, 0) / horiz.length : null, my = vert.length ? vert.reduce((s, q) => s + q.y, 0) / vert.length : null;
+      if (mx != null && Math.abs(mx - cogX) > INSERT_RULES.symmetry) advise("lifter-symmetry", "Lifters: their centre (" + fmt(mx) + " from the left edge) is " + fmt(Math.abs(mx - cogX)) + " off the centre of gravity (" + fmt(cogX) + "); the panel will hang out of plumb. Check with the erection designer.");
+      if (my != null && Math.abs(my - cogY) > INSERT_RULES.symmetry) advise("lifter-symmetry", "Lifters: their centre (" + fmt(my) + " from the bottom edge) is " + fmt(Math.abs(my - cogY)) + " off the centre of gravity (" + fmt(cogY) + "). Check with the erection designer.");
+    }
+    if (braces.length === 1) advise("brace-count", "Braces: one brace insert only; at least two braces per element (COP).");
+    if (braces.length) { const by = braces.reduce((s, q) => s + q.y, 0) / braces.length; if (by > INSERT_RULES.braceHeight * PH) advise("brace-height", "Braces: their centroid " + fmt(by) + " up is above 60 % of the height (" + fmt(INSERT_RULES.braceHeight * PH) + "); advisory rule of thumb."); }
+
+    // component bars from the catalogue: tagged with the insert's id, one run per insert (its 3D body is drawn with them)
+    const faceSteel = bars.concat(wires);
+    function roomCheck(ins, b, what) {
+      // inside the panel less cover and clear of the openings by cover; crossing face steel at least a bar apart
+      let bad = null;
+      b.pts.forEach(p => { if (p[0] < C - 0.5 || p[0] > PW - C + 0.5 || p[1] < C - 0.5 || p[1] > PH - C + 0.5 || p[2] < C - 0.5 || p[2] > T - C + 0.5) bad = bad || "leaves the panel (less cover)"; });
+      for (let i = 1; i < b.pts.length && !bad; i++) for (let k = 0; k <= 20 && !bad; k++) {
+        const t = k / 20, p = b.pts[i - 1], q = b.pts[i], x = p[0] + (q[0] - p[0]) * t, y = p[1] + (q[1] - p[1]) * t;
+        const h = HOLES.find(o => x > o.x0 - C + 1 && x < o.x1 + C - 1 && y > o.y0 - C + 1 && y < o.y1 + C - 1); if (h) bad = "runs into " + h.id;
+      }
+      for (let i = 1; i < b.pts.length && !bad; i++) {
+        const p = b.pts[i - 1], r = [b.pts[i][0] - p[0], b.pts[i][1] - p[1]];
+        for (let j = 0; j < faceSteel.length && !bad; j++) {
+          const o = faceSteel[j]; if (o.pts.length !== 2) continue;
+          const q = o.pts[0], u = [o.pts[1][0] - q[0], o.pts[1][1] - q[1]], den = r[0] * u[1] - r[1] * u[0]; if (Math.abs(den) < 1e-6) continue;
+          const t = ((q[0] - p[0]) * u[1] - (q[1] - p[1]) * u[0]) / den, s = ((q[0] - p[0]) * r[1] - (q[1] - p[1]) * r[0]) / den;
+          if (t <= 0 || t >= 1 || s <= 0 || s >= 1) continue;
+          const dz = Math.abs(p[2] + t * (b.pts[i][2] - p[2]) - (q[2] + s * (o.pts[1][2] - q[2])));
+          if (dz < (b.size + o.size) / 2 - 0.5) bad = "crosses " + (o.wire ? "the " + o.sheet.code + " mesh" : o.run.label) + " in one plane";
+        }
+      }
+      check(ins, "room-" + what, true, !bad, "the " + what + " bar " + (bad || "fits: inside cover, clear of openings and of the face steel"), null, null);
+      if (bad) warnings.push("Insert " + ins.row + " (" + ins.id + ", " + ins.short + "): its " + what + " bar " + bad + ". Move the insert or check the detail with the supplier.");
+    }
+    INS.forEach(ins => {
+      const cat = ins.cat, dz = ins.face ? (faces[ins.face].down ? 1 : -1) : 0;
+      const run = addRun({ layer: "IN", size: cat.bars.length ? cat.bars[0].size : 0, kind: "insert", insert: ins, face: ins.face,
+        label: ins.id + " · " + ins.short.replace(/^(Reid|Ancon) /, ""),
+        callout: (ins.kindName + " " + ins.id + ": " + cat.brand + " " + cat.name + ", " + ins.pos + (ins.kind === "lifter" ? ", WLL " + ins.wll.text : "") + (cat.bars.length ? "; " + cat.bars.map(cb => cb.role + " bar N" + cb.size + (cb.shape === "TB" ? " legs " + cb.leg + " at " + cb.angle + "°" : cb.shape === "U" ? " legs " + cb.leg + " × " + cb.width : " × " + cb.len)).join(", ") : "; no component bars")).toUpperCase() });
+      run.tagPos = ins.edge ? [ins.x + (EDGE_IN[ins.edge][0] * 120), ins.y + EDGE_IN[ins.edge][1] * 120, ins.z] : [ins.x, ins.y, ins.z + dz * 40];
+      ins.run = run; ins.label = run.label;
+      if (ins.edge) {
+        const n = EDGE_IN[ins.edge], a = [Math.abs(n[1]), Math.abs(n[0])], E = cat.embed || 200, P = [ins.x + n[0] * E, ins.y + n[1] * E];
+        insBodies.push({ pts: [[ins.x, ins.y, ins.z], [P[0], P[1], ins.z]], size: cat.body || 30, insert: ins, layer: "IN", kind: "body" });
+        cat.bars.forEach(cb => {
+          const g = bendGeom("N", cb.size, "fitment");   // the suppliers' component bars bend on 4 db pins (Reid 3Dx document)
+          if (cb.shape === "TB") {
+            const Lc = cb.leg - cb.size / 2, th = cb.angle / 2 * Math.PI / 180, d1 = [n[0] * Math.cos(th) + a[0] * Math.sin(th), n[1] * Math.cos(th) + a[1] * Math.sin(th)], d2 = [n[0] * Math.cos(th) - a[0] * Math.sin(th), n[1] * Math.cos(th) - a[1] * Math.sin(th)];
+            const b = addBar(run, { size: cb.size, shape: "TB", role: "fitment", insert: ins, pts: [[P[0] + d1[0] * Lc, P[1] + d1[1] * Lc, ins.z], [P[0], P[1], ins.z], [P[0] + d2[0] * Lc, P[1] + d2[1] * Lc, ins.z]], setout: "through the lower hole of " + ins.id, note: "Tension bar for " + ins.kindName + " " + ins.id + " (" + ins.short + "): N" + cb.size + ", legs " + cb.leg + " at " + cb.angle + "° included, bent on a " + g.dp + " pin (4 db), through the anchor's lower hole in the panel plane (" + cat.doc + "). The hole is placed " + E + " in from the edge: a placeholder until the anchor drawing is read." });
+            ins.bars.push(b); roomCheck(ins, b, "tension");
+          } else if (cb.shape === "U") {
+            const Lc = cb.leg - cb.size / 2, w = cb.width, notch = C + cb.size, Q = [ins.x + n[0] * notch, ins.y + n[1] * notch];
+            const b = addBar(run, { size: cb.size, shape: "U-bar", role: "fitment", insert: ins, pts: [[Q[0] + n[0] * Lc, Q[1] + n[1] * Lc, ins.z - w / 2], [Q[0], Q[1], ins.z - w / 2], [Q[0], Q[1], ins.z + w / 2], [Q[0] + n[0] * Lc, Q[1] + n[1] * Lc, ins.z + w / 2]], setout: "over the notch of " + ins.id, note: "Shear bar for " + ins.kindName + " " + ins.id + " (" + ins.short + "): N" + cb.size + " U, legs " + cb.leg + ", " + w + " wide, hooked over the anchor's notch with a leg each side of the plate, legs running into the panel (" + cat.doc + "). Read as a hairpin over the anchor: confirm against the supplier's drawing." });
+            ins.bars.push(b); roomCheck(ins, b, "shear");
+          } else {
+            const b = addBar(run, { size: cb.size, shape: "straight", role: "fitment", insert: ins, pts: [[P[0] - a[0] * cb.len / 2, P[1] - a[1] * cb.len / 2, ins.z], [P[0] + a[0] * cb.len / 2, P[1] + a[1] * cb.len / 2, ins.z]], setout: "through the hole of " + ins.id, note: "Tension bar for " + ins.kindName + " " + ins.id + " (" + ins.short + "): N" + cb.size + " × " + cb.len + " straight through the anchor's hole, along the edge (" + cat.doc + "). The hole is placed " + E + " in from the edge: a placeholder until the anchor drawing is read." });
+            ins.bars.push(b); roomCheck(ins, b, "tension");
+          }
+        });
+      } else {
+        const zF = ins.z, L = cat.len || Math.round(T / 2);
+        insBodies.push({ pts: [[ins.x, ins.y, zF], [ins.x, ins.y, zF + dz * L]], size: cat.body || 24, insert: ins, layer: "IN", kind: "body" });
+        cat.bars.forEach(cb => {
+          if (cb.role === "floating") {
+            [-1, 1].forEach(s => {
+              const b = addBar(run, { size: cb.size, shape: "straight", role: "fitment", insert: ins, pts: [[ins.x - cb.len / 2, ins.y + s * cb.pair / 2, T / 2], [ins.x + cb.len / 2, ins.y + s * cb.pair / 2, T / 2]], setout: "clipped to " + ins.id, note: "Floating bar for " + ins.kindName + " " + ins.id + " (" + ins.short + "): one of two N" + cb.size + " × " + cb.len + " clipped to the anchor's foot (" + cat.doc + "). Placed at mid-thickness, " + cb.pair + " apart: placeholders until the anchor drawing is read." });
+              ins.bars.push(b); roomCheck(ins, b, "floating");
+            });
+          } else {
+            const depth = Math.max(C + cb.size / 2, L - cb.size), b = addBar(run, { size: cb.size, shape: "straight", role: "fitment", insert: ins, pts: [[ins.x - cb.len / 2, ins.y, zF + dz * depth], [ins.x + cb.len / 2, ins.y, zF + dz * depth]], setout: "through the cross hole of " + ins.id, note: "Cross bar for " + ins.kindName + " " + ins.id + " (" + ins.short + "): N" + cb.size + " × " + cb.len + " through the insert's cross hole, horizontal (" + cat.doc + "). Placed " + depth + " in from the face, at the insert's foot: a placeholder until the insert drawing is read." });
+            ins.bars.push(b); roomCheck(ins, b, "cross");
+          }
+        });
+      }
+      ins.flagged = ins.fails.length > 0;
+    });
+
     // ---- chairs under the top face: 800 centres for mesh (NCC Table 3.2.3.1 via Findings 11.3), 1,000 for bars as on the floor ----
     const tf = faces[top];
     if (has(tf)) {
@@ -1969,25 +2216,30 @@ html.print #sheet { background: #fff; }
     }
 
     // ---- layers and fixing order on the bed: the bed face first (outer, then inner / edge), chairs, then the top face ----
-    const ORDER = [bed + "1", bed + "2", "CH", top + "2", top + "1"];
-    const COLORS = { FF1: "#4f8fe8", FF2: "#3fc1c9", CH: "#9aa7b4", NF2: "#e8a33d", NF1: "#e5534b" };
+    // inserts go in after the chairs: the edge anchors with their component bars tied into the cage before the top face
+    // closes it (a face insert on the bed face is set on the bed first; the step says so)
+    const ORDER = [bed + "1", bed + "2", "CH", "IN", top + "2", top + "1"];
+    const COLORS = { FF1: "#4f8fe8", FF2: "#3fc1c9", CH: "#9aa7b4", IN: "#b48cf0", NF2: "#e8a33d", NF1: "#e5534b" };
     const L1 = f => { const fa = faces[f]; return fa.mesh ? "mesh " + fa.mesh.code + " " + fa.mesh.dir : fa.layers[0] ? "outer bars N" + fa.layers[0].size + "-" + fa.layers[0].sp + " " + fa.layers[0].dir : "no steel"; };
     const L2 = f => { const fa = faces[f], edge = has(fa) && (F.perimeter || (F.trims && HOLES.length)); return fa.layers[1] ? "inner bars N" + fa.layers[1].size + "-" + fa.layers[1].sp + " " + fa.layers[1].dir + (edge ? " + edge bars" : "") : edge ? "edge bars" : "no steel"; };
-    const LNAME = { CH: "Bar chairs" };
+    const insCount = () => { const n = {}; INS.forEach(q => { n[q.kind] = (n[q.kind] || 0) + 1; }); return ["lifter", "brace", "ferrule"].filter(k => n[k]).map(k => n[k] + " " + INSERT_KIND[k] + (n[k] > 1 ? "s" : "")).join(", "); };
+    const LNAME = { CH: "Bar chairs", IN: "Inserts · " + (INS.length ? insCount() + (INS.some(q => q.bars.length) ? " + their bars" : "") : "none") };
     ["NF", "FF"].forEach(f => { LNAME[f + "1"] = FACE_NAME[f] + " · " + L1(f); LNAME[f + "2"] = FACE_NAME[f] + " · " + L2(f); });
-    const SHORT = { CH: "Chairs" };
+    const SHORT = { CH: "Chairs", IN: "Inserts" };
     ["NF", "FF"].forEach(f => { SHORT[f + "1"] = f + (faces[f].mesh ? " mesh" : " outer"); SHORT[f + "2"] = f + (faces[f].layers[1] ? " inner" : " edge"); });
-    const PLAYERS = ORDER.map((id, i) => ({ id: id, name: LNAME[id] + (id[0] + id[1] === bed && id !== "CH" ? ", on the bed" : ""), short: SHORT[id], css: COLORS[id], idx: i }));
+    const PLAYERS = ORDER.map((id, i) => ({ id: id, name: LNAME[id] + (id[0] + id[1] === bed && id !== "CH" && id !== "IN" ? ", on the bed" : ""), short: SHORT[id], css: COLORS[id], idx: i }));
     const PLBY = {}; PLAYERS.forEach(l => { PLBY[l.id] = l; });
-    const PEXPLODE = {}; ORDER.forEach((id, i) => { PEXPLODE[id] = [0, 0.25, 0, 0.6, 0.9][i]; });
+    const PEXPLODE = {}; ORDER.forEach((id, i) => { PEXPLODE[id] = [0, 0.25, 0, 0.45, 0.6, 0.9][i]; });
     const stepTitle = id => {
       if (id === "CH") return "Bar chairs";
+      if (id === "IN") return "Inserts";
       const f = id.slice(0, 2), fa = faces[f], k = id[2];
       if (k === "1") return FACE_NAME[f] + (fa.mesh ? " mesh" : " outer bars");
       return FACE_NAME[f] + (fa.layers[1] ? " inner bars" : " edge bars");
     };
     const stepSub = id => {
       if (id === "CH") return chairs.length ? chairs[0].pitch + " both ways, under the " + top + " steel" : "none";
+      if (id === "IN") { if (!INS.length) return "none"; const nb = INS.reduce((s, q) => s + q.bars.length, 0), flagged = INS.filter(q => q.flagged).length; return insCount() + (nb ? " · " + nb + " component bar" + (nb > 1 ? "s" : "") : "") + (INS.some(q => q.face === bed) ? " · " + bed + " face inserts set on the bed first" : "") + (flagged ? " · " + flagged + " flagged" : ""); }
       const f = id.slice(0, 2), list = runs.filter(r => r.layer === id);
       const bits = list.map(r => r.kind === "mesh" ? r.mesh.length + (r.mesh.length > 1 ? " sheets " : " sheet ") + faces[f].mesh.code : r.kind === "perim" ? "N16 perimeter" : r.kind === "trim" ? "opening bars" : "N" + r.size + "-" + r.sp + " " + (r.dir === "X" ? "H" : "V"));
       return (bits.length ? bits.join(" · ") : "no steel") + (f === bed ? " · on the bed" : "");
@@ -2010,17 +2262,11 @@ html.print #sheet { background: #fff; }
     const kgBars = sched.reduce((s, b) => s + b.kg, 0), kgMesh = pieces.reduce((s, p) => s + p.kg, 0);
     LAPS.rows.filter(r => r.short && r.lapped).forEach(r => warnings.push("Lap N" + r.size + " panel (" + r.what.join(", ") + "): " + r.len + " (project flat lap) is shorter than AS 3600 " + r.calc.rule + " gives, " + r.calc.lap + " (" + r.calc.detail + "). Check with the engineer."));
 
-    // ---- concrete: net area, mass and centre of gravity (Findings 12.1; density 2,400 is an open question) ----
-    const DENS = num(cfg.density) || 2400;
-    const gross = PW * PH, holeA = HOLES.map(h => (h.x1 - h.x0) * (h.y1 - h.y0)), net = gross - holeA.reduce((s, a) => s + a, 0);
-    const cogX = (gross * PW / 2 - HOLES.reduce((s, h, i) => s + holeA[i] * (h.x0 + h.x1) / 2, 0)) / net;
-    const cogY = (gross * PH / 2 - HOLES.reduce((s, h, i) => s + holeA[i] * (h.y0 + h.y1) / 2, 0)) / net;
-    const panel = { W: PW, H: PH, T: T, area: net / 1e6, volume: net * T / 1e9, mass: net * T / 1e9 * DENS, density: DENS, cog: { x: Math.round(cogX), y: Math.round(cogY) }, castFace: bed, topFace: top, sheets: cfg.meshSheets === "stock" ? "stock" : "made" };
-
     const SL = { x0: 0, y0: 0, x1: PW, y1: PH };
     return { kind: "panel", cfg: cfg, errors: errors, warnings: warnings, name: name, panel: panel, faces: faces, mats: {}, Z: {}, T: T, C: C, L: PW, W: PH, SL: SL, EXT: SL,
       GX: [], GY: [], gx: [0, PW], gy: [0, PH], HOLES: HOLES, DROPS: [], STEP: null, BALCS: [], BEAMS: [], COLS: [], COL: 400, COLB: -10, PROJ: 0,
       bars: bars, wires: wires, meshPieces: pieces, meshSummary: MSUM, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kgBars + kgMesh, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS,
+      inserts: INS, insertBodies: insBodies, insertFlags: insFlags, catalogue: { edition: INSERT_CAT.edition, date: INSERT_CAT.date },
       LAYERS: PLAYERS, LBY: PLBY, EXPLODE: PEXPLODE, ORDER: ORDER, steps: steps, lvl: () => 0 };
   }
 
@@ -2366,7 +2612,7 @@ html.print #sheet { background: #fff; }
     }
     VL.forEach(l => {
       const group = new THREE.Group(); scene.add(group); groups.push(group);
-      const list = l.id === "CH" ? M.chairs : M.bars.filter(b => b.layer === l.id).concat((M.wires || []).filter(w => w.layer === l.id));
+      const list = l.id === "CH" ? M.chairs : M.bars.filter(b => b.layer === l.id).concat((M.wires || []).filter(w => w.layer === l.id)).concat(l.id === "IN" ? (M.insertBodies || []) : []);
       const inst = [];
       list.forEach(b => { const r = b.size / 2000; for (let i = 1; i < b.pts.length; i++) inst.push({ b: b, m: segMatrix(b.pts[i - 1], b.pts[i], r) }); });
       const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.35 });
@@ -2406,7 +2652,7 @@ html.print #sheet { background: #fff; }
       const ms = r.marks.length > 3 ? r.marks.slice(0, 3).join(" ") + " +" + (r.marks.length - 3) : r.marks.join(" ");
       const L = mkLabel(esc(r.label) + "<small>" + (r.marks[0] === "EX" ? "existing, poured" : esc(ms)) + "</small>", "tag", r.anchor, { run: r, layer: r.layer, kind: "run" });
       L.el.style.setProperty("--c", VLBY[r.layer].css);
-      L.el.addEventListener("click", ev => { ev.stopPropagation(); selectRun(r); });
+      L.el.addEventListener("click", ev => { ev.stopPropagation(); if (r.insert) selectInsert(r.insert); else selectRun(r); });
     });
     const yTop = EXT.y1 + 1700 - 250, yBot = EXT.y0 - 1700 + 250, xL = EXT.x0 - 1700 + 250, xR = EXT.x1 + 1700 - 250;
     M.GX.forEach(g => { mkLabel(g[0], "bub", W(g[1], yBot, GZ), { kind: "bub", center: true }); mkLabel(g[0], "bub", W(g[1], yTop, GZ), { kind: "bub", center: true }); });
@@ -2525,7 +2771,8 @@ html.print #sheet { background: #fff; }
         c.copy(o.base);
         if (state.mark) { if (b.mark === state.mark) c.lerp(white, 0.35); else c.multiplyScalar(0.25); }
         else if (state.selRun && b.run && b.run !== state.selRun) c.multiplyScalar(0.4);
-        if (state.sel === b || (b.sheet && state.sel === b.sheet)) c.copy(white);
+        if (state.sel === b || (b.sheet && state.sel === b.sheet) || (b.insert && state.sel === b.insert)) c.copy(white);
+        else if (b.insert && b.insert.flagged && !state.mark) c.set(0xe5534b);   // an insert that fails a hard check is drawn red
         o.mesh.setColorAt(i, c);
       });
       if (o.mesh.instanceColor) o.mesh.instanceColor.needsUpdate = true;
@@ -2562,11 +2809,14 @@ html.print #sheet { background: #fff; }
       "<dt>Edges</dt><dd>" + (f.perimeter ? "N16 perimeter bars in each face, crossing at the corners" : "no perimeter bars") + (M.HOLES.length ? (f.trims ? "; a bar each side of each opening, 600 past the corners, N12 diagonals" : "; no opening bars") : "") + "</dd>";
     if (M.HOLES.length) rows += "<dt>Openings</dt><dd>" + M.HOLES.map(h => esc(h.label.toLowerCase()) + " at " + fmt(h.x0) + ", " + fmt(h.y0)).join("; ") + "</dd>";
     if (M.meshPieces.length) rows += "<dt>Mesh</dt><dd>" + M.meshPieces.length + (M.meshPieces.length > 1 ? " sheets" : " sheet") + ", " + (P.sheets === "stock" ? "cut from 6.0 × 2.4 stock" : "made to size where it fits") + "</dd>";
+    const INS = M.inserts || [], flagged = INS.filter(q => q.flagged);
+    rows += "<dt>Inserts</dt><dd>" + (INS.length ? INS.map(q => '<button type="button" class="linkbtn" data-ins="' + esc(q.id) + '"' + (q.flagged ? ' style="color:var(--bad)"' : "") + ">" + esc(q.id) + "</button> " + esc(q.short) + (q.kind === "lifter" && q.wll.wll && q.wll.wll !== q.cat.wll ? " (WLL " + q.wll.wll + " t at lift)" : "")).join("; ") + " · f'c at lift " + esc(String(P.fcLift)) + " MPa" + (flagged.length ? ' · <span style="color:var(--bad)">' + flagged.length + " fail" + (flagged.length > 1 ? "" : "s") + " a check</span>" : " · all checks pass") + ((M.insertFlags || []).length ? ' · <span style="color:var(--warn)">' + M.insertFlags.map(f => esc(f.rule.replace(/-/g, " "))).join(", ") + "</span>" : "") : "none") + "</dd>";
     rows += "<dt>Concrete</dt><dd>" + P.area.toFixed(2) + " m² net · " + P.volume.toFixed(2) + " m³ · " + fmt(P.mass) + " kg at " + fmt(P.density) + " kg/m³</dd>" +
       "<dt>CoG</dt><dd>" + fmt(P.cog.x) + " from the left edge, " + fmt(P.cog.y) + " from the bottom edge</dd>" +
       "<dt>Steel</dt><dd>" + fmt(M.kgBars) + " kg bars + " + fmt(M.kgMesh) + " kg mesh</dd>";
     insp.innerHTML = '<h2>Inspector</h2><div class="insp-title"><b>Panel ' + esc(M.name) + (M.cfg.example ? " · example" : "") + '</b></div><dl class="kv">' + rows + "</dl>" +
-      '<p class="note">Shown as cast, lying on its bed: Plan looks down on the ' + P.topFace + " face. Lifting and brace inserts, the panel sheet with its insert table, and edge U-bars between the faces are not modelled yet. Click any bar, mesh sheet or tag for its mark, size and setout.</p>";
+      '<p class="note">Shown as cast, lying on its bed: Plan looks down on the ' + P.topFace + " face. Inserts are checked against the supplier catalogue, never designed. The panel sheet with its insert table and edge U-bars between the faces are not modelled yet. Click any bar, mesh sheet, insert or tag for its details.</p>";
+    insp.querySelectorAll("[data-ins]").forEach(b => { b.onclick = () => { const q = (M.inserts || []).find(x => x.id === b.dataset.ins); if (q) selectInsert(q); }; });
   }
   function showBar(b) {
     const l = VLBY[b.layer];
@@ -2583,12 +2833,14 @@ html.print #sheet { background: #fff; }
       "<dt>Dims</dt><dd>" + esc(b.dimStr) + "</dd>" +
       "<dt>Layer</dt><dd>" + esc(l.name) + (b.grid ? " · runs " + (b.grid.dirWord || (b.grid.dir === "X" ? "E–W" : "N–S")) : "") + "</dd>" +
       "<dt>Run</dt><dd>" + esc(r.callout) + "</dd>" +
+      (b.insert ? "<dt>Insert</dt><dd>component bar for " + esc(b.insert.kindName) + ' <button type="button" class="linkbtn" data-ins="' + esc(b.insert.id) + '">' + esc(b.insert.id) + "</button> · " + esc(b.insert.pos) + "</dd>" : "") +
       "<dt>Cut length</dt><dd>" + fmt(b.len) + (b.len !== b.geomLen ? " (drawn " + fmt(b.geomLen) + " along the centreline)" : "") + "</dd>" +
       gridRows(b, "<br>").map(row => "<dt>" + row[0] + "</dt><dd>" + row[1] + "</dd>").join("") +
       (lapRow(b) ? "<dt>Lap</dt><dd>" + lapRow(b) + "</dd>" : "") +
       "<dt>Mass</dt><dd>" + b.kg.toFixed(2) + " kg</dd></dl>" +
       (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "") +
       b.flags.map(f => '<p class="note" style="color:var(--warn)">' + esc(f) + "</p>").join("");
+    insp.querySelectorAll("[data-ins]").forEach(el => { el.onclick = () => selectInsert(b.insert); });
   }
   function showRun(r) {
     const l = VLBY[r.layer], kg = runKg(r);
@@ -2634,6 +2886,7 @@ html.print #sheet { background: #fff; }
   const runKg = r => r.mesh ? r.mesh.reduce((s, pc) => s + pc.kg, 0) : r.bars.reduce((s, b) => s + b.kg, 0);
   function selectBar(b) {
     if (b.wire) { selectPiece(b.sheet); return; }
+    if (b.kind === "body" && b.insert) { selectInsert(b.insert); return; }
     state.sel = b; state.selRun = null; state.mark = null; markRows();
     showBar(b); recolor();
     const bt = built.barTag;
@@ -2676,6 +2929,41 @@ html.print #sheet { background: #fff; }
     }
   }
   function selectRun(r) { state.sel = null; state.selRun = r; state.mark = null; markRows(); built.barTag.el.hidden = true; showRun(r); recolor(); if (state.site) siteCardRun(r); }
+  // a cast-in insert (#33c): its catalogue entry, WLL at the lifting strength, position, every check with its result, and
+  // the component bars tagged to it; the same rows on the desktop inspector and the site card
+  function insertRows(ins) {
+    const cat = ins.cat, rows = [["Insert", esc(cat.brand + " " + cat.name + (cat.code ? " (" + cat.code + ")" : ""))], ["Kind", esc(ins.kindName) + (ins.edge ? ", edge anchor" : ", face insert")], ["Position", esc(ins.pos)]];
+    if (ins.kind === "lifter") rows.push(["WLL", esc(ins.wll.text) + (cat.wllNote ? " · " + esc(cat.wllNote) : "")]);
+    else if (cat.wllText) rows.push(["Capacity", esc(cat.wllText)]);
+    if (cat.T) rows.push(["Panels", cat.T[0] + "–" + cat.T[1] + " thick"]);
+    if (cat.em) rows.push(["Minimums", "edge " + cat.em + " · spacing " + cat.am]);
+    if (cat.c1) rows.push(["Minimums", "c1 " + cat.c1 + " · s1 " + cat.s1]);
+    rows.push(["Bars", ins.bars.length ? ins.bars.map(b => esc(b.mark) + " " + b.type + b.size + " " + esc(b.code) + " · " + fmt(b.len)).join("<br>") : "none needed"]);
+    rows.push(["Source", esc(cat.doc) + " (" + esc(cat.std) + "); catalogue " + esc(INSERT_CAT.edition) + " " + esc(INSERT_CAT.date)]);
+    return rows;
+  }
+  const checkList = ins => '<ul class="checks">' + ins.checks.map(c => '<li class="' + (c.pass ? "ok" : c.hard ? "fail" : "advis") + '"><b>' + esc(c.rule.replace(/-/g, " ")) + (c.hard ? "" : " (advisory)") + "</b> · " + esc(c.text) + "</li>").join("") + "</ul>";
+  function showInsert(ins) {
+    const l = VLBY[ins.layer];
+    insp.innerHTML = '<h2>Inspector</h2><div class="insp-title" style="--c:' + l.css + '"><span class="chip">' + esc(ins.id) + "</span><b>" + esc(ins.short) + (ins.flagged ? ' · <span style="color:var(--bad)">fails ' + ins.fails.length + (ins.fails.length > 1 ? " checks" : " check") + "</span>" : "") + "</b></div>" +
+      '<dl class="kv">' + insertRows(ins).map(r => "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>").join("") + "</dl>" +
+      "<h3 style=\"font-size:12px;margin:10px 0 0;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)\">Checks</h3>" + checkList(ins) +
+      '<p class="note">Positions come from the erection designer; X Struc checks them against the catalogue and flags, it never designs the lift (AS 3850.2). Click a component bar for its cut length and shape.</p>';
+  }
+  function selectInsert(ins) {
+    state.sel = ins; state.selRun = null; state.mark = null; markRows();
+    showInsert(ins); recolor();
+    const bt = built.barTag;
+    bt.pos = W(ins.x, ins.y, ins.z); bt.layer = ins.layer;
+    bt.el.innerHTML = esc(ins.id) + " · " + esc(ins.short) + "<small>" + esc(ins.kindName) + (ins.kind === "lifter" && ins.wll.wll ? " · WLL " + ins.wll.wll + " t" : "") + (ins.flagged ? " · fails a check" : "") + "</small>";
+    bt.el.hidden = false;
+    if (state.site) {
+      const card = $("sitecard"), l = VLBY[ins.layer]; card.style.setProperty("--c", ins.flagged ? "var(--bad)" : l.css);
+      card.innerHTML = '<div class="hd"><span class="chip">' + esc(ins.id) + "</span><b>" + esc(ins.short) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' +
+        siteKV((ins.kind === "lifter" ? [["WLL", ins.wll.wll ? ins.wll.wll + " t <small style=\"font-size:14px;color:var(--muted)\">at " + esc(String(M.panel.fcLift)) + " MPa</small>" : esc(ins.wll.text), "big"]] : []).concat(insertRows(ins).filter(r => r[0] !== "WLL" && r[0] !== "Source"))) + checkList(ins);
+      showCard(true);
+    }
+  }
 
   // ---- setout rows shared by the inspector and the site card (from b.grid / r.grid, computed in the model) ----
   function gridRows(b, br) {
@@ -2729,6 +3017,7 @@ html.print #sheet { background: #fff; }
     rows.push(["Shape", esc(b.code) + " · " + esc(b.shapeName) + (b.dimStr ? "<br>" + esc(b.dimStr) : "")]);
     if (lapRow(b)) rows.push(["Lap", lapRow(b)]);
     rows.push(["Run", esc(r.callout)]);
+    if (b.insert) rows.push(["Insert", esc(b.insert.kindName) + " " + esc(b.insert.id) + " · " + esc(b.insert.pos)]);
     card.innerHTML = '<div class="hd"><span class="chip">' + esc(b.mark) + "</span><b>" + b.type + b.size + " · " + esc(b.shapeName) + '</b><button class="btn x" type="button" data-close aria-label="Close">×</button></div>' +
       siteKV(rows) +
       (b.note ? '<p class="note">' + esc(b.note) + "</p>" : "") +
@@ -2880,7 +3169,7 @@ html.print #sheet { background: #fff; }
       const ev = lastMove, b = pick(ev.clientX, ev.clientY);
       if (!b) { tip.hidden = true; cvs.style.cursor = ""; return; }
       const rect = cvs.getBoundingClientRect();
-      tip.textContent = b.chair ? "Bar chair" : b.wire ? b.mark + " · " + b.sheet.code + " sheet " + fmt(b.sheet.cutL) + " × " + fmt(b.sheet.cutW) + " · " + b.layer : b.mark + " · " + b.type + b.size + " · " + fmt(b.len) + " · " + b.layer;
+      tip.textContent = b.chair ? "Bar chair" : b.kind === "body" ? b.insert.id + " · " + b.insert.short + (b.insert.flagged ? " · FAILS A CHECK" : "") : b.wire ? b.mark + " · " + b.sheet.code + " sheet " + fmt(b.sheet.cutL) + " × " + fmt(b.sheet.cutW) + " · " + b.layer : b.mark + " · " + b.type + b.size + " · " + fmt(b.len) + " · " + b.layer;
       tip.style.left = (ev.clientX - rect.left) + "px"; tip.style.top = (ev.clientY - rect.top) + "px";
       tip.hidden = false; cvs.style.cursor = "pointer";
     });
@@ -3295,18 +3584,23 @@ html.print #sheet { background: #fff; }
   const ROW_KINDS = {
     open: { what: "opening", nums: ["x0", "y0", "x1", "y1"], ph: "OPENING" },
     drop: { what: "set-down", nums: ["x0", "y0", "x1", "y1"], head: "depth", ph: "SET-DOWN" },
-    balc: { what: "balcony", nums: ["from", "to"], nums2: ["proj", "thk", "down"], labels: { proj: "out" }, edge: true, ph: "BALCONY" }
+    balc: { what: "balcony", nums: ["from", "to"], nums2: ["proj", "thk", "down"], labels: { proj: "out" }, edge: true, ph: "BALCONY" },
+    // a panel insert (#33c): id, catalogue type, where it goes (an edge, or a face), then x / y
+    ins: { what: "insert", name: "id", nameK: "id", nums: ["x", "y"], ph: "L1", edge: ["top", "bottom", "left", "right", "NF", "FF"], edgeLabel: "in / on", type: true }
   };
+  const INS_TYPES = Object.keys(INSERT_CAT.items).map(k => [k, INSERT_CAT.items[k].brand + " " + INSERT_CAT.items[k].name]);
   function geoRow(kind, o) {
-    const K = ROW_KINDS[kind], row = document.createElement("div"); row.className = "orow" + (K.head || K.edge ? " withhead" : ""); row.dataset.kind = kind;
-    row.innerHTML = '<div class="field"><label>Name</label><input type="text" data-k="name" maxlength="24" spellcheck="false" autocomplete="off" placeholder="' + K.ph + '"></div>' +
+    const K = ROW_KINDS[kind], row = document.createElement("div"); row.className = "orow" + (K.head || K.edge ? " withhead" : "") + (K.type ? " withtype" : ""); row.dataset.kind = kind;
+    const edges = Array.isArray(K.edge) ? K.edge : ["N", "S", "E", "W"];
+    row.innerHTML = '<div class="field"><label>' + (K.name || "Name") + '</label><input type="text" data-k="' + (K.nameK || "name") + '" maxlength="24" spellcheck="false" autocomplete="off" placeholder="' + K.ph + '"></div>' +
       (K.head ? '<div class="field"><label>' + K.head + '</label><input type="number" step="10" inputmode="numeric" data-k="' + K.head + '" aria-label="' + K.what + ' ' + K.head + ' mm"></div>' : "") +
-      (K.edge ? '<div class="field"><label>edge</label><select data-k="edge" aria-label="' + K.what + ' edge">' + ["N", "S", "E", "W"].map(e => '<option value="' + e + '">' + e + '</option>').join("") + '</select></div>' : "") +
+      (K.edge ? '<div class="field"><label>' + (K.edgeLabel || "edge") + '</label><select data-k="edge" aria-label="' + K.what + ' ' + (K.edgeLabel || "edge") + '">' + edges.map(e => '<option value="' + e + '">' + e + '</option>').join("") + '</select></div>' : "") +
       '<button class="btn small del" type="button" aria-label="Remove ' + K.what + '" title="Remove ' + K.what + '">×</button>' +
+      (K.type ? '<div class="field wide"><label>type</label><select data-k="type" aria-label="' + K.what + ' type">' + INS_TYPES.map(t => '<option value="' + t[0] + '">' + esc(t[1]) + '</option>').join("") + '</select></div>' : "") +
       [K.nums, K.nums2].filter(Boolean).map(ks => '<div class="nums n' + ks.length + '">' + ks.map(k => '<div class="field"><label>' + ((K.labels && K.labels[k]) || k) + '</label><input type="number" step="10" inputmode="numeric" data-k="' + k + '" aria-label="' + K.what + ' ' + ((K.labels && K.labels[k]) || k) + ' mm"></div>').join("") + "</div>").join("");
     row.querySelectorAll("input, select").forEach(el => {
       el.value = o[el.dataset.k] == null ? "" : o[el.dataset.k];
-      if (el.tagName === "SELECT" && el.selectedIndex < 0) el.value = "N";
+      if (el.tagName === "SELECT" && el.selectedIndex < 0) el.value = el.dataset.k === "type" ? INS_TYPES[0][0] : edges[0];
       el.addEventListener("input", scheduleRebuild); if (el.tagName === "SELECT") el.addEventListener("change", scheduleRebuild);
     });
     row.querySelector(".del").onclick = () => { row.remove(); scheduleRebuild(); };
@@ -3352,8 +3646,10 @@ html.print #sheet { background: #fff; }
     if (model.cfg && model.cfg.kind === "panel") {
       const has = re => model.errors.some(e => re.test(e));
       PN.NF.setAttribute("aria-invalid", String(has(/^Near face line/))); PN.FF.setAttribute("aria-invalid", String(has(/^Far face line/)));
-      [[PN.W, /^Panel size/], [PN.H, /^Panel size/], [PN.T, /^Panel (thickness|too thin)/], [PN.cover, /^Cover/], [PN.fc, /f'c/], [PN.lap, /^Lap must/]].forEach(q => q[0].setAttribute("aria-invalid", String(has(q[1]))));
+      [[PN.W, /^Panel size/], [PN.H, /^Panel size/], [PN.T, /^Panel (thickness|too thin)/], [PN.cover, /^Cover/], [PN.fc, /^Concrete f'c must/], [PN.fcLift, /f'c at lift/], [PN.lap, /^Lap must/]].forEach(q => q[0].setAttribute("aria-invalid", String(has(q[1]))));
       [...PN.rows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Opening " + (i + 1) + " ") === 0)); });
+      // an insert row is red when its line is rejected, amber when it builds but fails a hard check
+      [...PN.insRows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Insert " + (i + 1) + " ") === 0)); r.dataset.flag = String(!!(model.inserts || []).find(q => q.row === i + 1 && q.flagged)); });
       return;
     }
     IN.callouts.setAttribute("aria-invalid", String(model.errors.some(e => /^Line \d/.test(e))));
@@ -3453,7 +3749,8 @@ html.print #sheet { background: #fff; }
   };
   // ---- precast panel inputs (#33): size, the face on the bed, each face as bars or mesh, openings ----
   let mode = "floor";
-  const PN = { name: $("pnName"), cast: $("pnCast"), W: $("pnW"), H: $("pnH"), T: $("pnT"), cover: $("pnCover"), fc: $("pnFc"), lap: $("pnLap"), NF: $("pnNF"), FF: $("pnFF"), sheets: $("pnSheets"), perim: $("pnPerim"), trims: $("pnTrims"), rows: $("pnOpenRows") };
+  const PN = { name: $("pnName"), cast: $("pnCast"), W: $("pnW"), H: $("pnH"), T: $("pnT"), cover: $("pnCover"), fc: $("pnFc"), fcLift: $("pnFcLift"), lap: $("pnLap"), NF: $("pnNF"), FF: $("pnFF"), sheets: $("pnSheets"), perim: $("pnPerim"), trims: $("pnTrims"), rows: $("pnOpenRows"), insRows: $("pnInsRows") };
+  $("pnInsCat").textContent = "Catalogue: " + INSERT_CAT.edition + " (" + INSERT_CAT.date + ") — Reid 3Dx and JAWS edge lifters, Reid face lifter, Ancon QwikFoot / QwikFix inserts, from the suppliers' published compliance documents. WLL is printed, never designed to.";
   const FACE_DEFAULT = { bar: "N12-200 H\nN12-200 V", mesh: "SL82 H" };
   const faceKind = { NF: "bar", FF: "mesh" }, faceMem = { NF: {}, FF: {} };   // each face remembers what was typed for bars and for mesh
   function setFaceKind(f, kind, keepText) {
@@ -3465,19 +3762,46 @@ html.print #sheet { background: #fff; }
   document.querySelectorAll(".kindsw [data-face]").forEach(b => { b.onclick = () => { if (faceKind[b.dataset.face] === b.dataset.kind) return; setFaceKind(b.dataset.face, b.dataset.kind); scheduleRebuild(); }; });
   function fillPanel(cfg) {
     PN.name.value = cfg.name; PN.cast.value = cfg.castFace === "NF" ? "NF" : "FF";
-    PN.W.value = cfg.W; PN.H.value = cfg.H; PN.T.value = cfg.T; PN.cover.value = cfg.cover; PN.fc.value = cfg.fc; PN.lap.value = cfg.lap;
+    PN.W.value = cfg.W; PN.H.value = cfg.H; PN.T.value = cfg.T; PN.cover.value = cfg.cover; PN.fc.value = cfg.fc; PN.lap.value = cfg.lap; PN.fcLift.value = cfg.fcLift == null ? "" : cfg.fcLift;
     ["NF", "FF"].forEach(f => { faceMem[f] = {}; setFaceKind(f, cfg.faces[f].kind === "mesh" ? "mesh" : "bar", true); PN[f].value = cfg.faces[f].callouts; });
     PN.sheets.value = cfg.meshSheets === "stock" ? "stock" : "made"; PN.perim.checked = !!cfg.features.perimeter; PN.trims.checked = !!cfg.features.trims;
     PN.rows.innerHTML = ""; (cfg.openings || []).forEach(o => PN.rows.appendChild(openRow(o)));
+    PN.insRows.innerHTML = ""; (cfg.inserts || []).forEach(o => PN.insRows.appendChild(geoRow("ins", o)));
   }
   function readPanel() {
-    return { kind: "panel", name: PN.name.value, castFace: PN.cast.value, W: numOf(PN.W), H: numOf(PN.H), T: numOf(PN.T), cover: numOf(PN.cover), fc: numOf(PN.fc), lap: numOf(PN.lap),
+    return { kind: "panel", name: PN.name.value, castFace: PN.cast.value, W: numOf(PN.W), H: numOf(PN.H), T: numOf(PN.T), cover: numOf(PN.cover), fc: numOf(PN.fc), fcLift: PN.fcLift.value.trim() === "" ? "" : numOf(PN.fcLift), lap: numOf(PN.lap),
       meshSheets: PN.sheets.value, features: { perimeter: PN.perim.checked, trims: PN.trims.checked },
-      faces: { NF: { kind: faceKind.NF, callouts: PN.NF.value }, FF: { kind: faceKind.FF, callouts: PN.FF.value } }, openings: readRows(PN.rows) };
+      faces: { NF: { kind: faceKind.NF, callouts: PN.NF.value }, FF: { kind: faceKind.FF, callouts: PN.FF.value } }, openings: readRows(PN.rows), inserts: readRows(PN.insRows) };
   }
-  [PN.name, PN.W, PN.H, PN.T, PN.cover, PN.fc, PN.lap, PN.NF, PN.FF].forEach(el => el.addEventListener("input", scheduleRebuild));
+  [PN.name, PN.W, PN.H, PN.T, PN.cover, PN.fc, PN.fcLift, PN.lap, PN.NF, PN.FF].forEach(el => el.addEventListener("input", scheduleRebuild));
   [PN.cast, PN.sheets, PN.perim, PN.trims].forEach(el => el.addEventListener("change", scheduleRebuild));
   $("btnAddPnOpen").onclick = () => addGeoRow("open", PN.rows, 600, 400, 300);
+  // a new lifter goes in the top edge at the first free position from the left that keeps the catalogue edge distance and
+  // spacing (3Dx 10 t: 420 / 840); a new brace insert on the top face at 60 % of the height, off the lifter lines
+  function addInsertRow(kind) {
+    const rows = readRows(PN.insRows), m = lastGood && M && M.kind === "panel" ? M : null, PW = numOf(PN.W) || 6000, PH = numOf(PN.H) || 3000;
+    const ids = rows.map(r => String(r.id || "").toUpperCase()), nextId = p => { let n = 1; while (ids.indexOf(p + n) >= 0) n++; return p + n; };
+    let o;
+    if (kind === "lifter") {
+      const cat = INSERT_CAT.items["3DX10"], taken = rows.filter(r => r.edge === "top" && isFinite(r.x)).map(r => r.x);
+      let x = cat.em; while (taken.some(t => Math.abs(t - x) < cat.am) && x < PW - cat.em) x += 50;
+      o = { id: nextId("L"), type: "3DX10", edge: "top", x: Math.min(x, PW - cat.em), y: PH };
+    } else {
+      // the spot at mid-height farthest from the brace inserts already placed, off the lifter lines and clear of the openings
+      const lifters = rows.filter(r => (r.edge === "top" || r.edge === "bottom") && isFinite(r.x)).map(r => r.x), braces = rows.filter(r => (r.edge === "NF" || r.edge === "FF") && isFinite(r.x) && isFinite(r.y));
+      const y = Math.round(0.5 * PH / 50) * 50, holes = m ? m.HOLES : [];
+      let best = null;
+      for (let x = 300; x <= PW - 300; x += 50) {
+        if (lifters.some(t => Math.abs(t - x) < 200) || holes.some(h => x > h.x0 - 200 && x < h.x1 + 200 && y > h.y0 - 200 && y < h.y1 + 200)) continue;
+        const d = braces.length ? Math.min(...braces.map(b => Math.hypot(b.x - x, b.y - y))) : Math.abs(x - PW / 2) + 1;
+        if (!best || d > best.d) best = { x: x, d: d };
+      }
+      o = { id: nextId("B"), type: "QF20B", edge: m ? m.panel.topFace : "NF", x: best ? best.x : 400, y: y };
+    }
+    const row = geoRow("ins", o); PN.insRows.appendChild(row); row.querySelector("input").focus(); scheduleRebuild();
+  }
+  $("btnAddPnLifter").onclick = () => addInsertRow("lifter");
+  $("btnAddPnBrace").onclick = () => addInsertRow("brace");
   $("btnPanelReset").onclick = () => { fillPanel(PANEL_CFG); rebuild(PANEL_CFG, { example: true, camera: true }); };
   // Floor slab or precast panel: each keeps its own inputs; switching rebuilds from the other set as it stands
   const modeExample = { floor: true, panel: true };
@@ -3514,6 +3838,7 @@ html.print #sheet { background: #fff; }
   // test handle for scripts/smoke.js (headless Chromium cannot aim a tap at a 12 mm bar reliably)
   window.xstruc = { model: () => M, state: state, selectBar: id => { const b = M.bars.find(x => x.id === id); if (b) selectBar(b); return !!b; }, selectRun: id => { const r = M.runs.find(x => x.id === id); if (r) selectRun(r); return !!r; }, setSite: setSite,
     sheet: () => sheet, setSheet: setSheet, sheetXY: (x, y) => [sx(x), sy(y)], sheetScale: () => sv.s, drawnMarks: () => drawnMarks,
-    highlightMark: highlightMark, printPrep: printPrep, printing: () => printing, setMode: setMode, mode: () => mode, selectPiece: id => { const pc = (M.meshPieces || []).find(x => x.id === id); if (pc) selectPiece(pc); return !!pc; } };
+    highlightMark: highlightMark, printPrep: printPrep, printing: () => printing, setMode: setMode, mode: () => mode, selectPiece: id => { const pc = (M.meshPieces || []).find(x => x.id === id); if (pc) selectPiece(pc); return !!pc; },
+    selectInsert: id => { const q = (M.inserts || []).find(x => x.id === id); if (q) selectInsert(q); return !!q; } };
 })();
 </script>

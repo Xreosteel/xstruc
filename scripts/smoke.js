@@ -387,9 +387,28 @@ const { chromium } = require("playwright");
   await page.click("#tgSheet"); await page.click('#steps .step[data-step="1"]'); await page.waitForTimeout(600);
   pn.sheet = await page.evaluate(() => { const S = window.xstruc.sheet(); return { title: S.title.join(" / "), tags: S.tags.map(t => t.text), sheets: S.strip.sheets, wires: S.bars.length }; });
   await page.screenshot({ path: path.join(outDir, "smoke-18-panel-sheet.png") });
-  await page.click('#steps .step[data-step="4"]'); await page.waitForTimeout(600);
+  await page.click('#steps .step[data-step="5"]'); await page.waitForTimeout(600);
   pn.sheet4 = await page.evaluate(() => { const S = window.xstruc.sheet(); return { tags: S.tags.map(t => t.text).sort(), dims: S.dims.length, overlap: S.tags.some(t => t.overlap) }; });
   await page.click(".side [data-cam=iso]"); await page.click("#all");
+  // inserts (#33c): the example's lifters and braces, the Inserts step, an insert picked, a brace added, a lifter moved
+  // too close to the corner (flagged amber, warning, scene kept), a bad row (error), and back to the example
+  await page.click(".side [data-cam=fit]"); await page.click('#steps .step[data-step="4"]'); await page.waitForTimeout(700);
+  pn.ins = await page.evaluate(() => { const M = window.xstruc.model(); return { label: document.getElementById("steplabel").textContent, sub: document.querySelector('#steps .step[data-step="4"] small').textContent, n: M.inserts.length, bodies: M.insertBodies.length, tbBars: M.bars.filter(b => b.layer === "IN").length, rows: document.querySelectorAll("#pnInsRows .orow").length, tags: [...document.querySelectorAll("#tags .tag:not([hidden])")].map(t => t.childNodes[0].textContent.trim()).filter(t => /^[LB]\d/.test(t)).sort(), flags: M.inserts.filter(q => q.flagged).length, cat: document.getElementById("pnInsCat").textContent.slice(0, 40), fcLift: document.getElementById("pnFcLift").value, inspector: document.getElementById("inspector").textContent.replace(/\s+/g, " ") }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-20-panel-inserts.png") });
+  await page.evaluate(() => window.xstruc.selectInsert("L1")); await page.waitForTimeout(200);
+  pn.insL1 = await page.evaluate(() => ({ insp: document.getElementById("inspector").textContent.replace(/\s+/g, " "), checks: document.querySelectorAll("#inspector .checks li").length, fails: document.querySelectorAll("#inspector .checks li.fail").length, tag: document.querySelector("#tags .tag.bar").textContent.replace(/\s+/g, " ") }));
+  await page.screenshot({ path: path.join(outDir, "smoke-20-panel-insert-l1.png") });
+  await page.evaluate(() => window.xstruc.selectBar(window.xstruc.model().bars.find(b => b.layer === "IN").id)); await page.waitForTimeout(200);
+  pn.insBar = await page.textContent("#inspector");
+  await page.click("#btnAddPnBrace"); await page.waitForTimeout(900);
+  pn.insAdd = await page.evaluate(() => { const M = window.xstruc.model(); return { n: M.inserts.length, ids: M.inserts.map(q => q.id).join(), rows: document.querySelectorAll("#pnInsRows .orow").length, errs: [...document.querySelectorAll("#inErrs li")].map(e => e.textContent), b3: M.inserts[4] && [M.inserts[4].type, M.inserts[4].face, M.inserts[4].x, M.inserts[4].y, M.inserts[4].fails.join()] }; });
+  await page.fill('#pnInsRows .orow:nth-child(1) input[data-k="x"]', "400"); await page.waitForTimeout(900);
+  pn.insFlag = await page.evaluate(() => { const M = window.xstruc.model(); return { fails: M.inserts[0].fails.join(), flag: document.querySelector("#pnInsRows .orow").dataset.flag, invalid: document.querySelector("#pnInsRows .orow").dataset.invalid, warn: [...document.querySelectorAll("#inErrs li.warn")].map(e => e.textContent).filter(w => /^Insert/.test(w)), bars: document.getElementById("stBars").textContent }; });
+  await page.fill('#pnInsRows .orow:nth-child(1) input[data-k="x"]', ""); await page.waitForTimeout(900);
+  pn.insBad = await page.evaluate(() => ({ errs: [...document.querySelectorAll("#inErrs li:not(.warn)")].map(e => e.textContent), invalid: document.querySelector("#pnInsRows .orow").dataset.invalid, n: window.xstruc.model().inserts.length }));
+  await page.click("#btnPanelReset"); await page.waitForTimeout(900);
+  pn.insReset = await page.evaluate(() => ({ n: window.xstruc.model().inserts.length, rows: document.querySelectorAll("#pnInsRows .orow").length, errs: document.querySelectorAll("#inErrs li").length, bars: document.getElementById("stBars").textContent }));
+  await page.click("#all");
   // site mode on a tablet
   await page.setViewportSize({ width: 1024, height: 768 }); await page.waitForTimeout(300); await page.click("#btnSite"); await page.waitForTimeout(700);
   pn.site = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#siteChips .chip-step")].map(c => c.lastElementChild.textContent), now: document.getElementById("siteNow").textContent, overflow: document.documentElement.scrollHeight > innerHeight + 1 }));
@@ -404,15 +423,24 @@ const { chromium } = require("playwright");
   await browser.close();
   const problems = [];
   // precast panel (#33)
-  if (pn.kind !== "panel" || pn.order !== "FF1,FF2,CH,NF2,NF1" || pn.chips !== 6 || pn.pieces !== 1 || pn.wires < 40 || !pn.fieldsHidden || !pn.panelShown || !pn.meshRow || !/Example panel/.test(pn.line) || !/FF mesh/.test(pn.legend) || pn.stats.bars !== "83" || pn.stats.errs.length) problems.push("panel mode did not build the example panel: " + JSON.stringify(pn).slice(0, 600));
+  if (pn.kind !== "panel" || pn.order !== "FF1,FF2,CH,IN,NF2,NF1" || pn.chips !== 7 || pn.pieces !== 1 || pn.wires < 40 || !pn.fieldsHidden || !pn.panelShown || !pn.meshRow || !/Example panel/.test(pn.line) || !/FF mesh/.test(pn.legend) || !/Inserts/.test(pn.legend) || pn.stats.bars !== "85" || pn.stats.errs.length) problems.push("panel mode did not build the example panel: " + JSON.stringify(pn).slice(0, 600));
+  // inserts (#33c)
+  if (!/^Step 4 of 6 · Inserts$/.test(pn.ins.label) || pn.ins.sub !== "2 lifters, 2 brace inserts · 2 component bars" || pn.ins.n !== 4 || pn.ins.bodies !== 4 || pn.ins.tbBars !== 2 || pn.ins.rows !== 4 || pn.ins.flags !== 0 || pn.ins.fcLift !== "25" || !/^Catalogue: Findings 12.2 seed/.test(pn.ins.cat) || !/InsertsL1 Reid 3Dx 10 t; L2 Reid 3Dx 10 t; B1 Ancon QwikFoot 96 long \(M20\); B2 Ancon QwikFoot 96 long \(M20\) · f'c at lift 25 MPa · all checks pass/.test(pn.ins.inspector)) problems.push("inserts step / summary wrong: " + JSON.stringify(pn.ins).slice(0, 900));
+  if (pn.ins.tags.join("|") !== "B1 · QwikFoot 96 long (M20)|B2 · QwikFoot 96 long (M20)|L1 · 3Dx 10 t|L2 · 3Dx 10 t") problems.push("insert tags: " + JSON.stringify(pn.ins.tags));
+  if (!/L1Reid 3Dx 10 t/.test(pn.insL1.insp) || !/WLL10 t at 25 MPa \(table step 25\)/.test(pn.insL1.insp) || !/Position450 from the left edge, in the top edge/.test(pn.insL1.insp) || !/BarsP1-01 N16 TB · 890/.test(pn.insL1.insp) || pn.insL1.checks !== 7 || pn.insL1.fails !== 0 || !/^L1 · Reid 3Dx 10 tlifter · WLL 10 t$/.test(pn.insL1.tag)) problems.push("insert inspector wrong: " + JSON.stringify(pn.insL1).slice(0, 900));
+  if (!/P1-01N16 · shape TB/.test(pn.insBar) || !/Insertcomponent bar for lifter L1 · 450 from the left edge/.test(pn.insBar) || !/1 bend on a 64 pin \(4db\)/.test(pn.insBar)) problems.push("component bar inspector wrong: " + pn.insBar.slice(0, 600));
+  if (pn.insAdd.n !== 5 || pn.insAdd.ids !== "L1,L2,B1,B2,B3" || pn.insAdd.rows !== 5 || pn.insAdd.errs.length || !pn.insAdd.b3 || pn.insAdd.b3.join() !== "QF20B,NF,3000,1500,") problems.push("adding a brace: " + JSON.stringify(pn.insAdd));
+  if (pn.insFlag.fails !== "edge" || pn.insFlag.flag !== "true" || pn.insFlag.invalid !== "false" || pn.insFlag.warn.length !== 1 || !/^Insert 1 \(L1, Reid 3Dx 10 t\) fails the edge check: 400 to the panel corner; catalogue edge distance 420\.$/.test(pn.insFlag.warn[0]) || pn.insFlag.bars !== "85") problems.push("a lifter 400 from the corner should be flagged, not rejected: " + JSON.stringify(pn.insFlag));
+  if (pn.insBad.errs.length !== 1 || !/^Insert 1 \(L1\): give its position along the top edge/.test(pn.insBad.errs[0]) || pn.insBad.invalid !== "true" || pn.insBad.n !== 5) problems.push("a blank insert position should be an error that keeps the scene: " + JSON.stringify(pn.insBad));
+  if (pn.insReset.n !== 4 || pn.insReset.rows !== 4 || pn.insReset.errs !== 0 || pn.insReset.bars !== "85") problems.push("reset did not restore the example inserts: " + JSON.stringify(pn.insReset));
   if (!/P1-M1SL82 mesh sheet/.test(pn.piece) || !/Cut size5,940 × 2,940/.test(pn.piece)) problems.push("mesh sheet inspector wrong: " + pn.piece);
   if (pn.nfMesh.pieces !== "NF SL82,FF SL82" || pn.nfMesh.nfBars !== 0 || pn.nfMesh.text !== "SL82 H" || pn.nfMesh.pressed !== "true") problems.push("setting the near face to mesh: " + JSON.stringify(pn.nfMesh));
   if (!pn.bad.errs.some(e => /^Near face line 1 \(SL82\): say which way its long wires run/.test(e)) || pn.bad.invalid !== "true" || pn.bad.pieces !== 2) problems.push("a bad face line should be an error that keeps the scene: " + JSON.stringify(pn.bad));
-  if (pn.back.text !== "N12-200 H\nN12-200 V" || pn.back.errs.length || pn.back.bars !== "83") problems.push("back to bars did not restore the bar lines: " + JSON.stringify(pn.back));
-  if (pn.flip.order !== "NF1,NF2,CH,FF2,FF1" || pn.flip.first !== "Near face outer bars") problems.push("NF on the bed did not flip the order: " + JSON.stringify(pn.flip));
+  if (pn.back.text !== "N12-200 H\nN12-200 V" || pn.back.errs.length || pn.back.bars !== "85") problems.push("back to bars did not restore the bar lines: " + JSON.stringify(pn.back));
+  if (pn.flip.order !== "NF1,NF2,CH,IN,FF2,FF1" || pn.flip.first !== "Near face outer bars") problems.push("NF on the bed did not flip the order: " + JSON.stringify(pn.flip));
   if (!/FAR FACE · MESH SL82 H/.test(pn.sheet.title) || pn.sheet.sheets !== 1 || pn.sheet.tags.join() !== "SL82 H · FF" || pn.sheet.wires < 40) problems.push("panel mesh sheet wrong: " + JSON.stringify(pn.sheet));
   if (pn.sheet4.tags.join() !== "30 N12-200 V · NF,N16 PERIMETER · NF,OPENING BARS · NF" || pn.sheet4.dims !== 2 || pn.sheet4.overlap) problems.push("panel near-face sheet wrong: " + JSON.stringify(pn.sheet4));
-  if (pn.site.chips.join("|") !== "Formwork|Far face mesh|Far face edge bars|Bar chairs|Near face inner bars|Near face outer bars|Finished panel" || pn.site.overflow) problems.push("panel site mode: " + JSON.stringify(pn.site));
+  if (pn.site.chips.join("|") !== "Formwork|Far face mesh|Far face edge bars|Bar chairs|Inserts|Near face inner bars|Near face outer bars|Finished panel" || pn.site.overflow) problems.push("panel site mode: " + JSON.stringify(pn.site));
   if (pn.floor.bars !== s0.bars || pn.floor.steps !== 8 || JSON.stringify(pn.floor.errs) !== JSON.stringify(s0.errs)) problems.push("back to the floor did not restore the example: " + JSON.stringify(pn.floor));
   siteRuns.forEach(r => {
     const p = m => problems.push("site " + r.vp + ": " + m);
