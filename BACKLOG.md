@@ -39,7 +39,7 @@ See `DECISIONS.md`. The first users are site crews, so items that help a fixer o
   - [x] **33b. Opening bars.** One bar each side of each opening in each face, 600 past the corners (N16 at 1,500 or more across, else N12), shortened and flagged at the panel edge, and an N12 × 1,200 diagonal across each corner.
   - [x] **33c. Insert catalogue, checks and component bars.** Findings 12.2 seeded as a catalogue with edition and date; lifter / brace / ferrule positions as inputs; hard and advisory checks (Findings 12.5 step 5); tension and shear bars tagged to their insert and scheduled.
   - [x] **33d. Panel sheet, insert table and panel tag.** Findings 12.6: elevation sheet with insert symbols and table, CoG cross, mass and f'c at lift notes, approval block; the bundle-style panel tag.
-  - [ ] **33e. Cover table and minimum reinforcement.** `coverTable: rigid` (Findings 12.3), ρ per face and direction against AS 3600 Cl 11.7.1 (secondary values), flags.
+  - [x] **33e. Cover table and minimum reinforcement.** `coverTable: rigid` (Findings 12.3), ρ per face and direction against AS 3600 Cl 11.7.1 (secondary values), flags.
   - [ ] **33f. Doors and edge openings; standing view.** Openings that reach a panel edge (doors, notches) with the perimeter bar stopping at them; an erected (standing) pose beside the bed pose.
 
 ## Phase 1b · viewer polish
