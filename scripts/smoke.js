@@ -437,6 +437,21 @@ const { chromium } = require("playwright");
   pn.insBad = await page.evaluate(() => ({ errs: [...document.querySelectorAll("#inErrs li:not(.warn)")].map(e => e.textContent), invalid: document.querySelector("#pnInsRows .orow").dataset.invalid, n: window.xstruc.model().inserts.length }));
   await page.click("#btnPanelReset"); await page.waitForTimeout(900);
   pn.insReset = await page.evaluate(() => ({ n: window.xstruc.model().inserts.length, rows: document.querySelectorAll("#pnInsRows .orow").length, errs: document.querySelectorAll("#inErrs li").length, bars: document.getElementById("stBars").textContent }));
+  // a door (#33f): + Add door drops a 1,000 × 2,100 door on the bottom edge clear of the window; the outline is notched
+  // in 3D and on the sheet, the perimeter bars stop at it (warning), the jamb bars run to the edge; a lifter moved into
+  // the door is an error; reset brings the example back
+  await page.click("#all"); await page.click(".side [data-cam=iso]");
+  await page.click("#btnAddPnDoor"); await page.waitForTimeout(900);
+  pn.door = await page.evaluate(() => { const M = window.xstruc.model(), d = M.HOLES.find(h => h.edge); return { rows: document.querySelectorAll("#pnOpenRows .orow").length, holes: M.HOLES.length, door: d && [d.id, d.kind, d.edgeText, d.x0, d.x1, d.y0, d.y1], outline: M.outline.length, perim: M.runs.filter(r => r.kind === "perim").map(r => r.bars.length).join(), trims: M.runs.filter(r => r.kind === "trim").map(r => r.bars.length).join(), bars: document.getElementById("stBars").textContent, errs: [...document.querySelectorAll("#inErrs li:not(.warn)")].map(e => e.textContent), warns: [...document.querySelectorAll("#inErrs li.warn")].map(e => e.textContent).filter(w => /^Perimeter/.test(w)), formwork: document.querySelector('#steps .step[data-step="0"] small').textContent, summary: document.getElementById("inspector").textContent.replace(/\s+/g, " ") }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-23-panel-door.png") });
+  await page.click("#tgSheet"); await page.click("#all"); await page.waitForTimeout(600);
+  pn.doorSheet = await page.evaluate(() => { const S = window.xstruc.sheet(); return { outline: S.concrete.outline && S.concrete.outline.length, edgeHoles: S.concrete.holes.filter(h => h.edge).length, dims: S.openDims.length, zero: S.openDims.some(d => d.b <= d.a), overlap: S.tags.some(t => t.overlap) }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-23-panel-door-sheet.png") });
+  await page.click("#tgSheet"); await page.waitForTimeout(300);
+  await page.selectOption('#pnInsRows .orow:nth-child(1) select[data-k="edge"]', "bottom"); await page.fill('#pnInsRows .orow:nth-child(1) input[data-k="x"]', "1800"); await page.waitForTimeout(900);
+  pn.doorIns = await page.evaluate(() => ({ errs: [...document.querySelectorAll("#inErrs li:not(.warn)")].map(e => e.textContent), bars: document.getElementById("stBars").textContent }));
+  await page.click("#btnPanelReset"); await page.waitForTimeout(900);
+  pn.doorReset = await page.evaluate(() => ({ holes: window.xstruc.model().HOLES.length, rows: document.querySelectorAll("#pnOpenRows .orow").length, bars: document.getElementById("stBars").textContent, warns: document.querySelectorAll("#inErrs li").length }));
   await page.click("#all");
   // site mode on a tablet
   await page.setViewportSize({ width: 1024, height: 768 }); await page.waitForTimeout(300); await page.click("#btnSite"); await page.waitForTimeout(700);
@@ -450,6 +465,7 @@ const { chromium } = require("playwright");
   console.log("panel:", JSON.stringify(pn).slice(0, 1500));
   console.log("panel elevation:", JSON.stringify({ elev: pn.elev, tap: pn.elevTap, appr: pn.elevAppr, all: pn.elevAll, print: pn.elevPrint }));
   console.log("panel cover:", JSON.stringify({ cover: pn.cover, rigid: pn.coverRigid, low: pn.coverLow, none: pn.coverNone }));
+  console.log("panel door:", JSON.stringify({ door: Object.assign({}, pn.door, { summary: pn.door.summary.slice(pn.door.summary.indexOf("Openings"), pn.door.summary.indexOf("Openings") + 120) }), sheet: pn.doorSheet, ins: pn.doorIns, reset: pn.doorReset }));
 
   await browser.close();
   const problems = [];
@@ -476,6 +492,11 @@ const { chromium } = require("playwright");
   if (pn.coverRigid.req !== 25 || pn.coverRigid.table !== "4.10.3.3" || pn.coverRigid.note !== "  AS 3600 T4.10.3.3 RIGID · 30 IF STANDARD" || pn.coverRigid.warns !== 0) problems.push("rigid cover table did not reach the sheet: " + JSON.stringify(pn.coverRigid));
   if (pn.coverLow.pass !== false || pn.coverLow.note !== "COVER 25 EACH FACE · B1 AT 40 MPa: 30 REQ'D · FAILS" || pn.coverLow.warn.length !== 1 || !/^Cover 25 each face is under the 30 AS 3600 Table 4\.10\.3\.2/.test(pn.coverLow.warn[0]) || pn.coverLow.bars !== "85" || pn.coverLow.hintColor !== "var(--warn)") problems.push("a cover under the table value should be flagged, not rejected: " + JSON.stringify(pn.coverLow));
   if (pn.coverNone.exposure !== null || pn.coverNone.note !== "COVER 30 EACH FACE · EXPOSURE NOT STATED" || pn.coverNone.warn !== 1 || !pn.coverNone.summary) problems.push("exposure not stated should warn and say so on the sheet: " + JSON.stringify(pn.coverNone));
+  // a door (#33f)
+  if (pn.door.rows !== 2 || pn.door.holes !== 2 || !pn.door.door || pn.door.door.join() !== "DOOR 2,door,to the bottom edge,1300,2300,0,2100" || pn.door.outline !== 8 || pn.door.perim !== "5,5" || pn.door.trims !== "13,13" || pn.door.errs.length || pn.door.warns.length !== 2 || !/^Perimeter bars \(near face\) stop at DOOR 2 \(door to the bottom edge\)/.test(pn.door.warns[0]) || !/1 opening box, 1 door \/ notch form/.test(pn.door.formwork) || !/door 2 1,000 × 2,100, door to the bottom edge, at 1,300, 0/.test(pn.door.summary)) problems.push("door not built as expected: " + JSON.stringify(pn.door).slice(0, 900));
+  if (pn.doorSheet.outline !== 8 || pn.doorSheet.edgeHoles !== 1 || pn.doorSheet.dims !== 7 || pn.doorSheet.zero || pn.doorSheet.overlap) problems.push("door sheet wrong: " + JSON.stringify(pn.doorSheet));
+  if (pn.doorIns.errs.length !== 1 || !/^Insert 1 \(L1\): sits in DOOR 2 \(door to the bottom edge\); there is no concrete there\./.test(pn.doorIns.errs[0]) || pn.doorIns.bars !== pn.door.bars) problems.push("lifter in the door not refused: " + JSON.stringify(pn.doorIns));
+  if (pn.doorReset.holes !== 1 || pn.doorReset.rows !== 1 || pn.doorReset.bars !== "85" || pn.doorReset.warns) problems.push("reset after the door did not bring the example back: " + JSON.stringify(pn.doorReset));
   // the panel elevation (#33d)
   if (!/^P1 · PANEL SHEET · INSERTS/.test(pn.elev.title) || pn.elev.symbols !== "L1:lifter,L2:lifter,B1:brace,B2:brace" || pn.elev.cog !== "CoG 2,907 / 1,479" || pn.elev.rows !== 4 || !/^INSERTS · 4 CAST-IN INSERTS · WLL AT f'c LIFT 25 MPa/.test(pn.elev.tableTitle) || pn.elev.notes !== 14 || pn.elev.legend !== 4 || pn.elev.rev !== "" || pn.elev.texts < 60) problems.push("panel elevation sheet wrong: " + JSON.stringify(pn.elev));
   if (pn.elevTap.sel !== "L1" || !/^InspectorL1Reid 3Dx 10 t/.test(pn.elevTap.insp)) problems.push("tapping the L1 symbol did not open its inspector: " + JSON.stringify(pn.elevTap));

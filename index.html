@@ -378,7 +378,7 @@ html.print #sheet { background: #fff; }
         <fieldset class="geom" id="pnOpenFs">
           <legend>Openings · mm from the bottom-left corner</legend>
           <div id="pnOpenRows" class="rows"></div>
-          <div class="rowbtns"><button class="btn small" type="button" id="btnAddPnOpen">+ Add opening</button><span class="hint">x from the left edge, y from the bottom edge, looking down on the panel on its bed.</span></div>
+          <div class="rowbtns"><button class="btn small" type="button" id="btnAddPnOpen">+ Add opening</button><button class="btn small" type="button" id="btnAddPnDoor">+ Add door</button><span class="hint">x from the left edge, y from the bottom edge, looking down on the panel on its bed. An opening that reaches an edge is a door or notch: write 0 (or the panel size) for that side; the perimeter bar stops at it.</span></div>
         </fieldset>
         <fieldset class="geom" id="pnInsFs">
           <legend>Inserts · lifters, brace inserts, ferrules</legend>
@@ -1753,6 +1753,47 @@ html.print #sheet { background: #fff; }
   // cited standard; question for Baji).
   const PANEL_EDGE = { perim: 16, trimSmall: 12, trimBig: 16, big: 1500, ext: 600, diag: 12, diagLen: 1200 };
 
+  // The panel's net outline (#33f): a closed polygon in panel mm, counter-clockwise from its lowest left corner, with the
+  // openings that reach an edge (doors, notches) cut out of it; openings inside the panel stay holes. Each edge of the
+  // panel less the openings on it, plus each edge opening's sides that lie inside the panel, chained into one loop (the
+  // openings are checked to leave the panel in one piece). The 3D concrete, the sheet and the tests take it.
+  function panelOutline(PW, PH, holes) {
+    const edge = (holes || []).filter(h => h.edge);
+    if (!edge.length) return [[0, 0], [PW, 0], [PW, PH], [0, PH]];
+    const segs = [];
+    const panelEdge = (fixed, X, len) => {   // the panel edge at `fixed` (y for an X edge) from 0 to len, less the openings on it
+      let parts = [[0, len]];
+      edge.forEach(h => {
+        const on = X ? (fixed === 0 ? h.E.bottom : h.E.top) : (fixed === 0 ? h.E.left : h.E.right); if (!on) return;
+        const lo = X ? h.x0 : h.y0, hi = X ? h.x1 : h.y1, out = [];
+        parts.forEach(p => { if (hi <= p[0] || lo >= p[1]) { out.push(p); return; } if (lo > p[0]) out.push([p[0], lo]); if (hi < p[1]) out.push([hi, p[1]]); });
+        parts = out;
+      });
+      parts.forEach(p => segs.push(X ? [[p[0], fixed], [p[1], fixed]] : [[fixed, p[0]], [fixed, p[1]]]));
+    };
+    panelEdge(0, true, PW); panelEdge(PH, true, PW); panelEdge(0, false, PH); panelEdge(PW, false, PH);
+    edge.forEach(h => {
+      if (!h.E.bottom) segs.push([[h.x0, h.y0], [h.x1, h.y0]]);
+      if (!h.E.top) segs.push([[h.x0, h.y1], [h.x1, h.y1]]);
+      if (!h.E.left) segs.push([[h.x0, h.y0], [h.x0, h.y1]]);
+      if (!h.E.right) segs.push([[h.x1, h.y0], [h.x1, h.y1]]);
+    });
+    const same = (p, q) => Math.abs(p[0] - q[0]) < 0.01 && Math.abs(p[1] - q[1]) < 0.01;
+    const pts = [segs[0][0], segs[0][1]], used = new Set([0]);
+    while (used.size < segs.length) {
+      const end = pts[pts.length - 1]; let found = -1, flip = false;
+      for (let i = 0; i < segs.length && found < 0; i++) { if (used.has(i)) continue; if (same(segs[i][0], end)) found = i; else if (same(segs[i][1], end)) { found = i; flip = true; } }
+      if (found < 0) break;
+      used.add(found); pts.push(flip ? segs[found][0] : segs[found][1]);
+    }
+    if (pts.length > 1 && same(pts[0], pts[pts.length - 1])) pts.pop();
+    const out = pts.filter((p, i) => { const a = pts[(i + pts.length - 1) % pts.length], b = pts[(i + 1) % pts.length]; return Math.abs((p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0])) > 1e-6; });
+    const area2 = out.reduce((s, p, i) => { const q = out[(i + 1) % out.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0);
+    if (area2 < 0) out.reverse();
+    let k = 0; out.forEach((p, i) => { if (p[1] < out[k][1] - 0.01 || (Math.abs(p[1] - out[k][1]) < 0.01 && p[0] < out[k][0])) k = i; });
+    return out.slice(k).concat(out.slice(0, k));
+  }
+
   // ---------- cover table and minimum reinforcement (backlog #33e) ----------
   // Cover for corrosion protection, AS 3600 Table 4.10.3.2 (standard formwork and compaction) and Table 4.10.3.3 (rigid
   // formwork and intense compaction: factory precast), by exposure classification (Table 4.3) and the f'c column the
@@ -1883,13 +1924,23 @@ html.print #sheet { background: #fff; }
       if (v.some(x => !isFinite(x))) { errors.push(where + "give all four numbers (x0 y0 x1 y1, mm from the panel's bottom-left corner)."); return; }
       const h = { id: nm, x0: Math.min(v[0], v[2]), x1: Math.max(v[0], v[2]), y0: Math.min(v[1], v[3]), y1: Math.max(v[1], v[3]), row: i + 1 };
       if (h.x1 - h.x0 < 300 || h.y1 - h.y0 < 300) { errors.push(where + "each side must be at least 300."); return; }
-      if (h.x0 < 300 || h.y0 < 300 || h.x1 > PW - 300 || h.y1 > PH - 300) { errors.push(where + "must sit at least 300 inside the panel edges (an opening that reaches an edge, such as a door, is not modelled yet)."); return; }
+      // an opening may reach a panel edge (#33f): a door comes up from the bottom edge, a notch cuts in from a side or
+      // the top, a corner notch takes two edges; it ends ON the edge (0, or the panel size), never past it
+      if (h.x0 < 0 || h.y0 < 0 || h.x1 > PW || h.y1 > PH) { errors.push(where + "runs past the panel edge; a door or notch ends on the edge (write 0, or the panel size)."); return; }
+      h.E = { left: h.x0 === 0, bottom: h.y0 === 0, right: h.x1 === PW, top: h.y1 === PH };
+      h.edges = ["bottom", "left", "right", "top"].filter(k => h.E[k]);
+      h.edge = h.edges.length > 0;
+      if ((h.E.left && h.E.right) || (h.E.top && h.E.bottom)) { errors.push(where + "would cut the panel in two (it reaches both " + (h.E.left && h.E.right ? "side edges" : "the top and bottom edges") + ")."); return; }
+      if ((!h.E.left && h.x0 < 300) || (!h.E.bottom && h.y0 < 300) || (!h.E.right && h.x1 > PW - 300) || (!h.E.top && h.y1 > PH - 300)) { errors.push(where + "each side must either reach the panel edge (a door or notch: 0, or the panel size) or sit at least 300 inside it."); return; }
       const clash = HOLES.find(q => !(h.x1 + 300 <= q.x0 || h.x0 >= q.x1 + 300 || h.y1 + 300 <= q.y0 || h.y0 >= q.y1 + 300));
       if (clash) { errors.push(where + "keep 300 clear of " + clash.id + " so the trimmer bars fit."); return; }
+      h.kind = !h.edge ? "opening" : h.edges.length === 1 && h.E.bottom ? "door" : "notch";
+      h.edgeText = !h.edge ? "" : h.edges.length === 1 ? "to the " + h.edges[0] + " edge" : "at the " + (h.E.bottom ? "bottom" : "top") + "-" + (h.E.left ? "left" : "right") + " corner";
       h.label = nm + " " + fmt(h.x1 - h.x0) + " × " + fmt(h.y1 - h.y0);
       h.big = Math.max(h.x1 - h.x0, h.y1 - h.y0) >= PANEL_EDGE.big;
       HOLES.push(h);
     });
+    const outline = panelOutline(PW, PH, HOLES);
 
     // each face's reinforcement from its callouts (scheme TB: NF / FF are positions; a line need not repeat its face)
     const faces = {};
@@ -2073,30 +2124,49 @@ html.print #sheet { background: #fff; }
       if (F.perimeter) {
         const d = PANEL_EDGE.perim, e = C + d / 2;
         const lap = lapUse({ size: d, sp: 0, cover: C, below: fa.down ? zH - d / 2 : 0, what: f + " perimeter" });
-        const run = addRun({ layer: id, size: d, kind: "perim", face: f, lap: lap, label: "N16 PERIMETER · " + f, callout: "N16 PERIMETER BARS, " + f + ", ROUND THE PANEL EDGE, CROSSING AT THE CORNERS" });
-        const line = (X, p, z, which) => stockPieces(C, (X ? PW : PH) - C, lap.len, false).forEach((pc, j, ps) => addBar(run, { pts: X ? [[pc[0], p, z], [pc[1], p, z]] : [[p, pc[0], z], [p, pc[1], z]], lapPrev: j > 0, lapNext: j < ps.length - 1, setout: which + " edge, " + f, note: "Perimeter bar along the " + which + " edge (" + FACE_NAME[f].toLowerCase() + "). AS 3850.2 asks for at least one continuous perimeter bar; N16 is what the edge-lifter capacities assume (Findings 12.1)." }));
+        const edgeHoles = HOLES.filter(h => h.edge);
+        const run = addRun({ layer: id, size: d, kind: "perim", face: f, lap: lap, label: "N16 PERIMETER · " + f, callout: "N16 PERIMETER BARS, " + f + ", ROUND THE PANEL EDGE, CROSSING AT THE CORNERS" + (edgeHoles.length ? ", STOPPING " + C + " SHORT OF " + edgeHoles.map(h => h.id).join(" AND ") : "") });
+        // along each edge, stopping cover short of a door or notch that reaches it (#33f): the opening's own side bars
+        // take over there; a stub under 300 between the corner and the opening is left out (the other edge's bar and the
+        // opening bar cover it) and said so
+        const line = (X, p, z, which) => minus(C, (X ? PW : PH) - C, cutsAt(X, p, d)).forEach(g => {
+          const at = edgeHoles.find(h => X ? (Math.abs(g.s - h.x1 - C) < 0.5 || Math.abs(g.e - h.x0 + C) < 0.5) : (Math.abs(g.s - h.y1 - C) < 0.5 || Math.abs(g.e - h.y0 + C) < 0.5));
+          if (g.e - g.s < 300) { warnings.push("Perimeter bar, " + which + " edge (" + FACE_NAME[f].toLowerCase() + "): the " + fmt(Math.round(g.e - g.s)) + " piece beside " + (at ? at.id : "the opening") + " is left out; the opening bar and the other edge's bar cover it."); return; }
+          stockPieces(g.s, g.e, lap.len, false).forEach((pc, j, ps) => addBar(run, { pts: X ? [[pc[0], p, z], [pc[1], p, z]] : [[p, pc[0], z], [p, pc[1], z]], lapPrev: j > 0, lapNext: j < ps.length - 1, setout: which + " edge, " + f, note: "Perimeter bar along the " + which + " edge (" + FACE_NAME[f].toLowerCase() + ")." + (g.cut ? " Stops " + C + " short of " + (at ? at.id + " (" + at.kind + " " + at.edgeText + ")" : "the opening") + "; the opening bars take over there." : "") + " AS 3850.2 asks for at least one continuous perimeter bar; N16 is what the edge-lifter capacities assume (Findings 12.1)." }));
+        });
         line(true, e, zH, "bottom"); line(true, PH - e, zH, "top"); line(false, e, zV, "left"); line(false, PW - e, zV, "right");
-        run.tagPos = [PW * (f === bed ? 0.25 : 0.62), e, zH];
+        if (edgeHoles.length) warnings.push("Perimeter bars (" + FACE_NAME[f].toLowerCase() + ") stop at " + edgeHoles.map(h => h.id + " (" + h.kind + " " + h.edgeText + ")").join(", ") + ", so the loop is not continuous; AS 3850.2 asks for a continuous perimeter bar, and whether it should turn up the jambs is a question for the engineer (Findings 12.1).");
+        // the tag sits on the longest bottom-edge piece (a door may take the middle of that edge), else on the top edge
+        const along = run.bars.filter(b => b.pts[0][1] === b.pts[1][1]).sort((a, b) => (a.pts[0][1] - b.pts[0][1]) || ((b.pts[1][0] - b.pts[0][0]) - (a.pts[1][0] - a.pts[0][0])));
+        const tb = along[0] || run.bars[0];
+        run.tagPos = edgeHoles.length && tb ? [tb.pts[0][0] + (tb.pts[1][0] - tb.pts[0][0]) * (f === bed ? 0.25 : 0.62), tb.pts[0][1], tb.pts[0][2]] : [PW * (f === bed ? 0.25 : 0.62), e, zH];
       }
       if (F.trims && HOLES.length) {
+        const anyEdge = HOLES.some(h => h.edge);
         const run = addRun({ layer: id, size: PANEL_EDGE.trimSmall, kind: "trim", face: f, label: "OPENING BARS · " + f,
-          callout: "1 BAR EACH SIDE OF EACH OPENING (N16 AT 1,500 OR MORE, ELSE N12), " + PANEL_EDGE.ext + " PAST THE CORNERS, + N12 × " + fmt(PANEL_EDGE.diagLen) + " DIAGONAL AT EACH CORNER, " + f });
+          callout: "1 BAR EACH SIDE OF EACH OPENING (N16 AT 1,500 OR MORE, ELSE N12), " + PANEL_EDGE.ext + " PAST THE CORNERS, + N12 × " + fmt(PANEL_EDGE.diagLen) + " DIAGONAL AT EACH CORNER, " + f + (anyEdge ? "; NO BAR OR DIAGONAL ALONG A PANEL EDGE, JAMB BARS RUN TO THE EDGE" : "") });
         const lo = C, hiX = PW - C, hiY = PH - C;
         HOLES.forEach(h => {
           const d = h.big ? PANEL_EDGE.trimBig : PANEL_EDGE.trimSmall, ext = PANEL_EDGE.ext;
-          const side = (X, p, a, b, z, which) => {
-            const a1 = Math.max(a, lo), b1 = Math.min(b, X ? hiX : hiY), short = a1 > a || b1 < b;
+          // a side that lies on a panel edge (the foot of a door, the open side of a notch) gets no bar: the panel stops
+          // there (Findings 12.5 step 4); the bars along the other sides run out to that edge instead of 600 past the
+          // corner, which is by design, not a shortening to flag
+          const side = (X, p, a, b, z, which, onEdge, touchA, touchB) => {
+            if (onEdge) return;
+            const a1 = Math.max(a, lo), b1 = Math.min(b, X ? hiX : hiY), shortA = a1 > a && !touchA, shortB = b1 < b && !touchB, short = shortA || shortB, toEdge = (a1 > a && touchA) || (b1 < b && touchB);
             addBar(run, { size: d, pts: X ? [[a1, p, z], [b1, p, z]] : [[p, a1, z], [p, b1, z]], setout: which + " " + h.id, opening: h,
-              note: "Opening bar " + which + " " + h.id + ", " + ext + " past each corner" + (short ? ", shortened at the panel edge (" + fmt(b1 - a1) + " instead of " + fmt(b - a) + ")" : "") + ". Trade-typical size and extension (Findings 12.1), not a cited standard." });
+              note: "Opening bar " + which + " " + h.id + (h.edge ? " (" + h.kind + " " + h.edgeText + ")" : "") + ", " + ext + " past each corner" + (toEdge ? ", running to the panel edge" : "") + (short ? ", shortened at the panel edge (" + fmt(b1 - a1) + " instead of " + fmt(b - a) + ")" : "") + ". Trade-typical size and extension (Findings 12.1), not a cited standard." });
             if (short) warnings.push(h.id + " (" + FACE_NAME[f].toLowerCase() + "): the opening bar " + which + " it is shortened at the panel edge to " + fmt(b1 - a1) + ".");
           };
-          side(true, h.y0 - C - d / 2, h.x0 - ext, h.x1 + ext, zH, "below");
-          side(true, h.y1 + C + d / 2, h.x0 - ext, h.x1 + ext, zH, "above");
-          side(false, h.x0 - C - d / 2, h.y0 - ext, h.y1 + ext, zV, "left of");
-          side(false, h.x1 + C + d / 2, h.y0 - ext, h.y1 + ext, zV, "right of");
-          // a diagonal across each corner, square to the crack line that runs out of the corner at 45°, set off the corner by cover
+          side(true, h.y0 - C - d / 2, h.x0 - ext, h.x1 + ext, zH, "below", h.E.bottom, h.E.left, h.E.right);
+          side(true, h.y1 + C + d / 2, h.x0 - ext, h.x1 + ext, zH, "above", h.E.top, h.E.left, h.E.right);
+          side(false, h.x0 - C - d / 2, h.y0 - ext, h.y1 + ext, zV, "left of", h.E.left, h.E.bottom, h.E.top);
+          side(false, h.x1 + C + d / 2, h.y0 - ext, h.y1 + ext, zV, "right of", h.E.right, h.E.bottom, h.E.top);
+          // a diagonal across each corner, square to the crack line that runs out of the corner at 45°, set off the corner by cover;
+          // a corner that sits on a panel edge is not a re-entrant corner and gets none
           const dd = PANEL_EDGE.diag, off = Math.max(100, C + dd), half = PANEL_EDGE.diagLen / 2, r2 = Math.SQRT1_2;
           [[h.x0, h.y0, -1, -1, "bottom-left"], [h.x1, h.y0, 1, -1, "bottom-right"], [h.x1, h.y1, 1, 1, "top-right"], [h.x0, h.y1, -1, 1, "top-left"]].forEach(c => {
+            if (c[0] === 0 || c[0] === PW || c[1] === 0 || c[1] === PH) return;
             const cx = c[0] + c[2] * off * r2, cy = c[1] + c[3] * off * r2, ux = c[3] * r2, uy = -c[2] * r2;
             // clip the 1,200 bar to the panel inside cover
             let t0 = -half, t1 = half;
@@ -2166,7 +2236,8 @@ html.print #sheet { background: #fff; }
       if (!isFinite(x) || !isFinite(y)) { errors.push(where + (isEdge ? "give its position along the " + EDGE_WORD[at] + " (" + (alongX ? "x from the left edge" : "y from the bottom edge") + ")." : "give x (from the left edge) and y (from the bottom edge).")); return; }
       if (x < 0 || x > PW || y < 0 || y > PH) { errors.push(where + "is off the panel."); return; }
       if (INS.some(q => q.id === id)) { errors.push(where + "another insert already has this id."); return; }
-      if (isFace && HOLES.some(h => x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1)) { errors.push(where + "sits in an opening."); return; }
+      const inHole = HOLES.find(h => x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1);   // an edge anchor in a door or notch too (#33f)
+      if (inHole) { errors.push(where + "sits in " + (inHole.edge ? inHole.id + " (" + inHole.kind + " " + inHole.edgeText + "); there is no concrete there" : "an opening") + "."); return; }
       const face = isFace ? at : null;
       if (isFace && !has(faces[face])) warnings.push(where + "placed on the " + FACE_NAME[face].toLowerCase() + ", which has no reinforcement.");
       const ins = { id: id, row: i + 1, type: cat.key, cat: cat, kind: cat.kind, kindName: INSERT_KIND[cat.kind], place: cat.place, edge: isEdge ? at : null, face: face, x: x, y: y,
@@ -2344,7 +2415,8 @@ html.print #sheet { background: #fff; }
       const bits = list.map(r => r.kind === "mesh" ? r.mesh.length + (r.mesh.length > 1 ? " sheets " : " sheet ") + faces[f].mesh.code : r.kind === "perim" ? "N16 perimeter" : r.kind === "trim" ? "opening bars" : "N" + r.size + "-" + r.sp + " " + (r.dir === "X" ? "H" : "V"));
       return (bits.length ? bits.join(" · ") : "no steel") + (f === bed ? " · on the bed" : "");
     };
-    const steps = [{ title: "Formwork", sub: "casting bed and side forms" + (HOLES.length ? ", " + HOLES.length + " opening box" + (HOLES.length > 1 ? "es" : "") : "") + "; " + bed + " face down", c: null }]
+    const nBox = HOLES.filter(h => !h.edge).length, nEdge = HOLES.filter(h => h.edge).length;
+    const steps = [{ title: "Formwork", sub: "casting bed and side forms" + (nBox ? ", " + nBox + " opening box" + (nBox > 1 ? "es" : "") : "") + (nEdge ? ", " + nEdge + " door / notch form" + (nEdge > 1 ? "s" : "") + " in the side forms" : "") + "; " + bed + " face down", c: null }]
       .concat(ORDER.map(id => ({ title: stepTitle(id), sub: stepSub(id), c: COLORS[id] })));
 
     // ---- marks: bars by shape and length, mesh pieces by code and cut size; prefixed with the panel mark ----
@@ -2364,7 +2436,7 @@ html.print #sheet { background: #fff; }
 
     const SL = { x0: 0, y0: 0, x1: PW, y1: PH };
     return { kind: "panel", cfg: cfg, errors: errors, warnings: warnings, name: name, panel: panel, faces: faces, mats: {}, Z: {}, T: T, C: C, L: PW, W: PH, SL: SL, EXT: SL,
-      GX: [], GY: [], gx: [0, PW], gy: [0, PH], HOLES: HOLES, DROPS: [], STEP: null, BALCS: [], BEAMS: [], COLS: [], COL: 400, COLB: -10, PROJ: 0,
+      GX: [], GY: [], gx: [0, PW], gy: [0, PH], HOLES: HOLES, outline: outline, DROPS: [], STEP: null, BALCS: [], BEAMS: [], COLS: [], COL: 400, COLB: -10, PROJ: 0,
       bars: bars, wires: wires, meshPieces: pieces, meshSummary: MSUM, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kgBars + kgMesh, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS,
       inserts: INS, insertBodies: insBodies, insertFlags: insFlags, catalogue: { edition: INSERT_CAT.edition, date: INSERT_CAT.date },
       cover: cover, minReo: minReo,
@@ -2388,7 +2460,8 @@ html.print #sheet { background: #fff; }
       solid: solid, ghost: ghost, layer: solid.length === 1 ? solid[0] : null,
       bounds: PNL ? { x0: EXT.x0 - 1300, x1: EXT.x1 + 700, y0: EXT.y0 - 1300, y1: EXT.y1 + 1500 } : { x0: EXT.x0 - 1700, x1: EXT.x1 + 1700, y0: EXT.y0 - 1700, y1: EXT.y1 + 1700 },
       concrete: {
-        slab: rect(SL, PNL ? "PANEL" : "SLAB"), holes: M.HOLES.map(h => rect(h)),
+        slab: rect(SL, PNL ? "PANEL" : "SLAB"), holes: M.HOLES.map(h => Object.assign(rect(h), h.edge ? { edge: true, kind: h.kind } : {})),
+        outline: M.outline || null,   // a panel's net outline with its doors and notches cut out (#33f); null for a floor
         drops: M.DROPS.map(dd => rect(dd, "SET DOWN " + dd.d)),
         step: M.STEP ? { rect: rect(M.STEP, "STEP UP " + M.STEP.rise), nib: M.STEP.nib } : null,
         balconies: M.BALCS.map(b => rect(b, b.plain ? "BALCONY" : b.id)),
@@ -2734,8 +2807,9 @@ html.print #sheet { background: #fff; }
     S.openDims = [];
     M.HOLES.slice().sort((a, b) => a.x0 - b.x0).forEach((h, i) => {
       const atY = -300 - i * 260, atX = -300 - i * 260;
-      S.openDims.push({ measure: "x", a: 0, b: h.x0, at: atY, text: fmt(h.x0) }, { measure: "x", a: h.x0, b: h.x1, at: atY, text: fmt(h.x1 - h.x0) });
-      S.openDims.push({ measure: "y", a: 0, b: h.y0, at: atX, text: fmt(h.y0) }, { measure: "y", a: h.y0, b: h.y1, at: atX, text: fmt(h.y1 - h.y0) });
+      // a door or notch on an edge has no setout to that edge (#33f): a zero-length dimension is left out
+      [{ measure: "x", a: 0, b: h.x0, at: atY, text: fmt(h.x0) }, { measure: "x", a: h.x0, b: h.x1, at: atY, text: fmt(h.x1 - h.x0) },
+        { measure: "y", a: 0, b: h.y0, at: atX, text: fmt(h.y0) }, { measure: "y", a: h.y0, b: h.y1, at: atX, text: fmt(h.y1 - h.y0) }].forEach(d => { if (d.b > d.a) S.openDims.push(d); });
     });
     S.panel = { texts: texts, rects: rects, lines: lines, glyphs: glyphs, notes: notes, approval: appr, legend: legend.map(l => ({ sym: l[0], text: l[1] })), table: table, column: column, legendBox: legendBox, tag: panelTag(M) };
     // the sheet grows to hold the blocks (right and below) and the table
@@ -2837,9 +2911,10 @@ html.print #sheet { background: #fff; }
       const pts = [[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1]]; if (rev) pts.reverse();
       p.moveTo(pts[0][0], pts[0][1]); pts.slice(1).forEach(q => p.lineTo(q[0], q[1])); p.lineTo(pts[0][0], pts[0][1]);
     }
-    function slabPiece(r, holes, z0, th, mat) {
-      const s = new THREE.Shape(); rectPath(s, r, false);
-      holes.forEach(h => { const p = new THREE.Path(); rectPath(p, h, true); s.holes.push(p); });
+    function slabPiece(r, holes, z0, th, mat, outline) {
+      const s = new THREE.Shape();
+      if (outline) { outline.forEach((p, i) => s[i ? "lineTo" : "moveTo"](p[0], p[1])); s.lineTo(outline[0][0], outline[0][1]); } else rectPath(s, r, false);
+      holes.forEach(h => { if (h.edge) return; const p = new THREE.Path(); rectPath(p, h, true); s.holes.push(p); });   // a door or notch is cut out of the outline (#33f)
       const g = new THREE.ExtrudeGeometry(s, { depth: th, bevelEnabled: false });
       g.rotateX(-Math.PI / 2); g.scale(0.001, 0.001, 0.001); g.translate(-OX / 1000, z0 / 1000, OY / 1000);
       const m = new THREE.Mesh(g, mat); m.renderOrder = 10; concrete.add(m);
@@ -2852,7 +2927,7 @@ html.print #sheet { background: #fff; }
       concrete.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat));
     }
     const T = M.T, holes = M.HOLES.concat(M.DROPS); if (M.STEP) holes.push(M.STEP);
-    slabPiece(M.SL, holes, 0, T, cMat);
+    slabPiece(M.SL, holes, 0, T, cMat, M.outline || null);
     M.DROPS.forEach(dd => slabPiece(dd, [], -dd.d, T, cMat));
     if (M.STEP) { slabPiece(M.STEP, [], M.STEP.rise, T, cMat); box(M.STEP.x0, M.STEP.x0 + M.STEP.nib, M.STEP.y0, M.STEP.y1, 0, M.STEP.rise + T, cMat); box(M.STEP.x0, M.STEP.x1, M.STEP.y0, M.STEP.y0 + M.STEP.nib, 0, M.STEP.rise + T, cMat); }
     M.BALCS.forEach(b => slabPiece(b, [], b.bot, b.top - b.bot, cMat));
@@ -3086,7 +3161,7 @@ html.print #sheet { background: #fff; }
       "<dt>On the bed</dt><dd>" + P.castFace + " face down (the cast face), " + P.topFace + " face up</dd>" +
       "<dt>NF</dt><dd>near face: " + esc(fl("NF")) + "</dd><dt>FF</dt><dd>far face: " + esc(fl("FF")) + "</dd>" +
       "<dt>Edges</dt><dd>" + (f.perimeter ? "N16 perimeter bars in each face, crossing at the corners" : "no perimeter bars") + (M.HOLES.length ? (f.trims ? "; a bar each side of each opening, 600 past the corners, N12 diagonals" : "; no opening bars") : "") + "</dd>";
-    if (M.HOLES.length) rows += "<dt>Openings</dt><dd>" + M.HOLES.map(h => esc(h.label.toLowerCase()) + " at " + fmt(h.x0) + ", " + fmt(h.y0)).join("; ") + "</dd>";
+    if (M.HOLES.length) rows += "<dt>Openings</dt><dd>" + M.HOLES.map(h => esc(h.label.toLowerCase()) + (h.edge ? ", " + h.kind + " " + esc(h.edgeText) + ", " : " ") + "at " + fmt(h.x0) + ", " + fmt(h.y0)).join("; ") + "</dd>";
     if (M.meshPieces.length) rows += "<dt>Mesh</dt><dd>" + M.meshPieces.length + (M.meshPieces.length > 1 ? " sheets" : " sheet") + ", " + (P.sheets === "stock" ? "cut from 6.0 × 2.4 stock" : "made to size where it fits") + "</dd>";
     const INS = M.inserts || [], flagged = INS.filter(q => q.flagged);
     rows += "<dt>Inserts</dt><dd>" + (INS.length ? INS.map(q => '<button type="button" class="linkbtn" data-ins="' + esc(q.id) + '"' + (q.flagged ? ' style="color:var(--bad)"' : "") + ">" + esc(q.id) + "</button> " + esc(q.short) + (q.kind === "lifter" && q.wll.wll && q.wll.wll !== q.cat.wll ? " (WLL " + q.wll.wll + " t at lift)" : "")).join("; ") + " · f'c at lift " + esc(String(P.fcLift)) + " MPa" + (flagged.length ? ' · <span style="color:var(--bad)">' + flagged.length + " fail" + (flagged.length > 1 ? "" : "s") + " a check</span>" : " · all checks pass") + ((M.insertFlags || []).length ? ' · <span style="color:var(--warn)">' + M.insertFlags.map(f => esc(f.rule.replace(/-/g, " "))).join(", ") + "</span>" : "") : "none") + "</dd>";
@@ -3516,9 +3591,10 @@ html.print #sheet { background: #fff; }
     c.fillStyle = "rgba(110,119,129,0.18)"; c.strokeStyle = CONC; c.lineWidth = 1;
     K.cols.forEach(r => { R(r); c.fill(); c.stroke(); });
     c.setLineDash([6, 4]); K.beams.forEach(r => { R(r); c.stroke(); }); c.setLineDash([]);
-    c.lineWidth = 1.6; R(K.slab); c.stroke();
+    c.lineWidth = 1.6;
+    if (K.outline) { c.beginPath(); K.outline.forEach((p, i) => c[i ? "lineTo" : "moveTo"](sx(p[0]), sy(p[1]))); c.closePath(); c.stroke(); } else { R(K.slab); c.stroke(); }
     c.lineWidth = 1.2;
-    K.holes.forEach(r => { R(r); c.stroke(); line(r.x0, r.y0, r.x1, r.y1); line(r.x0, r.y1, r.x1, r.y0); });
+    K.holes.forEach(r => { if (r.edge) return; R(r); c.stroke(); line(r.x0, r.y0, r.x1, r.y1); line(r.x0, r.y1, r.x1, r.y0); });   // a door or notch is part of the outline (#33f)
     if (K.drops.length) { c.setLineDash([8, 5]); K.drops.forEach(dd => { R(dd); c.stroke(); }); c.setLineDash([]); }
     if (K.step) { R(K.step.rect); c.stroke(); c.setLineDash([3, 3]); line(K.step.rect.x0 + K.step.nib, K.step.rect.y0, K.step.rect.x0 + K.step.nib, K.step.rect.y1); line(K.step.rect.x0, K.step.rect.y0 + K.step.nib, K.step.rect.x1, K.step.rect.y0 + K.step.nib); c.setLineDash([]); }
     c.lineWidth = 1.6; K.balconies.forEach(r => { R(r); c.stroke(); });
@@ -4125,6 +4201,23 @@ html.print #sheet { background: #fff; }
   [PN.name, PN.W, PN.H, PN.T, PN.cover, PN.fc, PN.fcLift, PN.lap, PN.NF, PN.FF, PN.drawn, PN.checked, PN.approved, PN.rev].forEach(el => el.addEventListener("input", scheduleRebuild));
   [PN.cast, PN.sheets, PN.perim, PN.trims, PN.exposure, PN.coverTable].forEach(el => el.addEventListener("change", scheduleRebuild));
   $("btnAddPnOpen").onclick = () => addGeoRow("open", PN.rows, 600, 400, 300);
+  // a new door (#33f): 1,000 wide × 2,100 high up from the bottom edge, at the spot along that edge farthest from the
+  // openings already in the rows (300 clear of them, of the face inserts and of the panel's side edges, 450 clear of an
+  // anchor in the bottom edge); the user moves or resizes it
+  $("btnAddPnDoor").onclick = () => {
+    const PW = numOf(PN.W) || 6000, PH = numOf(PN.H) || 3000, w = 1000, h = Math.min(2100, PH - 300), rows = readRows(PN.rows).filter(r => isFinite(r.x0) && isFinite(r.x1) && isFinite(r.y0) && isFinite(r.y1));
+    const ins = readRows(PN.insRows).filter(r => isFinite(r.x)).map(r => r.edge === "bottom" ? { x0: r.x - 450, x1: r.x + 450, y0: -1, y1: 1 } : r.edge === "NF" || r.edge === "FF" ? { x0: r.x - 300, x1: r.x + 300, y0: (isFinite(r.y) ? r.y : 0) - 300, y1: (isFinite(r.y) ? r.y : 0) + 300 } : null).filter(Boolean);
+    let best = null;
+    for (let x = 300; x + w <= PW - 300; x += 50) {
+      const r = { x0: x, x1: x + w, y0: 0, y1: h };
+      if (rows.some(o => !(r.x1 + 300 <= Math.min(o.x0, o.x1) || r.x0 >= Math.max(o.x0, o.x1) + 300 || r.y1 + 300 <= Math.min(o.y0, o.y1) || r.y0 >= Math.max(o.y0, o.y1) + 300))) continue;
+      if (ins.some(o => !(r.x1 <= o.x0 || r.x0 >= o.x1 || r.y1 <= o.y0 || r.y0 >= o.y1))) continue;
+      const d = rows.length ? Math.min(...rows.map(o => Math.abs((o.x0 + o.x1) / 2 - (x + w / 2)))) : Math.abs(x + w / 2 - PW / 2) + 1;
+      if (!best || d > best.d) best = { x: x, d: d };
+    }
+    const row = geoRow("open", { name: "DOOR " + (PN.rows.children.length + 1), x0: best ? best.x : 300, y0: 0, x1: (best ? best.x : 300) + w, y1: h });
+    PN.rows.appendChild(row); row.querySelector("input").focus(); scheduleRebuild();
+  };
   // a new lifter goes in the top edge at the first free position from the left that keeps the catalogue edge distance and
   // spacing (3Dx 10 t: 420 / 840); a new brace insert on the top face at 60 % of the height, off the lifter lines
   function addInsertRow(kind) {

@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// Precast panel checks (backlog #33a/#33b/#33c/#33d/#33e): the panel builder between the MODEL markers, run headlessly.
+// Precast panel checks (backlog #33a/#33b/#33c/#33d/#33e/#33f): the panel builder between the MODEL markers, run headlessly.
 // A panel lies on its casting bed (x along the width, y up the height, z from the bed); each face (NF near, FF far)
 // is bars or one mesh; perimeter and opening bars sit just inside each face; cast-in inserts are checked against the
 // catalogue and bring their component bars; the panel sheet carries the insert symbols and table, the CoG, the notes,
 // approval and legend blocks and the panel tag; the cover is checked against the AS 3600 cover tables (standard / rigid
-// formwork) and the face steel against the Cl 11.7.1 minimum ratios. Exit 0 = pass.
+// formwork) and the face steel against the Cl 11.7.1 minimum ratios; openings may reach an edge (doors, notches).
+// Exit 0 = pass.
 "use strict";
 const { loadModel } = require("./model-lib");
 const L = loadModel();
-const { buildModel, buildPanel, PANEL_CFG, MESH, meshStock, wireKgm, buildSheet, parseCallout, DEFAULT_CFG, INSERT_CAT, insertWll, panelTag, PANEL_TABLE_COLS, COVER_TABLE, COVER_FC, coverRequired, MIN_REO, barAreaPerM } = L;
+const { buildModel, buildPanel, PANEL_CFG, MESH, meshStock, wireKgm, buildSheet, parseCallout, DEFAULT_CFG, INSERT_CAT, insertWll, panelTag, PANEL_TABLE_COLS, COVER_TABLE, COVER_FC, coverRequired, MIN_REO, barAreaPerM, panelOutline } = L;
 const problems = [];
 const ok = (cond, msg) => { if (!cond) problems.push(msg); };
 const cfgWith = o => Object.assign(JSON.parse(JSON.stringify(PANEL_CFG)), o);
@@ -171,7 +172,7 @@ const want = [/^Near face line 1 \(N12-200\): say which way it runs: H \(horizon
   /^Far face line 1 .*this face is set to mesh/, /^Far face line 2 .*its long wires run: H/, /^Far face line 3 .*L8TM is not a sheet mesh/, /^Far face line 5 .*already has SL82 on line 4/, /^Far face line 6 .*not read from the face boxes/];
 ok(Me.errors.length === want.length && want.every((re, i) => re.test(Me.errors[i] || "")), "face line errors:\n  " + Me.errors.join("\n  "));
 const Mo = buildModel(cfgWith({ openings: [{ name: "A", x0: 100, y0: 500, x1: 900, y1: 1500 }, { name: "B", x0: 1000, y0: 1000, x1: 1200, y1: 2000 }, { name: "C", x0: 2000, y0: 600, x1: 3600, y1: 2400 }, { name: "D", x0: 3700, y0: 600, x1: 4500, y1: 2400 }, { name: "E", x0: "", y0: 1, x1: 2, y1: 3 }] }));
-ok(Mo.errors.length === 4 && /^Opening 1 \(A\): must sit at least 300 inside/.test(Mo.errors[0]) && /^Opening 2 \(B\): each side must be at least 300/.test(Mo.errors[1]) && /^Opening 4 \(D\): keep 300 clear of C/.test(Mo.errors[2]) && /^Opening 5 \(E\): give all four numbers/.test(Mo.errors[3]), "opening errors " + JSON.stringify(Mo.errors));
+ok(Mo.errors.length === 4 && /^Opening 1 \(A\): each side must either reach the panel edge .* or sit at least 300 inside/.test(Mo.errors[0]) && /^Opening 2 \(B\): each side must be at least 300/.test(Mo.errors[1]) && /^Opening 4 \(D\): keep 300 clear of C/.test(Mo.errors[2]) && /^Opening 5 \(E\): give all four numbers/.test(Mo.errors[3]), "opening errors " + JSON.stringify(Mo.errors));
 const Mt = buildModel(cfgWith({ T: 120, faces: { NF: { kind: "bar", callouts: "N16-200 H\nN16-200 V" }, FF: { kind: "bar", callouts: "N16-200 H\nN16-200 V" } } }));
 ok(Mt.errors.length === 1 && /^Panel too thin for this steel: .* take 212 of the 120/.test(Mt.errors[0]), "thin panel error " + JSON.stringify(Mt.errors));
 ok(buildModel(cfgWith({ W: 500 })).errors.some(e => /^Panel size/.test(e)) && buildModel(cfgWith({ T: 90 })).errors.some(e => /^Panel thickness/.test(e)), "size / thickness range errors");
@@ -414,6 +415,79 @@ ok(S1.tags.length === 1 && S1.tags[0].text === "SL82 H · FF" && (S1.runMarks[ru
 const S5 = buildSheet(M, ["NF2"], ["FF1", "FF2", "CH"]);
 ok(S5.tags.map(t => t.text).sort().join() === "30 N12-200 V · NF,N16 PERIMETER · NF,OPENING BARS · NF" && S5.dims.length === 2 && S5.dims.every(d => /edge/.test(d.grid)), "NF inner sheet tags / setout dims " + JSON.stringify([S5.tags.map(t => t.text), S5.dims]));
 ok(S5.strip.bars === nfV.bars.length + 8 + 4 && !S5.tags.some(t => t.overlap), "NF inner sheet count / overlaps");
+
+// ---- doors and edge openings (#33f) ----
+// a door up from the bottom edge beside the example's window: the panel stays one piece with a notched outline, the
+// perimeter bar stops cover short of the door on both faces, the door gets jamb bars running to the edge, a head bar
+// and two diagonals at its top corners only, the mats and the mesh stop at it
+const doorCfg = cfgWith({ openings: [{ name: "WINDOW", x0: 3200, y0: 1100, x1: 4600, y1: 2300 }, { name: "DOOR", x0: 1000, y0: 0, x1: 2000, y1: 2100 }],
+  inserts: [{ id: "L1", type: "3DX10", edge: "top", x: 450 }, { id: "L2", type: "3DX10", edge: "top", x: 5364 }, { id: "B1", type: "QF20B", edge: "NF", x: 2600, y: 1600 }, { id: "B2", type: "QF20B", edge: "NF", x: 5600, y: 1600 }] });
+const Md = buildModel(doorCfg);
+ok(!Md.errors.length, "door panel errors " + JSON.stringify(Md.errors));
+checkSteel(Md, "door panel");
+const door = Md.HOLES[1];
+ok(door && door.edge && door.kind === "door" && door.edgeText === "to the bottom edge" && door.E.bottom && !door.E.left && door.edges.join() === "bottom" && !Md.HOLES[0].edge && Md.HOLES[0].kind === "opening", "door hole flags " + JSON.stringify([door.kind, door.edgeText, door.edges]));
+ok(JSON.stringify(Md.outline) === "[[0,0],[1000,0],[1000,2100],[2000,2100],[2000,0],[6000,0],[6000,3000],[0,3000]]", "door outline " + JSON.stringify(Md.outline));
+const shoelace = P => Math.abs(P.reduce((a, p, i) => { const q = P[(i + 1) % P.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2;
+ok(near(shoelace(Md.outline), 18e6 - 2.1e6, 1) && near(Md.panel.area, 18 - 1.68 - 2.1, 1e-6) && near(Md.panel.mass, (18 - 1.68 - 2.1) * 0.2 * 2400, 0.5), "door outline area / panel mass " + shoelace(Md.outline) + " " + Md.panel.mass);
+ok(Md.panel.cog.y > 1500 && Md.panel.cog.x > 3000, "a door at the bottom-left pulls the CoG up and right: " + JSON.stringify(Md.panel.cog));
+ok(JSON.stringify(panelOutline(6000, 3000, [])) === "[[0,0],[6000,0],[6000,3000],[0,3000]]" && JSON.stringify(panelOutline(6000, 3000, Md.HOLES)) === JSON.stringify(Md.outline), "panelOutline plain / door");
+["NF", "FF"].forEach(f => {
+  const pr = runOf(Md, f + "2", "perim"), tr = runOf(Md, f + "2", "trim");
+  const bottom = pr.bars.filter(b => b.setout === "bottom edge, " + f).map(b => [b.pts[0][0], b.pts[1][0]]);
+  ok(pr.bars.length === 5 && JSON.stringify(bottom) === "[[30,970],[2030,5970]]" && pr.bars.filter(b => /Stops 30 short of DOOR \(door to the bottom edge\)/.test(b.note)).length === 2 && /STOPPING 30 SHORT OF DOOR/.test(pr.callout), f + " perimeter at the door " + JSON.stringify(bottom) + " " + pr.bars.length);
+  ok(pr.tagPos[1] === 38 && pr.tagPos[0] > 2030 && pr.tagPos[0] < 5970, f + " perimeter tag on the long bottom piece " + JSON.stringify(pr.tagPos));
+  const dbars = tr.bars.filter(b => b.opening === door), jambs = dbars.filter(b => /^(left|right) of/.test(b.setout)), head = dbars.filter(b => /^above/.test(b.setout)), diag = dbars.filter(b => /diagonal/.test(b.note));
+  ok(tr.bars.length === 13 && dbars.length === 5 && !dbars.some(b => /^below/.test(b.setout)), f + " door bars: " + tr.bars.length + " total, " + dbars.map(b => b.setout).join(" | "));
+  ok(jambs.length === 2 && jambs.every(b => b.pts[0][1] === 30 && b.pts[1][1] === 2700 && b.len === 2670 && /running to the panel edge/.test(b.note) && !/shortened/.test(b.note)), f + " jamb bars run to the edge " + jambs.map(b => b.len + " " + b.note));
+  ok(head.length === 1 && head[0].len === 2200 && head[0].pts[0][1] === 2100 + 30 + 8 && head[0].size === 16 && jambs.every(b => b.size === 16), f + " head bar (N16: the door is over 1,500) " + head.map(b => b.len));
+  ok(diag.length === 2 && diag.every(b => /top-(left|right) corner of DOOR/.test(b.setout) && b.len === 1200), f + " door diagonals at the top corners only " + diag.map(b => b.setout));
+  ok(/NO BAR OR DIAGONAL ALONG A PANEL EDGE/.test(tr.callout), f + " opening-bar callout says so");
+});
+ok(!Md.warnings.some(w => /shortened/.test(w)) && Md.warnings.filter(w => /^Perimeter bars \((near|far) face\) stop at DOOR \(door to the bottom edge\), so the loop is not continuous/.test(w)).length === 2, "door warnings " + JSON.stringify(Md.warnings));
+const nfVd = runOf(Md, "NF2"), overDoor = nfVd.bars.filter(b => b.pts[0][0] > 970 && b.pts[0][0] < 2030);
+ok(overDoor.length === 5 && overDoor.every(b => b.pts[0][1] === 2130 && b.pts[1][1] === 2970 && /Stops 30 short of the opening/.test(b.note)), "NF vertical bars over the door start above it: " + overDoor.map(b => b.pts[0][0] + ":" + b.pts[0][1]).join());
+const pcd = Md.meshPieces[0];
+ok(Md.meshPieces.length === 1 && pcd.holes.join() === "WINDOW,DOOR" && !pcd.wires.some(w => w.pts.some(p => p[0] > 970 && p[0] < 2030 && p[1] < 2130)), "FF mesh cut round the door " + JSON.stringify(pcd.holes));
+ok(/1 opening box, 1 door \/ notch form in the side forms/.test(Md.steps[0].sub), "formwork step " + Md.steps[0].sub);
+const Sd = buildSheet(Md, ["NF2"], ["FF1", "FF2", "CH"]);
+ok(Sd.concrete.outline.length === 8 && Sd.concrete.holes.length === 2 && Sd.concrete.holes[1].edge === true && Sd.concrete.holes[1].kind === "door" && !Sd.concrete.holes[0].edge, "door sheet concrete " + JSON.stringify(Sd.concrete.holes));
+ok(Sd.openDims.every(d => d.b > d.a) && Sd.openDims.map(d => d.measure + ":" + d.a + "-" + d.b).join() === "x:0-1000,x:1000-2000,y:0-2100,x:0-3200,x:3200-4600,y:0-1100,y:1100-2300", "door setout chain drops the zero dimension " + Sd.openDims.map(d => d.measure + ":" + d.a + "-" + d.b).join());
+ok(!Sd.tags.some(t => t.overlap) && Sd.tags.map(t => t.text).sort().join() === "30 N12-200 V · NF,N16 PERIMETER · NF,OPENING BARS · NF", "door sheet tags " + JSON.stringify(Sd.tags.map(t => t.text)));
+ok(!buildSheet(Md, ["FF1"], []).concrete.holes.some(h => h.edge && !h.kind), "sheet holes carry the kind");
+// an edge anchor in the door, and a floor still has no outline
+const Mdi = buildModel(Object.assign(cfgWith(doorCfg), { inserts: doorCfg.inserts.concat([{ id: "L3", type: "3DX10", edge: "bottom", x: 1500 }]) }));
+ok(Mdi.errors.length === 1 && /^Insert 5 \(L3\): sits in DOOR \(door to the bottom edge\); there is no concrete there\./.test(Mdi.errors[0]), "lifter in the door " + JSON.stringify(Mdi.errors));
+// a corner notch takes two edges: one re-entrant corner, two sides with bars, the perimeter bars start past it
+const Mc = buildModel(cfgWith({ openings: [{ name: "NOTCH", x0: 0, y0: 0, x1: 800, y1: 1200 }], inserts: [] }));
+ok(!Mc.errors.length, "notch errors " + JSON.stringify(Mc.errors));
+checkSteel(Mc, "corner notch");
+const notch = Mc.HOLES[0];
+ok(notch.kind === "notch" && notch.edgeText === "at the bottom-left corner" && notch.edges.join() === "bottom,left", "notch flags " + JSON.stringify([notch.kind, notch.edgeText, notch.edges]));
+ok(JSON.stringify(Mc.outline) === "[[800,0],[6000,0],[6000,3000],[0,3000],[0,1200],[800,1200]]" && near(shoelace(Mc.outline), 18e6 - 0.96e6, 1) && near(Mc.panel.mass, (18 - 0.96) * 0.2 * 2400, 0.5), "notch outline " + JSON.stringify(Mc.outline));
+["NF", "FF"].forEach(f => {
+  const pr = runOf(Mc, f + "2", "perim"), tr = runOf(Mc, f + "2", "trim");
+  const bot = pr.bars.find(b => b.setout === "bottom edge, " + f), left = pr.bars.find(b => b.setout === "left edge, " + f);
+  ok(pr.bars.length === 4 && bot.pts[0][0] === 830 && bot.pts[1][0] === 5970 && left.pts[0][1] === 1230 && left.pts[1][1] === 2970, f + " perimeter clears the notch " + JSON.stringify([bot.pts, left.pts]));
+  ok(tr.bars.length === 3 && tr.bars.filter(b => /diagonal/.test(b.note)).length === 1 && /top-right corner/.test(tr.bars.find(b => /diagonal/.test(b.note)).setout) && tr.bars.some(b => /^above/.test(b.setout) && b.pts[0][0] === 30 && b.pts[1][0] === 1400) && tr.bars.some(b => /^right of/.test(b.setout) && b.pts[0][1] === 30 && b.pts[1][1] === 1800), f + " notch bars " + tr.bars.map(b => b.setout + " " + JSON.stringify(b.pts.map(p => p.slice(0, 2)))).join(" | "));
+});
+// a notch in the top edge and one in a side edge: the sides on the edge get no bar, the others do, with two diagonals
+const Mtn = buildModel(cfgWith({ openings: [{ name: "SLOT", x0: 2500, y0: 2400, x1: 3500, y1: 3000 }], inserts: [] }));
+ok(!Mtn.errors.length && Mtn.HOLES[0].kind === "notch" && Mtn.HOLES[0].edgeText === "to the top edge" && runOf(Mtn, "NF2", "trim").bars.length === 5 && runOf(Mtn, "NF2", "perim").bars.filter(b => /top edge/.test(b.setout)).length === 2 && runOf(Mtn, "NF2", "perim").bars.length === 5, "top notch " + JSON.stringify(Mtn.errors) + " " + runOf(Mtn, "NF2", "trim").bars.map(b => b.setout).join(" | "));
+ok(JSON.stringify(Mtn.outline) === "[[0,0],[6000,0],[6000,3000],[3500,3000],[3500,2400],[2500,2400],[2500,3000],[0,3000]]", "top notch outline " + JSON.stringify(Mtn.outline));
+checkSteel(Mtn, "top notch");
+const Msn = buildModel(cfgWith({ openings: [{ name: "REBATE", x0: 5200, y0: 1000, x1: 6000, y1: 1800 }], inserts: [] }));
+ok(!Msn.errors.length && Msn.HOLES[0].edgeText === "to the right edge" && runOf(Msn, "FF2", "trim").bars.length === 5 && !runOf(Msn, "FF2", "trim").bars.some(b => /^right of/.test(b.setout)) && runOf(Msn, "FF2", "perim").bars.filter(b => /right edge/.test(b.setout)).length === 2, "side notch " + JSON.stringify(Msn.errors));
+checkSteel(Msn, "side notch");
+// bad edge openings: through the panel, past the edge, hovering near an edge, and a stub too short for a perimeter piece
+const Mbad = buildModel(cfgWith({ inserts: [], openings: [{ name: "A", x0: 2000, y0: 0, x1: 2600, y1: 3000 }, { name: "B", x0: 0, y0: 1000, x1: 6000, y1: 1600 }, { name: "C", x0: -10, y0: 0, x1: 900, y1: 2100 }, { name: "D", x0: 100, y0: 0, x1: 1100, y1: 2100 }, { name: "E", x0: 4800, y0: 0, x1: 5900, y1: 2100 }] }));
+const wantBad = [/^Opening 1 \(A\): would cut the panel in two \(it reaches both the top and bottom edges\)/, /^Opening 2 \(B\): would cut the panel in two \(it reaches both side edges\)/, /^Opening 3 \(C\): runs past the panel edge/, /^Opening 4 \(D\): each side must either reach the panel edge/, /^Opening 5 \(E\): each side must either reach the panel edge/];
+ok(Mbad.errors.length === wantBad.length && wantBad.every((re, i) => re.test(Mbad.errors[i] || "")), "edge opening errors:\n  " + Mbad.errors.join("\n  "));
+const Mstub = buildModel(cfgWith({ inserts: [], openings: [{ name: "DOOR", x0: 300, y0: 0, x1: 1300, y1: 2100 }] }));
+ok(!Mstub.errors.length && Mstub.warnings.filter(w => /^Perimeter bar, bottom edge \((near|far) face\): the 240 piece beside DOOR is left out/.test(w)).length === 2 && runOf(Mstub, "NF2", "perim").bars.filter(b => /bottom edge/.test(b.setout)).length === 1, "perimeter stub left out " + JSON.stringify(Mstub.warnings));
+checkSteel(Mstub, "door at 300");
+// the example panel is untouched by all this
+ok(M.outline.length === 4 && !M.HOLES[0].edge && !M.warnings.length, "example panel outline / flags");
 
 // ---- the floor is untouched ----
 const F = buildModel(DEFAULT_CFG);
