@@ -15,6 +15,7 @@
   --hi: #ffffff;
   --warn: #e8a33d;
   --bad: #e5534b;
+  --ok: #3fa66b;
   --ui: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
   color-scheme: dark;
@@ -62,7 +63,7 @@ details.sec:not([open]) { gap: 0; }
 /* Inputs */
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
 .field { display: grid; gap: 3px; min-width: 0; }
-.field.wide { grid-column: 1 / -1; }
+.field.wide, .grid2 .hint.wide { grid-column: 1 / -1; margin: 0; }
 .field label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .field input, .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font-family: var(--mono); font-size: 13px; color: var(--fg); min-width: 0; }
 .field input:hover, .field textarea:hover { border-color: var(--muted); }
@@ -351,6 +352,9 @@ html.print #sheet { background: #fff; }
           <div class="field"><label for="pnFc">Concrete f'c MPa</label><input id="pnFc" type="number" min="20" max="80" step="5" inputmode="numeric"></div>
           <div class="field"><label for="pnLap">Lap, all bars mm</label><input id="pnLap" type="number" min="300" max="2500" step="50" inputmode="numeric"></div>
           <div class="field"><label for="pnFcLift">f'c at lift MPa (lifter WLL is read at this strength)</label><input id="pnFcLift" type="number" min="10" max="80" step="5" inputmode="numeric"></div>
+          <div class="field"><label for="pnExposure">Exposure (AS 3600 Table 4.3)</label><select id="pnExposure"><option value="">Not stated · cover not checked</option><option value="A1">A1 · interior / sheltered</option><option value="A2">A2 · exterior inland</option><option value="B1">B1 · near-coastal / industrial</option><option value="B2">B2 · coastal</option></select></div>
+          <div class="field"><label for="pnCoverTable">Cover table (formwork)</label><select id="pnCoverTable"><option value="standard">Standard formwork · T4.10.3.2</option><option value="rigid">Rigid formwork, intense compaction · T4.10.3.3</option></select></div>
+          <p class="hint wide" id="pnCoverHint"></p>
         </div>
         <fieldset class="face" id="faceNF" style="--c:#e5534b">
           <legend>Near face · NF</legend>
@@ -1728,6 +1732,9 @@ html.print #sheet { background: #fff; }
 
   const PANEL_CFG = {
     kind: "panel", name: "P1", W: 6000, H: 3000, T: 200, cover: 30, fc: 40, fcLift: 25, lap: 600, castFace: "FF", density: 2400,
+    // exposure B1 is the example's value (an external wall panel, near-coastal); the cover table defaults to standard
+    // formwork (Findings 12.1) and the record names the table used (#33e). Blank exposure = not checked, with a warning.
+    exposure: "B1", coverTable: "standard",
     meshSheets: "made",
     faces: { NF: { kind: "bar", callouts: "N12-200 H\nN12-200 V" }, FF: { kind: "mesh", callouts: "SL82 H" } },
     openings: [{ name: "WINDOW", x0: 3200, y0: 1100, x1: 4600, y1: 2300 }],
@@ -1745,6 +1752,47 @@ html.print #sheet { background: #fff; }
   // else N12, and an N12 × 1,200 diagonal across each corner (Findings 12.1 / 12.5 step 4: trade-typical defaults, not a
   // cited standard; question for Baji).
   const PANEL_EDGE = { perim: 16, trimSmall: 12, trimBig: 16, big: 1500, ext: 600, diag: 12, diagLen: 1200 };
+
+  // ---------- cover table and minimum reinforcement (backlog #33e) ----------
+  // Cover for corrosion protection, AS 3600 Table 4.10.3.2 (standard formwork and compaction) and Table 4.10.3.3 (rigid
+  // formwork and intense compaction: factory precast), by exposure classification (Table 4.3) and the f'c column the
+  // concrete reaches (20 / 25 / 32 / 40 / ≥ 50 MPa). SECONDARY SOURCE: the 2009 edition as reproduced in Loo & Chowdhury
+  // (Findings 12.3, research/12-precast-panel-reinforcement.md); the 2018 tables are understood to be unchanged but must be
+  // checked against the standard before shipping. A bracketed value in the standard (here `c: true`) applies only with the
+  // Cl 4.3.2 strength-grade concession; a dash (null) means no cover is tabulated for that exposure at that f'c. Whatever
+  // the table says, cover is never less than the bar diameter (Cl 4.10.3.1 via Findings 12.3; the aggregate size is not
+  // an input here). Tilt-up cast on site against a slab is standard formwork; the panel record names the table it used.
+  const COVER_FC = [20, 25, 32, 40, 50];
+  const COVER_TABLE = {
+    source: "AS 3600 Tables 4.10.3.2 / 4.10.3.3 as reproduced in Loo & Chowdhury (2009 edition, secondary source; Findings 12.3)",
+    tables: { standard: { name: "standard formwork and compaction", table: "4.10.3.2" }, rigid: { name: "rigid formwork and intense compaction", table: "4.10.3.3" } },
+    exposures: { A1: "A1 · interior, or exterior sheltered inland", A2: "A2 · exterior inland, or interior wet", B1: "B1 · near-coastal or industrial", B2: "B2 · coastal" },
+    v: {   // [20, 25, 32, 40, 50]; a number, { v, c: true } for a concession value, null for no entry
+      A1: { standard: [20, 20, 20, 20, 20], rigid: [20, 20, 20, 20, 20] },
+      A2: { standard: [{ v: 50, c: true }, 30, 25, 20, 20], rigid: [{ v: 45, c: true }, 30, 20, 20, 20] },
+      B1: { standard: [null, { v: 60, c: true }, 40, 30, 25], rigid: [null, { v: 45, c: true }, 30, 25, 20] },
+      B2: { standard: [null, null, { v: 65, c: true }, 45, 35], rigid: [null, null, { v: 50, c: true }, 35, 25] }
+    }
+  };
+  // The cover the table asks for: exposure, the f'c step at or below the concrete's f'c, the table (standard / rigid) and
+  // the largest bar in the element (cover ≥ db). Returns null fields where the exposure is not stated.
+  function coverRequired(exposure, fc, table, maxBar) {
+    const ex = COVER_TABLE.v[exposure] ? exposure : null, tb = table === "rigid" ? "rigid" : "standard";
+    const idx = COVER_FC.map((f, i) => f <= fc ? i : -1).filter(i => i >= 0).pop();
+    const read = t => { if (!ex || idx == null) return { v: null, c: false }; const e = COVER_TABLE.v[ex][t][idx]; return e == null ? { v: null, c: false } : typeof e === "number" ? { v: e, c: false } : { v: e.v, c: true }; };
+    const me = read(tb), other = read(tb === "rigid" ? "standard" : "rigid");
+    const bar = maxBar || 0;
+    const req = me.v == null ? (bar || null) : Math.max(me.v, bar);
+    return { exposure: ex, exposureText: ex ? COVER_TABLE.exposures[ex] : "not stated", fc: fc, fcStep: idx == null ? null : COVER_FC[idx], table: tb, tableName: COVER_TABLE.tables[tb].name, tableNo: COVER_TABLE.tables[tb].table,
+      tabulated: me.v, concession: me.c, other: other.v, otherConcession: other.c, otherTable: tb === "rigid" ? "standard" : "rigid", maxBar: bar, required: req, govern: req == null ? null : me.v != null && me.v >= bar ? "table" : "bar", source: COVER_TABLE.source };
+  }
+  // Minimum reinforcement in a wall, AS 3600 Cl 11.7.1: the ratio of the reinforcement area to the gross concrete area in
+  // each direction, both faces together, not less than 0.0015 vertically and 0.0025 horizontally. Cl 11.7.2 (crack control
+  // where the wall is restrained) asks for more horizontally: 0.0025 minor, 0.0035 moderate, 0.006 strong, and 0.006 in
+  // exposure B1 / B2 / C. SECONDARY SOURCE (Findings 12.1, an eng-tips reading of the clause); the engineer chooses the
+  // crack-control degree, so only the Cl 11.7.1 minimums are flagged here and the Cl 11.7.2 values are printed beside them.
+  const MIN_REO = { V: 0.0015, H: 0.0025, crack: { minor: 0.0025, moderate: 0.0035, strong: 0.006 }, source: "AS 3600 Cl 11.7.1 / 11.7.2 (secondary source; Findings 12.1)" };
+  const barAreaPerM = (db, sp) => Math.PI * db * db / 4 * 1000 / sp;   // mm²/m of one layer of bars db at spacing sp
 
   // ---------- cast-in inserts: catalogue, checks and component bars (backlog #33c) ----------
   // Seeded from Findings 12.2 (research/12-precast-panel-reinforcement.md), which read the suppliers' own published
@@ -1907,6 +1955,40 @@ html.print #sheet { background: #fff; }
     if (has(faces.NF) && has(faces.FF) && T < 150) warnings.push("Two faces of steel in a panel under 150 thick: check the cover can be met (Findings 12.5).");
     if (errors.length) return { kind: "panel", cfg: cfg, errors: errors, warnings: warnings };
     const zOf = (f, depth) => faces[f].down ? depth : T - depth;
+
+    // ---- cover against the AS 3600 table (#33e): the exposure and the table (standard / rigid) are the panel's inputs ----
+    const exposure = COVER_TABLE.v[cfg.exposure] ? cfg.exposure : null, coverTable = cfg.coverTable === "rigid" ? "rigid" : "standard";
+    const maxBar = Math.max(0, ...["NF", "FF"].map(f => faces[f].edgeD), ...["NF", "FF"].map(f => Math.max(0, ...faces[f].layers.map(L => L.size))));
+    const cover = coverRequired(exposure, FC, coverTable, maxBar);
+    cover.input = C;
+    cover.pass = cover.required == null ? null : C >= cover.required;
+    cover.text = !exposure ? "exposure not stated; cover not checked against AS 3600 Table 4.10.3"
+      : cover.tabulated == null ? "no cover is tabulated for " + exposure + " at " + FC + " MPa (Table " + cover.tableNo + ", " + cover.tableName + ")"
+      : cover.required + " required: " + exposure + " at " + FC + " MPa, Table " + cover.tableNo + " (" + cover.tableName + ") gives " + cover.tabulated + (cover.concession ? " (Cl 4.3.2 concession)" : "") + (cover.govern === "bar" ? ", the N" + maxBar + " bar governs" : "") + (cover.other != null ? "; " + cover.other + (cover.otherConcession ? " (concession)" : "") + " with " + cover.otherTable + " formwork" : "");
+    if (!exposure) warnings.push("Cover " + C + ": exposure class not stated, so the cover is not checked against AS 3600 Table 4.10.3 (secondary source).");
+    else if (cover.tabulated == null) warnings.push("Cover " + C + ": AS 3600 Table " + cover.tableNo + " tabulates no cover for exposure " + exposure + " at f'c " + FC + " MPa; a higher grade is needed for that exposure. Check with the engineer (secondary source, Findings 12.3).");
+    else if (cover.pass === false) warnings.push("Cover " + C + " each face is under the " + cover.required + " AS 3600 Table " + cover.tableNo + " (" + cover.tableName + ") gives for exposure " + exposure + " at f'c " + FC + " MPa" + (cover.govern === "bar" ? " (the N" + maxBar + " bar governs)" : "") + (cover.other != null && cover.other <= C && cover.otherTable === "rigid" ? "; " + cover.other + " would do with rigid formwork and intense compaction (Table 4.10.3.3)" : "") + ". Check with the engineer (secondary source, Findings 12.3).");
+    if (exposure && cover.concession) warnings.push("Cover: the " + cover.tabulated + " for exposure " + exposure + " at f'c " + FC + " MPa is a bracketed value in AS 3600 Table " + cover.tableNo + " that applies only with the Cl 4.3.2 strength-grade concession. Check with the engineer.");
+
+    // ---- minimum reinforcement (#33e): As / Ag per direction, both faces together, against AS 3600 Cl 11.7.1 ----
+    // Only the face mats count (bars or mesh wires per metre); the perimeter, opening and insert bars are local.
+    const minReo = { Ag: T * 1000, dirs: {}, pass: true, flags: [], source: MIN_REO.source, crack: MIN_REO.crack };
+    ["H", "V"].forEach(d => {
+      const per = {}; let As = 0;
+      ["NF", "FF"].forEach(f => {
+        const fa = faces[f]; let a = 0, what = "none";
+        if (fa.mesh) { const s = fa.mesh.spec, long = fa.mesh.dir === d; a = long ? barAreaPerM(s.dl, s.pl) : barAreaPerM(s.dc, s.pc); what = fa.mesh.code + (long ? " long wires" : " cross wires") + " " + (long ? s.dl : s.dc) + " at " + (long ? s.pl : s.pc); }
+        else { const L = fa.layers.find(q => q.dir === d); if (L) { a = barAreaPerM(L.size, L.sp); what = "N" + L.size + "-" + L.sp; } }
+        per[f] = { As: Math.round(a), what: what, rho: a / minReo.Ag };
+        As += a;
+      });
+      const rho = As / minReo.Ag, min = MIN_REO[d], pass = rho >= min - 1e-9;
+      minReo.dirs[d] = { As: Math.round(As), rho: rho, rhoText: rho.toFixed(4), min: min, pass: pass, faces: per, word: d === "H" ? "horizontal" : "vertical" };
+      if (!pass) {
+        minReo.pass = false; minReo.flags.push(d);
+        warnings.push("Minimum reinforcement: " + (d === "H" ? "horizontal" : "vertical") + " ρ " + rho.toFixed(4) + " (" + Math.round(As) + " mm²/m over both faces: " + ["NF", "FF"].map(f => f + " " + per[f].what).join(", ") + ") is under the AS 3600 Cl 11.7.1 minimum " + min + " for a wall (secondary source). Check with the engineer.");
+      }
+    });
 
     // setout from the panel edges: a fixer on the bed sets out with a tape from the nearest form edge
     const EDGEX = [["left edge", 0], ["right edge", PW]], EDGEY = [["bottom edge", 0], ["top edge", PH]];
@@ -2285,6 +2367,7 @@ html.print #sheet { background: #fff; }
       GX: [], GY: [], gx: [0, PW], gy: [0, PH], HOLES: HOLES, DROPS: [], STEP: null, BALCS: [], BEAMS: [], COLS: [], COL: 400, COLB: -10, PROJ: 0,
       bars: bars, wires: wires, meshPieces: pieces, meshSummary: MSUM, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kgBars + kgMesh, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS,
       inserts: INS, insertBodies: insBodies, insertFlags: insFlags, catalogue: { edition: INSERT_CAT.edition, date: INSERT_CAT.date },
+      cover: cover, minReo: minReo,
       LAYERS: PLAYERS, LBY: PLBY, EXPLODE: PEXPLODE, ORDER: ORDER, steps: steps, lvl: () => 0 };
   }
 
@@ -2551,6 +2634,23 @@ html.print #sheet { background: #fff; }
     let at = tries.find(xy => clear(boxAt(xy[0], xy[1], cw, ch))) || tries[0];
     S.cog = { x: cg.x, y: cg.y, r: r, text: cogText, tx: at[0], ty: at[1], h: H, box: union(cogBox, boxAt(at[0], at[1], cw, ch)) };
   }
+  // The cover and minimum-reinforcement lines of the notes block (#33e): what the record says the panel was checked to.
+  function coverNotes(M) {
+    const cv = M.cover, head = "COVER " + M.C + " EACH FACE";
+    if (!cv) return [head];
+    if (!cv.exposure) return [head + " · EXPOSURE NOT STATED", "  NOT CHECKED AGAINST AS 3600 T4.10.3"];
+    const tab = "  AS 3600 T" + cv.tableNo + " " + (cv.table === "rigid" ? "RIGID" : "STANDARD");
+    if (cv.tabulated == null) return [head + " · " + cv.exposure + " AT " + cv.fc + " MPa: NONE TABULATED", tab + " · CHECK"];
+    const out = [head + " · " + cv.exposure + " AT " + cv.fc + " MPa: " + cv.required + " REQ'D" + (cv.pass ? "" : " · FAILS"), tab + (cv.other != null ? " · " + cv.other + " IF " + cv.otherTable.toUpperCase() : "")];
+    if (cv.concession) out.push("  CL 4.3.2 CONCESSION VALUE · CHECK");
+    if (cv.govern === "bar") out.push("  N" + cv.maxBar + " BAR GOVERNS (COVER ≥ db)");
+    return out;
+  }
+  function reoNotes(M) {
+    const mr = M.minReo; if (!mr) return [];
+    const d = k => { const q = mr.dirs[k]; return "REO " + k + " ρ " + q.rhoText + " · MIN " + q.min + (q.pass ? "" : " · FAILS"); };
+    return [d("H") + " · AS 3600 CL 11.7.1", d("V")];
+  }
   function sheetPanelBlocks(M, S, want) {
     const P = M.panel, INS = M.inserts || [], PW = M.L, PH = M.W, K = PANEL_SHEET, H = K.note, pitch = K.notePitch;
     const texts = [], rects = [], lines = [], glyphs = [];
@@ -2575,7 +2675,7 @@ html.print #sheet { background: #fff; }
       "MASS " + fmt(P.mass) + " kg AT " + fmt(P.density) + " kg/m³ · " + P.volume.toFixed(2) + " m³",
       "CoG " + fmt(P.cog.x) + " FROM LEFT · " + fmt(P.cog.y) + " FROM BOTTOM",
       "f'c " + M.cfg.fc + " MPa IN SERVICE · " + P.fcLift + " MPa AT LIFT",
-      "COVER " + M.C + " EACH FACE",
+      ...coverNotes(M), ...reoNotes(M),
       P.castFace + " ON THE BED (CAST FACE) · " + P.topFace + " UP",
       "STEEL " + fmt(M.kg) + " kg · " + fmt(M.sched.length) + " BARS, " + M.marks.filter(m => !m.mesh).length + " MARKS" + (M.meshPieces.length ? " + " + M.meshPieces.length + " MESH SHEET" + (M.meshPieces.length > 1 ? "S" : "") : "")
     ].concat(byType(lifters), byType(braces), byType(ferrules), INS.length ? [] : ["NO INSERTS"], [
@@ -2973,7 +3073,16 @@ html.print #sheet { background: #fff; }
   function showPanel() {
     const P = M.panel, f = M.cfg.features;
     const fl = id => { const fa = M.faces[id]; return fa.mesh ? fa.mesh.code + " mesh, long wires " + (fa.mesh.dir === "H" ? "horizontal" : "vertical") : fa.layers.length ? fa.layers.map((L, k) => "N" + L.size + "-" + L.sp + " " + L.dir + (fa.layers.length > 1 ? (k ? " inner" : " outer") : "")).join(" · ") : "none"; };
+    const cv = M.cover, mr = M.minReo;
+    const coverRow = !cv ? "" : !cv.exposure ? '<span style="color:var(--warn)">exposure not stated; not checked against AS 3600 Table 4.10.3</span>'
+      : cv.tabulated == null ? '<span style="color:var(--warn)">' + esc(cv.exposure) + " at " + esc(String(cv.fc)) + " MPa: no cover tabulated in Table " + esc(cv.tableNo) + "</span>"
+      : (cv.pass ? '<span style="color:var(--ok)">meets</span> ' : '<span style="color:var(--bad)">under</span> ') + "the " + cv.required + " AS 3600 Table " + esc(cv.tableNo) + " (" + esc(cv.tableName) + ") gives for " + esc(cv.exposure) + " at " + esc(String(cv.fc)) + " MPa" + (cv.concession ? ' <span style="color:var(--warn)">(Cl 4.3.2 concession)</span>' : "") + (cv.govern === "bar" ? " — the N" + cv.maxBar + " bar governs" : "") + (cv.other != null ? "; " + cv.other + (cv.otherConcession ? " (concession)" : "") + " with " + esc(cv.otherTable) + " formwork" : "");
+    const reoRow = !mr ? "" : ["H", "V"].map(k => { const q = mr.dirs[k]; return q.word + " ρ " + q.rhoText + (q.pass ? ' <span style="color:var(--ok)">≥</span> ' : ' <span style="color:var(--bad)">under</span> ') + q.min + " (" + q.As + " mm²/m: " + ["NF", "FF"].map(f => f + " " + esc(q.faces[f].what)).join(", ") + ")"; }).join("; ") + " · AS 3600 Cl 11.7.1, both faces together; crack control Cl 11.7.2 asks 0.0025 / 0.0035 / 0.006 horizontally (engineer's call)";
+    // the same, in one plain line under the cover inputs
+    if (PN.coverHint) { PN.coverHint.textContent = (cv ? (cv.text.charAt(0).toUpperCase() + cv.text.slice(1)) : "") + (mr ? " · ρ H " + mr.dirs.H.rhoText + " / V " + mr.dirs.V.rhoText + " (min " + mr.dirs.H.min + " / " + mr.dirs.V.min + ")" : "") + " · secondary source, check against the standard."; PN.coverHint.style.color = (cv && (cv.pass === false || !cv.exposure || cv.tabulated == null)) || (mr && !mr.pass) ? "var(--warn)" : ""; }
     let rows = "<dt>Panel</dt><dd>" + fmt(P.W) + " × " + fmt(P.H) + " × " + P.T + " THK, " + esc(String(M.cfg.fc)) + " MPa, cover " + M.C + " each face</dd>" +
+      (coverRow ? "<dt>Cover</dt><dd>" + M.C + " " + coverRow + "</dd>" : "") +
+      (reoRow ? "<dt>Min reo</dt><dd>" + reoRow + "</dd>" : "") +
       "<dt>On the bed</dt><dd>" + P.castFace + " face down (the cast face), " + P.topFace + " face up</dd>" +
       "<dt>NF</dt><dd>near face: " + esc(fl("NF")) + "</dd><dt>FF</dt><dd>far face: " + esc(fl("FF")) + "</dd>" +
       "<dt>Edges</dt><dd>" + (f.perimeter ? "N16 perimeter bars in each face, crossing at the corners" : "no perimeter bars") + (M.HOLES.length ? (f.trims ? "; a bar each side of each opening, 600 past the corners, N12 diagonals" : "; no opening bars") : "") + "</dd>";
@@ -3984,7 +4093,7 @@ html.print #sheet { background: #fff; }
   };
   // ---- precast panel inputs (#33): size, the face on the bed, each face as bars or mesh, openings ----
   let mode = "floor";
-  const PN = { name: $("pnName"), cast: $("pnCast"), W: $("pnW"), H: $("pnH"), T: $("pnT"), cover: $("pnCover"), fc: $("pnFc"), fcLift: $("pnFcLift"), lap: $("pnLap"), NF: $("pnNF"), FF: $("pnFF"), sheets: $("pnSheets"), perim: $("pnPerim"), trims: $("pnTrims"), rows: $("pnOpenRows"), insRows: $("pnInsRows"),
+  const PN = { name: $("pnName"), cast: $("pnCast"), W: $("pnW"), H: $("pnH"), T: $("pnT"), cover: $("pnCover"), fc: $("pnFc"), fcLift: $("pnFcLift"), lap: $("pnLap"), exposure: $("pnExposure"), coverTable: $("pnCoverTable"), coverHint: $("pnCoverHint"), NF: $("pnNF"), FF: $("pnFF"), sheets: $("pnSheets"), perim: $("pnPerim"), trims: $("pnTrims"), rows: $("pnOpenRows"), insRows: $("pnInsRows"),
     drawn: $("pnDrawn"), checked: $("pnChecked"), approved: $("pnApproved"), rev: $("pnRev") };
   $("pnInsCat").textContent = "Catalogue: " + INSERT_CAT.edition + " (" + INSERT_CAT.date + ") — Reid 3Dx and JAWS edge lifters, Reid face lifter, Ancon QwikFoot / QwikFix inserts, from the suppliers' published compliance documents. WLL is printed, never designed to.";
   const FACE_DEFAULT = { bar: "N12-200 H\nN12-200 V", mesh: "SL82 H" };
@@ -3999,6 +4108,7 @@ html.print #sheet { background: #fff; }
   function fillPanel(cfg) {
     PN.name.value = cfg.name; PN.cast.value = cfg.castFace === "NF" ? "NF" : "FF";
     PN.W.value = cfg.W; PN.H.value = cfg.H; PN.T.value = cfg.T; PN.cover.value = cfg.cover; PN.fc.value = cfg.fc; PN.lap.value = cfg.lap; PN.fcLift.value = cfg.fcLift == null ? "" : cfg.fcLift;
+    PN.exposure.value = COVER_TABLE.v[cfg.exposure] ? cfg.exposure : ""; PN.coverTable.value = cfg.coverTable === "rigid" ? "rigid" : "standard";
     ["NF", "FF"].forEach(f => { faceMem[f] = {}; setFaceKind(f, cfg.faces[f].kind === "mesh" ? "mesh" : "bar", true); PN[f].value = cfg.faces[f].callouts; });
     PN.sheets.value = cfg.meshSheets === "stock" ? "stock" : "made"; PN.perim.checked = !!cfg.features.perimeter; PN.trims.checked = !!cfg.features.trims;
     PN.rows.innerHTML = ""; (cfg.openings || []).forEach(o => PN.rows.appendChild(openRow(o)));
@@ -4007,12 +4117,13 @@ html.print #sheet { background: #fff; }
   }
   function readPanel() {
     return { kind: "panel", name: PN.name.value, castFace: PN.cast.value, W: numOf(PN.W), H: numOf(PN.H), T: numOf(PN.T), cover: numOf(PN.cover), fc: numOf(PN.fc), fcLift: PN.fcLift.value.trim() === "" ? "" : numOf(PN.fcLift), lap: numOf(PN.lap),
+      exposure: PN.exposure.value, coverTable: PN.coverTable.value,
       meshSheets: PN.sheets.value, features: { perimeter: PN.perim.checked, trims: PN.trims.checked },
       faces: { NF: { kind: faceKind.NF, callouts: PN.NF.value }, FF: { kind: faceKind.FF, callouts: PN.FF.value } }, openings: readRows(PN.rows), inserts: readRows(PN.insRows),
       approval: { drawn: PN.drawn.value, checked: PN.checked.value, approved: PN.approved.value, rev: PN.rev.value } };
   }
   [PN.name, PN.W, PN.H, PN.T, PN.cover, PN.fc, PN.fcLift, PN.lap, PN.NF, PN.FF, PN.drawn, PN.checked, PN.approved, PN.rev].forEach(el => el.addEventListener("input", scheduleRebuild));
-  [PN.cast, PN.sheets, PN.perim, PN.trims].forEach(el => el.addEventListener("change", scheduleRebuild));
+  [PN.cast, PN.sheets, PN.perim, PN.trims, PN.exposure, PN.coverTable].forEach(el => el.addEventListener("change", scheduleRebuild));
   $("btnAddPnOpen").onclick = () => addGeoRow("open", PN.rows, 600, 400, 300);
   // a new lifter goes in the top edge at the first free position from the left that keeps the catalogue edge distance and
   // spacing (3Dx 10 t: 420 / 840); a new brace insert on the top face at 60 % of the height, off the lifter lines

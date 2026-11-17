@@ -401,6 +401,17 @@ const { chromium } = require("playwright");
   await page.fill("#pnApproved", "I. Engineer"); await page.fill("#pnRev", "B"); await page.waitForTimeout(900);
   pn.elevAppr = await page.evaluate(() => { const S = window.xstruc.sheet(); return { appr: S.panel.approval, hasName: S.panel.texts.some(t => t.text === "I. Engineer"), rev: S.panel.texts.some(t => t.text === "APPROVAL · REV B"), bars: document.getElementById("stBars").textContent }; });
   await page.fill("#pnApproved", ""); await page.fill("#pnRev", ""); await page.waitForTimeout(900);
+  // cover table and minimum reinforcement (#33e): the exposure and formwork selects reach the notes block and the summary;
+  // a cover under the table value is flagged (warning, FAILS on the sheet), the rigid table lowers the requirement
+  pn.cover = await page.evaluate(() => { const M = window.xstruc.model(), S = window.xstruc.sheet(); return { exposure: document.getElementById("pnExposure").value, table: document.getElementById("pnCoverTable").value, req: M.cover.required, pass: M.cover.pass, rho: M.minReo.dirs.H.rhoText, notes: S.panel.notes.slice(4, 8), hint: document.getElementById("pnCoverHint").textContent.slice(0, 60), hintColor: document.getElementById("pnCoverHint").style.color }; });
+  await page.selectOption("#pnCoverTable", "rigid"); await page.waitForTimeout(900);
+  pn.coverRigid = await page.evaluate(() => { const M = window.xstruc.model(), S = window.xstruc.sheet(); return { req: M.cover.required, table: M.cover.tableNo, note: S.panel.notes[5], warns: document.querySelectorAll("#inErrs li.warn").length }; });
+  await page.selectOption("#pnCoverTable", "standard"); await page.fill("#pnCover", "25"); await page.waitForTimeout(900);
+  pn.coverLow = await page.evaluate(() => { const M = window.xstruc.model(), S = window.xstruc.sheet(); return { pass: M.cover.pass, note: S.panel.notes[4], warn: [...document.querySelectorAll("#inErrs li.warn")].map(e => e.textContent).filter(w => /^Cover/.test(w)), bars: document.getElementById("stBars").textContent, hintColor: document.getElementById("pnCoverHint").style.color }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-22-panel-cover.png") });
+  await page.fill("#pnCover", "30"); await page.selectOption("#pnExposure", ""); await page.waitForTimeout(900);
+  pn.coverNone = await page.evaluate(() => { const M = window.xstruc.model(), S = window.xstruc.sheet(); return { exposure: M.cover.exposure, note: S.panel.notes[4], warn: [...document.querySelectorAll("#inErrs li.warn")].map(e => e.textContent).filter(w => /^Cover/.test(w)).length, summary: /not stated/.test(document.getElementById("inspector").textContent) }; });
+  await page.selectOption("#pnExposure", "B1"); await page.waitForTimeout(900);
   await page.click("#all"); await page.waitForTimeout(600);
   pn.elevAll = await page.evaluate(() => { const S = window.xstruc.sheet(); return { title: S.title[0], symbols: S.inserts.length, rows: S.panel.table.rows.length }; });
   // it prints on A3 at a standard scale
@@ -438,6 +449,7 @@ const { chromium } = require("playwright");
   pn.floor = await stats();
   console.log("panel:", JSON.stringify(pn).slice(0, 1500));
   console.log("panel elevation:", JSON.stringify({ elev: pn.elev, tap: pn.elevTap, appr: pn.elevAppr, all: pn.elevAll, print: pn.elevPrint }));
+  console.log("panel cover:", JSON.stringify({ cover: pn.cover, rigid: pn.coverRigid, low: pn.coverLow, none: pn.coverNone }));
 
   await browser.close();
   const problems = [];
@@ -459,8 +471,13 @@ const { chromium } = require("playwright");
   if (pn.flip.order !== "NF1,NF2,CH,IN,FF2,FF1" || pn.flip.first !== "Near face outer bars") problems.push("NF on the bed did not flip the order: " + JSON.stringify(pn.flip));
   if (!/FAR FACE · MESH SL82 H/.test(pn.sheet.title) || pn.sheet.sheets !== 1 || pn.sheet.tags.join() !== "SL82 H · FF" || pn.sheet.wires < 40) problems.push("panel mesh sheet wrong: " + JSON.stringify(pn.sheet));
   if (pn.sheet4.tags.join() !== "30 N12-200 V · NF,N16 PERIMETER · NF,OPENING BARS · NF" || pn.sheet4.dims !== 2 || pn.sheet4.overlap || pn.sheet4.symbolsGhost.join() !== "true,true,true,true" || pn.sheet4.table || !pn.sheet4.cog) problems.push("panel near-face sheet wrong: " + JSON.stringify(pn.sheet4));
+  // cover table and minimum reinforcement (#33e)
+  if (pn.cover.exposure !== "B1" || pn.cover.table !== "standard" || pn.cover.req !== 30 || pn.cover.pass !== true || pn.cover.rho !== "0.0040" || pn.cover.notes.join("|") !== "COVER 30 EACH FACE · B1 AT 40 MPa: 30 REQ'D|  AS 3600 T4.10.3.2 STANDARD · 25 IF RIGID|REO H ρ 0.0040 · MIN 0.0025 · AS 3600 CL 11.7.1|REO V ρ 0.0040 · MIN 0.0015" || !/^30 required: B1 at 40 MPa/.test(pn.cover.hint) || pn.cover.hintColor !== "") problems.push("panel cover / min reo on the example wrong: " + JSON.stringify(pn.cover));
+  if (pn.coverRigid.req !== 25 || pn.coverRigid.table !== "4.10.3.3" || pn.coverRigid.note !== "  AS 3600 T4.10.3.3 RIGID · 30 IF STANDARD" || pn.coverRigid.warns !== 0) problems.push("rigid cover table did not reach the sheet: " + JSON.stringify(pn.coverRigid));
+  if (pn.coverLow.pass !== false || pn.coverLow.note !== "COVER 25 EACH FACE · B1 AT 40 MPa: 30 REQ'D · FAILS" || pn.coverLow.warn.length !== 1 || !/^Cover 25 each face is under the 30 AS 3600 Table 4\.10\.3\.2/.test(pn.coverLow.warn[0]) || pn.coverLow.bars !== "85" || pn.coverLow.hintColor !== "var(--warn)") problems.push("a cover under the table value should be flagged, not rejected: " + JSON.stringify(pn.coverLow));
+  if (pn.coverNone.exposure !== null || pn.coverNone.note !== "COVER 30 EACH FACE · EXPOSURE NOT STATED" || pn.coverNone.warn !== 1 || !pn.coverNone.summary) problems.push("exposure not stated should warn and say so on the sheet: " + JSON.stringify(pn.coverNone));
   // the panel elevation (#33d)
-  if (!/^P1 · PANEL SHEET · INSERTS/.test(pn.elev.title) || pn.elev.symbols !== "L1:lifter,L2:lifter,B1:brace,B2:brace" || pn.elev.cog !== "CoG 2,907 / 1,479" || pn.elev.rows !== 4 || !/^INSERTS · 4 CAST-IN INSERTS · WLL AT f'c LIFT 25 MPa/.test(pn.elev.tableTitle) || pn.elev.notes !== 11 || pn.elev.legend !== 4 || pn.elev.rev !== "" || pn.elev.texts < 60) problems.push("panel elevation sheet wrong: " + JSON.stringify(pn.elev));
+  if (!/^P1 · PANEL SHEET · INSERTS/.test(pn.elev.title) || pn.elev.symbols !== "L1:lifter,L2:lifter,B1:brace,B2:brace" || pn.elev.cog !== "CoG 2,907 / 1,479" || pn.elev.rows !== 4 || !/^INSERTS · 4 CAST-IN INSERTS · WLL AT f'c LIFT 25 MPa/.test(pn.elev.tableTitle) || pn.elev.notes !== 14 || pn.elev.legend !== 4 || pn.elev.rev !== "" || pn.elev.texts < 60) problems.push("panel elevation sheet wrong: " + JSON.stringify(pn.elev));
   if (pn.elevTap.sel !== "L1" || !/^InspectorL1Reid 3Dx 10 t/.test(pn.elevTap.insp)) problems.push("tapping the L1 symbol did not open its inspector: " + JSON.stringify(pn.elevTap));
   if (pn.elevAppr.appr.approved !== "I. Engineer" || pn.elevAppr.appr.rev !== "B" || !pn.elevAppr.hasName || !pn.elevAppr.rev || pn.elevAppr.bars !== "85") problems.push("approval fields did not reach the sheet: " + JSON.stringify(pn.elevAppr));
   if (!/^P1 · PANEL SHEET · ALL LAYERS/.test(pn.elevAll.title) || pn.elevAll.symbols !== 4 || pn.elevAll.rows !== 4) problems.push("finished panel sheet wrong: " + JSON.stringify(pn.elevAll));

@@ -17,7 +17,7 @@ function loadModel() {
   if (i0 < 0 || i1 < 0 || i1 < i0) throw new Error("MODEL START / MODEL END markers missing or out of order");
   const model = main.slice(i0, i1);
   const ctx = { console, Math, Map, Set, Array, Object, Number, String, Infinity, isFinite, exports: {} };
-  vm.runInNewContext(model + "\n;exports.out = { parseCallout, buildModel, DEFAULT_CFG, lapCalc, parseLapTable, lapLookup, LAP_CASES, LAYERS, LBY, MESH_CODES, BAR_SIZES, bendGeom, pinDia, cutLength, SHAPES, nearestGrid, barAxis, gridSetout, matDirectionError, buildSheet, sheetMarksFor, sheetPrintScale, PRINT_SCALES, PAPER_MM, parseGrids, exampleGeometry, buildPanel, PANEL_CFG, MESH, meshStock, MESH_LAP, wireKgm, INSERT_CAT, INSERT_RULES, insertWll, panelTag, PANEL_TABLE_COLS };", ctx, { filename: "model" });
+  vm.runInNewContext(model + "\n;exports.out = { parseCallout, buildModel, DEFAULT_CFG, lapCalc, parseLapTable, lapLookup, LAP_CASES, LAYERS, LBY, MESH_CODES, BAR_SIZES, bendGeom, pinDia, cutLength, SHAPES, nearestGrid, barAxis, gridSetout, matDirectionError, buildSheet, sheetMarksFor, sheetPrintScale, PRINT_SCALES, PAPER_MM, parseGrids, exampleGeometry, buildPanel, PANEL_CFG, MESH, meshStock, MESH_LAP, wireKgm, INSERT_CAT, INSERT_RULES, insertWll, panelTag, PANEL_TABLE_COLS, COVER_TABLE, COVER_FC, coverRequired, MIN_REO, barAreaPerM };", ctx, { filename: "model" });
   return ctx.exports.out;
 }
 module.exports = { loadModel };

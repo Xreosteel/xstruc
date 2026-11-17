@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Precast panel checks (backlog #33a/#33b/#33c/#33d): the panel builder between the MODEL markers, run headlessly.
+// Precast panel checks (backlog #33a/#33b/#33c/#33d/#33e): the panel builder between the MODEL markers, run headlessly.
 // A panel lies on its casting bed (x along the width, y up the height, z from the bed); each face (NF near, FF far)
 // is bars or one mesh; perimeter and opening bars sit just inside each face; cast-in inserts are checked against the
 // catalogue and bring their component bars; the panel sheet carries the insert symbols and table, the CoG, the notes,
-// approval and legend blocks and the panel tag. Exit 0 = pass.
+// approval and legend blocks and the panel tag; the cover is checked against the AS 3600 cover tables (standard / rigid
+// formwork) and the face steel against the Cl 11.7.1 minimum ratios. Exit 0 = pass.
 "use strict";
 const { loadModel } = require("./model-lib");
 const L = loadModel();
-const { buildModel, buildPanel, PANEL_CFG, MESH, meshStock, wireKgm, buildSheet, parseCallout, DEFAULT_CFG, INSERT_CAT, insertWll, panelTag, PANEL_TABLE_COLS } = L;
+const { buildModel, buildPanel, PANEL_CFG, MESH, meshStock, wireKgm, buildSheet, parseCallout, DEFAULT_CFG, INSERT_CAT, insertWll, panelTag, PANEL_TABLE_COLS, COVER_TABLE, COVER_FC, coverRequired, MIN_REO, barAreaPerM } = L;
 const problems = [];
 const ok = (cond, msg) => { if (!cond) problems.push(msg); };
 const cfgWith = o => Object.assign(JSON.parse(JSON.stringify(PANEL_CFG)), o);
@@ -283,7 +284,7 @@ ok(S4.cog && S4.cog.x === M.panel.cog.x && S4.cog.y === M.panel.cog.y && S4.cog.
   ok(!S4.concrete.holes.some(h => hit(tb, h, 0)) && !symBoxes.some(b => hit(tb, b, 0)) && !S4.notes.some(n => hit(tb, n.box, 0)) && tb.x0 > 0 && tb.x1 < M.L && tb.y0 > 0 && tb.y1 < M.W, "CoG text finds room inside the panel clear of the window and the symbols: " + JSON.stringify(tb)); }
 // the notes block: size, mass, CoG, f'c in service and at lift, cover, cast face, steel, the inserts by type, date fields
 const PNS = S4.panel;
-ok(PNS && PNS.notes.join("\n") === ["6,000 × 3,000 × 200 THK · 16.32 m² NET", "MASS 7,834 kg AT 2,400 kg/m³ · 3.26 m³", "CoG 2,907 FROM LEFT · 1,479 FROM BOTTOM", "f'c 40 MPa IN SERVICE · 25 MPa AT LIFT", "COVER 30 EACH FACE", "FF ON THE BED (CAST FACE) · NF UP",
+ok(PNS && PNS.notes.join("\n") === ["6,000 × 3,000 × 200 THK · 16.32 m² NET", "MASS 7,834 kg AT 2,400 kg/m³ · 3.26 m³", "CoG 2,907 FROM LEFT · 1,479 FROM BOTTOM", "f'c 40 MPa IN SERVICE · 25 MPa AT LIFT", "COVER 30 EACH FACE · B1 AT 40 MPa: 30 REQ'D", "  AS 3600 T4.10.3.2 STANDARD · 25 IF RIGID", "REO H ρ 0.0040 · MIN 0.0025 · AS 3600 CL 11.7.1", "REO V ρ 0.0040 · MIN 0.0015", "FF ON THE BED (CAST FACE) · NF UP",
   "STEEL 282 kg · 85 BARS, 12 MARKS + 1 MESH SHEET", "L1, L2 REID 3DX 10 T · WLL 10 t AT 25 MPa", "B1, B2 ANCON QWIKFOOT 96 LONG (M20)", "CAST DATE  ____ / ____ / ________", "LIFT NOT BEFORE  ____ / ____ / ________"].join("\n"), "panel notes block:\n  " + (PNS ? PNS.notes.join("\n  ") : "none"));
 ok(Math.round(M.panel.mass) === 7834 && near(M.panel.mass, 16.32 * 0.2 * 2400, 20), "the notes' mass is the model's mass at 2,400 kg/m³");
 // approval block blank on the example (name and date lines to be filled by hand), the fields from cfg.approval when given
@@ -333,6 +334,73 @@ ok(tg.mark === "P1" && tg.size === "6,000 × 3,000 × 200" && tg.mass === 7834 &
   "panel tag fields " + JSON.stringify(tg));
 ok(tg.lines.join("\n") === "P1\n6,000 × 3,000 × 200 · 7,834 kg\nf'c 40 · LIFT AT 25 MPa · FF DOWN\nCoG 2,907 / 1,479 · L1 L2 WLL 10 t\nCAST ____/____/________ · LIFT NOT BEFORE ____/____/________" && PNS.tag.lines.join() === tg.lines.join(), "panel tag lines:\n  " + tg.lines.join("\n  "));
 ok(panelTag(Mno).lifterText === "no lifters" && /^CoG [\d,]+ \/ [\d,]+$/.test(panelTag(Mno).lines[3]), "panel tag without lifters");
+
+// ---- cover table and minimum reinforcement (#33e, Findings 12.3 / 12.1) ----
+// the table as Findings 12.3 reproduces it: A1 20 throughout; A2 and B1 / B2 by f'c, bracketed values as concessions, dashes as null
+const tv = (ex, tb, fc) => coverRequired(ex, fc, tb, 0);
+ok(COVER_FC.join() === "20,25,32,40,50" && COVER_TABLE.tables.standard.table === "4.10.3.2" && COVER_TABLE.tables.rigid.table === "4.10.3.3", "cover table shape");
+ok([20, 25, 32, 40, 50, 65].every(fc => tv("A1", "standard", fc).tabulated === 20 && tv("A1", "rigid", fc).tabulated === 20 && !tv("A1", "standard", fc).concession), "A1: 20 at every grade, both tables");
+ok(tv("A2", "standard", 32).tabulated === 25 && tv("A2", "rigid", 32).tabulated === 20 && tv("A2", "standard", 32).other === 20 && tv("A2", "rigid", 32).other === 25, "A2 at 32 MPa shows 25 / 20 (research 12.7 check)");
+ok(tv("A2", "standard", 20).tabulated === 50 && tv("A2", "standard", 20).concession && tv("A2", "rigid", 20).tabulated === 45 && tv("A2", "rigid", 20).concession && tv("A2", "standard", 25).tabulated === 30 && !tv("A2", "standard", 25).concession, "A2 at 20 MPa is a bracketed concession value, 50 / 45");
+ok(tv("B1", "standard", 40).tabulated === 30 && tv("B1", "rigid", 40).tabulated === 25 && tv("B1", "standard", 32).tabulated === 40 && tv("B1", "rigid", 32).tabulated === 30 && tv("B1", "standard", 50).tabulated === 25 && tv("B1", "rigid", 50).tabulated === 20, "B1 columns 32 / 40 / 50");
+ok(tv("B1", "standard", 25).tabulated === 60 && tv("B1", "standard", 25).concession && tv("B1", "rigid", 25).tabulated === 45 && tv("B1", "standard", 20).tabulated === null && tv("B1", "standard", 20).required === null, "B1 at 25 is a concession, at 20 nothing is tabulated");
+ok(tv("B2", "standard", 40).tabulated === 45 && tv("B2", "rigid", 40).tabulated === 35 && tv("B2", "standard", 50).tabulated === 35 && tv("B2", "rigid", 50).tabulated === 25 && tv("B2", "standard", 32).tabulated === 65 && tv("B2", "standard", 32).concession && tv("B2", "rigid", 25).tabulated === null, "B2 columns");
+ok(tv("B1", "standard", 35).fcStep === 32 && tv("B1", "standard", 35).tabulated === 40 && tv("B1", "standard", 19).fcStep === null, "f'c reads the table step at or below it (35 → 32), nothing under 20");
+ok(coverRequired("A1", 40, "standard", 24).required === 24 && coverRequired("A1", 40, "standard", 24).govern === "bar" && coverRequired("B1", 40, "standard", 16).required === 30 && coverRequired("B1", 40, "standard", 16).govern === "table", "cover is never less than the bar diameter");
+ok(coverRequired("C1", 40, "standard", 16).exposure === null && coverRequired("", 40, "rigid", 16).exposureText === "not stated" && coverRequired("", 40, "rigid", 16).tabulated === null, "an exposure outside A1–B2 is not stated");
+// the example: B1 at 40 MPa, standard formwork, cover 30 meets the 30 required (25 with rigid formwork); ρ 0.0040 both ways
+ok(M.cover && M.cover.exposure === "B1" && M.cover.table === "standard" && M.cover.required === 30 && M.cover.pass === true && M.cover.other === 25 && M.cover.otherTable === "rigid" && M.cover.maxBar === 16 && M.cover.input === 30 && /^30 required: B1 at 40 MPa, Table 4\.10\.3\.2 \(standard formwork and compaction\) gives 30; 25 with rigid formwork$/.test(M.cover.text), "example cover check " + JSON.stringify(M.cover));
+ok(M.minReo && M.minReo.Ag === 200000 && M.minReo.pass && M.minReo.dirs.H.min === 0.0025 && M.minReo.dirs.V.min === 0.0015 && M.minReo.dirs.H.As === 792 && M.minReo.dirs.V.As === 792 && M.minReo.dirs.H.rhoText === "0.0040" && M.minReo.dirs.H.faces.NF.As === 565 && M.minReo.dirs.H.faces.NF.what === "N12-200" && M.minReo.dirs.H.faces.FF.As === 227 && /^SL82 long wires 7\.6 at 200$/.test(M.minReo.dirs.H.faces.FF.what) && /^SL82 cross wires/.test(M.minReo.dirs.V.faces.FF.what), "example minimum reinforcement " + JSON.stringify(M.minReo.dirs));
+ok(near(barAreaPerM(12, 200), 565.5, 0.1) && near(barAreaPerM(7.6, 200), 226.8, 0.2) && near(M.minReo.dirs.H.rho, 792 / 200000, 1e-3), "areas per metre (N12-200 565, SL82 227 mm²/m)");
+// the same panel under rigid formwork: 25 required, 30 shown as the standard value; the sheet names the table used
+const Mrig = buildModel(cfgWith({ coverTable: "rigid" }));
+ok(!Mrig.warnings.length && Mrig.cover.required === 25 && Mrig.cover.tableNo === "4.10.3.3" && Mrig.cover.other === 30 && Mrig.cover.otherTable === "standard" && Mrig.cover.pass, "rigid formwork: 25 required " + JSON.stringify(Mrig.cover));
+const Srig = buildSheet(Mrig, ["IN"], ["FF1", "FF2", "CH"]).panel.notes;
+ok(Srig[4] === "COVER 30 EACH FACE · B1 AT 40 MPa: 25 REQ'D" && Srig[5] === "  AS 3600 T4.10.3.3 RIGID · 30 IF STANDARD", "rigid notes lines " + JSON.stringify(Srig.slice(4, 6)));
+// cover under the table value: flagged (warning, cover.pass false, FAILS on the sheet), never an error; the rigid value is offered when it would do
+const Mlow = buildModel(cfgWith({ cover: 25 }));
+ok(!Mlow.errors.length && Mlow.cover.pass === false && Mlow.warnings.length === 1 && /^Cover 25 each face is under the 30 AS 3600 Table 4\.10\.3\.2 \(standard formwork and compaction\) gives for exposure B1 at f'c 40 MPa; 25 would do with rigid formwork and intense compaction \(Table 4\.10\.3\.3\)\. Check with the engineer \(secondary source, Findings 12\.3\)\.$/.test(Mlow.warnings[0]), "cover 25 at B1 / 40 flagged: " + JSON.stringify(Mlow.warnings));
+ok(buildSheet(Mlow, ["IN"], ["FF1", "FF2", "CH"]).panel.notes[4] === "COVER 25 EACH FACE · B1 AT 40 MPa: 30 REQ'D · FAILS", "FAILS on the sheet");
+ok(Mlow.bars.length === M.bars.length && Mlow.meshPieces.length === 1, "a cover flag still builds the panel");
+const Mlow2 = buildModel(cfgWith({ cover: 20 }));
+ok(Mlow2.warnings.length === 1 && !/rigid formwork and intense compaction/.test(Mlow2.warnings[0]) && /under the 30/.test(Mlow2.warnings[0]), "cover 20: the rigid value (25) is not offered because it would not do either");
+// a concession value: the cover is checked against it and the concession is flagged for the engineer
+const Mcon = buildModel(cfgWith({ fc: 25, fcLift: 20, cover: 60, T: 300 }));
+ok(Mcon.cover.tabulated === 60 && Mcon.cover.concession && Mcon.cover.pass && Mcon.warnings.length === 1 && /^Cover: the 60 for exposure B1 at f'c 25 MPa is a bracketed value in AS 3600 Table 4\.10\.3\.2 that applies only with the Cl 4\.3\.2 strength-grade concession\. Check with the engineer\.$/.test(Mcon.warnings[0]), "concession flagged " + JSON.stringify(Mcon.warnings));
+ok(buildSheet(Mcon, ["IN"], ["FF1", "FF2", "CH"]).panel.notes.slice(5, 7).join("|") === "  AS 3600 T4.10.3.2 STANDARD · 45 IF RIGID|  CL 4.3.2 CONCESSION VALUE · CHECK", "concession on the sheet");
+// nothing tabulated: B1 at 20 MPa
+const Mnone = buildModel(cfgWith({ fc: 20, fcLift: 15 }));
+ok(Mnone.cover.tabulated === null && Mnone.cover.required === 16 && Mnone.cover.pass === true && Mnone.warnings.some(w => /^Cover 30: AS 3600 Table 4\.10\.3\.2 tabulates no cover for exposure B1 at f'c 20 MPa; a higher grade is needed for that exposure\./.test(w)), "nothing tabulated at B1 / 20 " + JSON.stringify([Mnone.cover, Mnone.warnings]));
+ok(buildSheet(Mnone, ["IN"], ["FF1", "FF2", "CH"]).panel.notes[4] === "COVER 30 EACH FACE · B1 AT 20 MPa: NONE TABULATED", "none tabulated on the sheet");
+// exposure not stated: no check, one warning, the sheet says so
+const Mnx = buildModel(cfgWith({ exposure: "" }));
+ok(Mnx.cover.exposure === null && Mnx.cover.tabulated === null && Mnx.cover.required === 16 && Mnx.cover.pass === true && Mnx.warnings.length === 1 && /^Cover 30: exposure class not stated, so the cover is not checked/.test(Mnx.warnings[0]), "exposure not stated " + JSON.stringify(Mnx.warnings));
+ok(buildSheet(Mnx, ["IN"], ["FF1", "FF2", "CH"]).panel.notes.slice(4, 6).join("|") === "COVER 30 EACH FACE · EXPOSURE NOT STATED|  NOT CHECKED AGAINST AS 3600 T4.10.3", "not stated on the sheet");
+// A2 at 32 MPa on the sheet: 25 required, 20 with rigid formwork
+ok(buildSheet(buildModel(cfgWith({ exposure: "A2", fc: 32 })), ["IN"], ["FF1", "FF2", "CH"]).panel.notes[4] === "COVER 30 EACH FACE · A2 AT 32 MPa: 25 REQ'D", "A2 at 32 on the sheet");
+// the bar governs: N24 bars at A1 need 24 over the table's 20
+const Mbar = buildModel(cfgWith({ exposure: "A1", cover: 20, T: 250, inserts: [], faces: { NF: { kind: "bar", callouts: "N24-200 H\nN24-200 V" }, FF: { kind: "mesh", callouts: "SL82 H" } } }));
+ok(Mbar.cover.tabulated === 20 && Mbar.cover.maxBar === 24 && Mbar.cover.required === 24 && Mbar.cover.govern === "bar" && Mbar.cover.pass === false && Mbar.warnings.some(w => /under the 24 .* \(the N24 bar governs\)/.test(w)), "the bar diameter governs the cover " + JSON.stringify([Mbar.cover, Mbar.warnings]));
+ok(buildSheet(Mbar, ["IN"], ["FF1", "FF2", "CH"]).panel.notes.slice(4, 7).join("|") === "COVER 20 EACH FACE · A1 AT 40 MPa: 24 REQ'D · FAILS|  AS 3600 T4.10.3.2 STANDARD · 20 IF RIGID|  N24 BAR GOVERNS (COVER ≥ db)", "bar governs on the sheet " + JSON.stringify(buildSheet(Mbar, ["IN"], ["FF1", "FF2", "CH"]).panel.notes.slice(4, 7)));
+// minimum reinforcement: SL62 both faces in a 200 panel fails both ways (research 12.7: ρ_v 0.0015 flag on SL62 in a 200 panel)
+const M62 = buildModel(cfgWith({ faces: { NF: { kind: "mesh", callouts: "SL62 H" }, FF: { kind: "mesh", callouts: "SL62 H" } } }));
+ok(!M62.errors.length && M62.minReo.pass === false && M62.minReo.flags.join() === "H,V" && M62.minReo.dirs.V.As === 283 && near(M62.minReo.dirs.V.rho, 0.00141, 0.00001) && M62.warnings.length === 2 && /^Minimum reinforcement: horizontal ρ 0\.0014 \(283 mm²\/m over both faces: NF SL62 long wires 6 at 200, FF SL62 long wires 6 at 200\) is under the AS 3600 Cl 11\.7\.1 minimum 0\.0025 for a wall \(secondary source\)\. Check with the engineer\.$/.test(M62.warnings[0]) && /vertical ρ 0\.0014 .* minimum 0\.0015/.test(M62.warnings[1]), "SL62 both faces flagged " + JSON.stringify(M62.warnings));
+ok(buildSheet(M62, ["IN"], ["FF1", "FF2", "CH"]).panel.notes.slice(6, 8).join("|") === "REO H ρ 0.0014 · MIN 0.0025 · FAILS · AS 3600 CL 11.7.1|REO V ρ 0.0014 · MIN 0.0015 · FAILS", "FAILS on the reo lines");
+// one face of SL82 only: vertical passes (0.0015), horizontal (0.0025) fails; a face with no steel counts nothing
+const M1f = buildModel(cfgWith({ T: 150, faces: { NF: { kind: "bar", callouts: "" }, FF: { kind: "mesh", callouts: "SL82 H" } }, inserts: [] }));
+ok(M1f.minReo.Ag === 150000 && near(M1f.minReo.dirs.V.rho, 0.001512, 0.00001) && M1f.minReo.dirs.V.pass && !M1f.minReo.dirs.H.pass && M1f.minReo.dirs.H.faces.NF.As === 0 && M1f.minReo.dirs.H.faces.NF.what === "none" && M1f.minReo.dirs.H.As === 227 && M1f.minReo.flags.join() === "H", "SL82 one face in a 150 panel: V 0.0015 passes, H 0.0015 under 0.0025 " + JSON.stringify(M1f.minReo.dirs));
+// bars one way only: the other direction is 0 and flagged
+const M1w = buildModel(cfgWith({ faces: { NF: { kind: "bar", callouts: "N16-150 V" }, FF: { kind: "bar", callouts: "N16-150 V" } } }));
+ok(M1w.minReo.dirs.V.pass && near(M1w.minReo.dirs.V.rho, 2 * barAreaPerM(16, 150) / 200000, 1e-6) && M1w.minReo.dirs.H.As === 0 && !M1w.minReo.dirs.H.pass && M1w.minReo.flags.join() === "H", "vertical bars only " + JSON.stringify(M1w.minReo.dirs.H));
+// a thicker panel needs more steel: the example's faces in a 300 panel give ρ 0.0026 both ways, still over the minimums
+const M300 = buildModel(cfgWith({ T: 300 }));
+ok(M300.minReo.Ag === 300000 && M300.minReo.dirs.H.rhoText === "0.0026" && M300.minReo.pass, "Ag follows the thickness " + JSON.stringify(M300.minReo.dirs.H));
+ok(MIN_REO.V === 0.0015 && MIN_REO.H === 0.0025 && MIN_REO.crack.strong === 0.006 && M.minReo.crack.moderate === 0.0035, "Cl 11.7.1 / 11.7.2 values carried");
+// the perimeter and opening bars and the insert bars never count towards ρ: switching them off leaves ρ unchanged
+const Mbare = buildModel(cfgWith({ features: { perimeter: false, trims: false }, inserts: [] }));
+ok(Mbare.minReo.dirs.H.As === M.minReo.dirs.H.As && Mbare.minReo.dirs.V.As === M.minReo.dirs.V.As, "edge and insert bars do not count towards the minimum ratio");
+// no cover or reo line is longer than the notes column at 150 mm mono text (0.6 em per glyph) by more than the squeeze the table cells allow
+{ const S = buildSheet(M, ["IN"], ["FF1", "FF2", "CH"]); const long = S.panel.notes.filter(t => t.length * 150 * 0.6 > 4100 - 240 + 400); ok(!long.length, "notes lines too long for the column: " + JSON.stringify(long)); }
 
 // ---- grammar on panel lines ----
 const pg = s => parseCallout(s, { scheme: "TB" });
