@@ -9,7 +9,6 @@ let lib;
 try { lib = loadModel(); } catch (e) { fail(e.message); }
 const { buildModel, DEFAULT_CFG, LBY, buildSheet, barAxis, sheetMarksFor, sheetPrintScale, PRINT_SCALES, lapCalc, parseLapTable, lapLookup } = lib;
 const fmt = n => Math.round(n).toLocaleString("en-AU");
-const FIX = ["BM", "A", "B", "CH", "C", "D", "ST"];   // fixing order, as the viewer steps through it
 
 function checkModel(name, cfg, minBars) {
   let M;
@@ -28,7 +27,8 @@ function checkModel(name, cfg, minBars) {
     });
     if (!LBY[b.layer]) problems.push("bar " + b.id + " has unknown layer " + b.layer);
     if (!b.existing && !b.mark) problems.push("bar " + b.id + " in this pour has no mark");
-    if (!b.existing && !b.chair && (b.pts[0][2] < -1000 || b.pts.some(p => p[2] > M.T + 1200))) problems.push("bar " + b.id + " outside the slab depth range");
+    if (!b.existing && !b.chair && !b.stair && (b.pts[0][2] < -1000 || b.pts.some(p => p[2] > M.T + 1200))) problems.push("bar " + b.id + " outside the slab depth range");
+    if (b.stair && M.STAIR && b.pts.some(p => p[2] < M.STAIR.zLo - M.T || p[2] > M.T)) problems.push("stair bar " + b.id + " outside the flight's depth range");   // #8: the flight runs down to the floor below
     if (!b.existing && b.len > 12000) problems.push("bar " + b.id + " (" + b.run.label + ") cut length " + b.len + " exceeds the 12 m stock bar");
   });
   runs.forEach(r => {
@@ -114,6 +114,7 @@ function checkSheets(M, problems) {
   const inSheet = b => !b.existing;
   const planPts = b => { const out = []; b.pts.forEach(p => { const q = out[out.length - 1]; if (!q || Math.hypot(p[0] - q[0], p[1] - q[1]) > 1) out.push([p[0], p[1]]); }); return out; };
   const endLegs = b => { const n = b.pts.length; if (n < 3) return 0; let k = 0; const pl = (p, q) => Math.hypot(q[0] - p[0], q[1] - p[1]); if (pl(b.pts[0], b.pts[1]) < 1 && Math.abs(b.pts[1][2] - b.pts[0][2]) >= 20 && pl(b.pts[1], b.pts[2]) >= 1) k++; if (pl(b.pts[n - 2], b.pts[n - 1]) < 1 && Math.abs(b.pts[n - 1][2] - b.pts[n - 2][2]) >= 20 && pl(b.pts[n - 3], b.pts[n - 2]) >= 1) k++; return k; };
+  const FIX = M.ORDER;   // the floor's fixing order; a stair flight (#8) adds SR after the column starters
   const sheets = FIX.map((lid, i) => ({ lid: lid, S: buildSheet(M, [lid], FIX.slice(0, i)) }));
   sheets.push({ lid: null, S: buildSheet(M, FIX, []) });
   sheets.forEach(({ lid, S }) => {
@@ -152,7 +153,7 @@ function checkSheets(M, problems) {
       });
     });
     if (cogs !== expCogs) p(cogs + " cog ticks, expected " + expCogs + " turned-down end legs");
-    if (lid === "ST" && !sol.every(it => it.cogs.length === 1 && it.cogs[0].kind === "vertical")) p("every starter should show one vertical leg end-on");
+    if (lid === "ST" && !sol.filter(it => !it.bar.stair).every(it => it.cogs.length === 1 && it.cogs[0].kind === "vertical")) p("every starter should show one vertical leg end-on");
     if (lid === "D" && M.cfg.features.edges && !(M.meshes && M.meshes.T) && cogs < 10) p("layer D should be cogged at the free edges, only " + cogs + " ticks");   // a top mesh (#6) is not cogged
     // grids and their dimension strings
     if (S.grids.x.length !== M.GX.length || S.grids.x.some((g, i) => g.name !== M.GX[i][0] || g.v !== M.GX[i][1] || g.bub.length !== 2 || !(g.a < g.b))) p("x grids differ from the model");
@@ -752,7 +753,7 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   if (MT.chairPitch !== 800 || !MT.chairs.length || MT.chairs[0].pitch !== 800 || MT.chairs.length <= M.chairs.length) p("chairs should be at 800 under a top mesh: " + MT.chairPitch + ", " + MT.chairs.length + " vs " + M.chairs.length);
   // what the viewer reads: layer text, renamed layers, the bottom mats untouched (same A / B bars as the example)
   if (MT.matText.C !== "SL82 mesh, long wires E–W" || MT.matText.D !== "in the SL82 mesh (placed with C)" || MT.matText.A !== "N16-200 E–W") p("matText " + JSON.stringify(MT.matText));
-  if (MT.LBY.C.name !== "Top mesh SL82 · layers C+D" || MT.LBY.C.short !== "C+D · top mesh" || MT.LBY.D !== LBY.D || MT.LBY.A !== LBY.A || MT.LAYERS.length !== 8) p("mesh layer names " + JSON.stringify(MT.LAYERS.map(l => l.name)));
+  if (MT.LBY.C.name !== "Top mesh SL82 · layers C+D" || MT.LBY.C.short !== "C+D · top mesh" || MT.LBY.D !== LBY.D || MT.LBY.A !== LBY.A || MT.LAYERS.length !== (MT.STAIR ? 9 : 8)) p("mesh layer names " + JSON.stringify(MT.LAYERS.map(l => l.name)));
   const abBars = Mdl => Mdl.bars.filter(b => (b.layer === "A" || b.layer === "B") && b.run.kind === "main").map(b => JSON.stringify(b.pts)).join();
   if (abBars(MT) !== abBars(M)) p("the bottom mats should build as on the example");
   if (MT.warnings.some(w => /No mat for layer/.test(w))) p("a mesh face should not warn about missing mats: " + MT.warnings.join(" | "));
@@ -800,7 +801,7 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   // mesh top and bottom from one line; a bottom mesh under a 200 slab leaves the top mats room
   const MTB = buildModel(Object.assign({}, plain, { callouts: "SL82 T&B E-W" }));
   if (MTB.errors.length || !MTB.meshes.T || !MTB.meshes.B || MTB.runs.filter(r => r.kind === "mesh").length !== 2 || MTB.bars.some(b => b.run.kind === "main")) p("T&B mesh " + JSON.stringify(MTB.errors));
-  if (!MTB.LBY.A.name.startsWith("Bottom mesh") || !MTB.LBY.C.name.startsWith("Top mesh") || MTB.LAYERS.length !== 8) p("T&B layer names " + JSON.stringify(MTB.LAYERS.map(l => l.name)));
+  if (!MTB.LBY.A.name.startsWith("Bottom mesh") || !MTB.LBY.C.name.startsWith("Top mesh") || MTB.LAYERS.length !== (MTB.STAIR ? 9 : 8)) p("T&B layer names " + JSON.stringify(MTB.LAYERS.map(l => l.name)));
   checkModel("SL82 top and bottom", Object.assign({}, plain, { callouts: "SL82 T&B E-W" }), 8);   // only the N12 edge bars are bars
 
   // what a mesh line must say, each its own error, the rest of the model still built
@@ -816,6 +817,104 @@ checkModel("big grid", { gridX: [0, 6000, 12000, 18000, 24000], gridY: [0, 6000,
   if (PM.meshPieces.length !== 1 || PM.meshPieces[0].cutL !== 5940 || !PM.meshSummary || PM.meshSummary[0].made !== 1 || PM.meshSummary[0].stock !== 0) p("panel through layMesh: " + JSON.stringify(PM.meshSummary));
   if (problems.length) fail(problems.slice(0, 25).join("\n"));
   console.log("  mesh (#6): SL82 top on the example (" + MT.meshPieces.length + " sheets, " + MT.wires.length + " wires, " + sm[0].stock + " stock to order, laps exact between whole sheets, stack ≤ 3), RL918 bottom, plain 10 × 8 (" + MP.meshPieces.length + " sheets, waste " + sp.wastePct + " %), T&B, 9 bad lines reported");
+}
+
+// stair flight (#8): the example's flight, its geometry against the NCC limits, the bars in and around it, the sheet, and bad inputs
+checkStair();
+function checkStair() {
+  const problems = [], p = m => problems.push(m), near = (a, b, t) => Math.abs(a - b) <= t;
+  const S = M.STAIR;
+  if (!S) { fail("the example has no stair flight"); }
+  // geometry: 16 risers of 187.5 over 3,000 (the fewest with R ≤ 190), 15 goings of 250, arriving at the void's east edge and running west
+  if (S.n !== 16 || !near(S.R, 187.5, 0.01) || S.G !== 250 || S.run !== 3750 || S.arrive !== "E" || !S.alongX || S.sg !== -1 || S.edge !== M.HOLES[0].x1 || S.w !== 2200 || S.zLo !== M.T - 3000) p("example geometry " + JSON.stringify([S.n, S.R, S.G, S.run, S.arrive, S.alongX, S.sg, S.edge, S.w, S.zLo]));
+  if (!(2 * S.G + S.R >= 550 && 2 * S.G + S.R <= 700) || S.R > 190 || S.R < 115) p("example flight outside the NCC D3D14 limits");
+  if (S.foot.x1 !== S.edge || S.foot.x0 !== S.edge - S.run || S.foot.y0 !== M.HOLES[0].y0 || S.foot.y1 !== M.HOLES[0].y1) p("footprint " + JSON.stringify(S.foot));
+  if (!S.under || S.under.x1 !== M.HOLES[0].x0 || S.under.x0 !== S.foot.x0) p("under-slab part " + JSON.stringify(S.under));
+  if (S.headroom !== Math.round(S.voidLen * S.R / S.G - M.T) || S.headroom >= 2000 || !M.warnings.some(w => /^Stair: headroom under the slab at the west edge of STAIR VOID is 1,750, less than the 2,000/.test(w))) p("headroom " + S.headroom + " / warning missing");
+  // section polygon: starts at the top riser foot, 2 points per riser, the foot on the floor below, the wedge under the slab, back to the slab edge
+  const poly = S.poly;
+  if (poly.length !== 1 + 2 * (S.n - 1) + 3 || poly[0][0] !== 0 || !near(poly[0][1], M.T - S.R, 0.01) || poly[2 * S.n - 2][0] !== S.run || !near(poly[2 * S.n - 2][1], S.zLo, 0.01) || !near(poly[2 * S.n - 1][0], S.sFoot, 0.01) || poly[poly.length - 1][0] !== 0 || poly[poly.length - 1][1] !== 0 || !(S.sWedge < 0 && near(poly[poly.length - 2][0], S.sWedge, 0.01))) p("section polygon " + JSON.stringify(poly.slice(0, 3)) + " … " + JSON.stringify(poly.slice(-3)));
+  // the soffit lies the waist below the throat line, measured perpendicular
+  const cos = S.G / S.L; if (!near(S.zLine(0, 1000) - S.zLine(S.waist, 1000), S.waist / cos, 0.01)) p("soffit offset");
+  // bars: main bars in the bottom of the waist, inside cover of the flight's sides, lower end cover above the floor below, top end inside the wedge under the slab
+  const runs = k => M.runs.filter(r => r.kind === k), main = runs("stairMain")[0], dist = runs("stairDist")[0], top = runs("stairTop")[0], start = runs("stairStart")[0], distT = runs("stairDistT")[0];
+  if (!main || !dist || !top || !start || !distT) { fail("stair runs missing: " + M.runs.filter(r => r.stair).map(r => r.kind).join()); }
+  if (main.layer !== "SR" || dist.layer !== "SR" || distT.layer !== "SR" || start.layer !== "SR" || top.layer !== "ST") p("stair run layers " + [main.layer, dist.layer, top.layer, start.layer].join());
+  if (main.bars.length !== 11 || main.n !== 11 || main.sp !== 200 || main.size !== 16 || top.bars.length !== 11 || top.size !== 16 || dist.bars.length !== 16 || dist.size !== 12 || distT.bars.length !== 2 || start.bars.length !== 11) p("stair bar counts " + [main.bars.length, top.bars.length, dist.bars.length, distT.bars.length, start.bars.length].join());
+  const inWaist = (pt, d) => near(pt[2], S.zLine(d, (S.edge - pt[0]) * -S.sg), 0.5);   // the point sits on the steel line d below the throat at its plan position
+  const dMain = S.waist - M.C - 8;
+  main.bars.forEach(b => {
+    if (b.code !== "S" || b.pts.length !== 2 || !b.stair || b.existing) p("main bar " + b.id + " shape " + b.code);
+    if (!b.pts.every(pt => inWaist(pt, dMain))) p("main bar " + b.id + " off the bottom steel line");
+    const hi = b.pts[0], lo = b.pts[1];
+    if (!(hi[0] > S.edge && hi[0] < S.edge - S.sWedge) || !near(hi[2], -(M.C + 8), 0.5)) p("main bar top end " + JSON.stringify(hi) + " should stop cover under the slab soffit in the wedge");
+    if (!near(lo[2], S.zLo + M.C + 8, 0.5) || !(lo[0] > S.edge - S.run)) p("main bar lower end " + JSON.stringify(lo));
+    if (b.pts[0][1] < S.c0 + M.C + 8 - 0.5 || b.pts[0][1] > S.c1 - M.C - 8 + 0.5) p("main bar outside the flight's side cover");
+    if (!b.grid || b.grid.dir !== "X") p("main bar has no E–W grid setout");
+  });
+  if (!main.dist || !main.grid || main.grid.first.v !== main.bars[0].pts[0][1]) p("main run tag / setout");
+  // distribution bars: across the full width inside cover, on the main bars (one bar diameter and a half above their line), 300 apart along the slope
+  const dDist = dMain - 8 - 6;
+  dist.bars.forEach(b => { if (b.pts.length !== 2 || !near(b.pts[0][1], S.c0 + M.C + 6, 0.5) || !near(b.pts[1][1], S.c1 - M.C - 6, 0.5) || b.pts[0][0] !== b.pts[1][0] || !inWaist(b.pts[0], dDist)) p("dist bar " + b.id + " " + JSON.stringify(b.pts)); });
+  const xs = dist.bars.map(b => b.pts[0][0]).sort((a, b) => a - b), pitch = xs[1] - xs[0];
+  if (!near(pitch, 300 * S.G / S.L, 0.5) || !xs.every((x, i) => !i || near(x - xs[i - 1], pitch, 0.5)) || !near(dist.sp, pitch, 0.1) || !/300 ALONG THE SLOPE \(240 IN PLAN\)/.test(dist.callout)) p("dist pitch " + pitch + " / " + dist.sp + " / " + dist.callout);
+  if (!dist.grid || dist.grid.first.v !== Math.round(xs[0]) || dist.grid.last.v !== Math.round(xs[xs.length - 1])) p("dist run setout " + JSON.stringify(dist.grid && [dist.grid.first.v, dist.grid.last.v, xs[0], xs[xs.length - 1]]));
+  // top bars cast into the slab: a leg under layer C into the landing, bent at the void edge down the flight's top at cover under the throat; the leg is shortened to the landing (590 of a 600 lap) and flagged
+  const zC = M.Z.C - 6 - 8 - 2, dTop = M.C + 8;
+  top.bars.forEach(b => {
+    if (b.code !== "L" || b.pts.length !== 3 || b.shape !== "stair L" || !/angle 14[0-9]°/.test(b.dimStr)) p("top bar " + b.id + " " + b.code + " " + b.dimStr);
+    const [a, c, e] = b.pts;
+    if (!near(a[2], zC, 0.5) || !near(c[2], zC, 0.5) || !near(a[0] - c[0], 590, 0.5) || !(c[0] > S.edge && c[0] < S.edge + 300) || a[0] > M.SL.x1 - M.C + 0.5) p("top bar slab leg " + JSON.stringify([a, c]));
+    if (!inWaist(c, dTop) || !inWaist(e, dTop) || !near(Math.hypot(e[0] - c[0], e[2] - c[2]), 1000, 0.5) || e[0] > c[0]) p("top bar sloped leg " + JSON.stringify([c, e]));
+    if (e[2] < S.zLine(S.waist, (S.edge - e[0])) || e[2] > M.T) p("top bar leg end outside the flight");
+  });
+  if (!M.warnings.some(w => /^Stair: the top bars' slab leg is 590, shorter than the 600 lap/.test(w))) p("short slab leg not flagged");
+  if (!/590 LEG UNDER LAYER C, BENT DOWN THE FLIGHT 1000/.test(top.callout) || !top.dist) p("top run callout / tag " + top.callout);
+  distT.bars.forEach(b => { if (!inWaist(b.pts[0], dTop + 8 + 6) || b.pts[0][0] > S.edge - 100 + 0.5) p("top dist bar " + JSON.stringify(b.pts)); });
+  // starters from the floor below: existing (not scheduled), a leg in that slab's top, the sloped leg on the main bars' line lapping them 600 + 50 along the slope
+  start.bars.forEach(b => {
+    if (!b.existing || b.mark !== "EX" || b.pts.length !== 3 || b.code !== "L") p("starter " + b.id + " " + b.code + " " + b.mark);
+    const [hi, c, e] = b.pts, m = main.bars.find(q => q.pts[0][1] === hi[1]);
+    if (!inWaist(hi, dMain) || !inWaist(c, dMain) || !near(c[2], S.zLo - M.C - 6 - 8, 0.5) || !near(e[2], c[2], 0.01) || !near(e[0] - c[0], -600, 0.5) || !(c[0] > S.edge - S.run) || !(e[0] < S.edge - S.run)) p("starter legs " + JSON.stringify(b.pts));
+    if (!m || !near(Math.hypot(m.pts[1][0] - hi[0], m.pts[1][2] - hi[2]), 650, 0.5) || (hi[0] - m.pts[1][0]) * -S.sg < 0) p("starter does not lap the main bar 650 along the slope");
+  });
+  // schedule and marks: the flight's bars are in the pour (the starters below are not), after the column starters
+  const sr = M.sched.filter(b => b.layer === "SR"), srMarks = M.marks.filter(m => m.layer === "SR");
+  if (sr.length !== 11 + 16 + 2 || sr.some(b => !b.mark || b.mark === "EX") || !srMarks.length || M.marks.indexOf(srMarks[0]) < M.marks.filter(m => m.layer === "ST").map(m => M.marks.indexOf(m)).pop()) p("stair schedule " + sr.length + " bars, marks " + srMarks.map(m => m.mark).join());
+  if (M.ORDER.join() !== "BM,A,B,CH,C,D,ST,SR" || !M.LBY.SR || M.LAYERS[M.LAYERS.length - 1].id !== "SR" || M.EXPLODE.SR !== 0 || M.COLB !== S.zLo - M.T) p("stair layer / order / COLB " + M.ORDER.join() + " " + M.COLB);
+  // the sheet: the flight's footprint and 16 riser lines drawn below the slab, a note on the flight, the SR sheet carries its bars and a dimensioned main run
+  const SS = buildSheet(M, ["SR"], M.ORDER.slice(0, -1));
+  if (!SS.concrete.stair || SS.concrete.stair.rect.x0 !== S.foot.x0 || SS.concrete.stair.risers.length !== 16 || SS.concrete.stair.risers[0][0] !== S.edge || SS.concrete.stair.risers[15][0] !== S.edge - S.run) p("sheet stair outline " + JSON.stringify(SS.concrete.stair && SS.concrete.stair.rect));
+  if (!SS.notes.some(n => n.text === S.label) || S.label !== "STAIR 16R × 188 · 15G × 250 · WAIST 180 · UP E") p("sheet stair note " + S.label);
+  if (SS.bars.filter(x => !x.ghost).length !== 29 || !SS.dims.some(d => d.run === main.id) || !SS.tags.some(t => t.run === main.id) || !/STAIR FLIGHT/.test(SS.title[0])) p("SR sheet " + SS.bars.filter(x => !x.ghost).length + " bars, title " + SS.title[0]);
+  // a floor without a stair: no SR layer, 8 layers, the old fixing order; feature off likewise
+  const no = buildModel(Object.assign({}, DEFAULT_CFG, { features: Object.assign({}, DEFAULT_CFG.features, { stair: false }) }));
+  if (no.STAIR || no.ORDER.join() !== "BM,A,B,CH,C,D,ST" || no.LAYERS.length !== 8 || no.LBY.SR || no.runs.some(r => r.stair) || no.sched.length !== M.sched.length - 40 || no.COLB !== -1500) p("stair off: " + no.ORDER.join() + " " + no.LAYERS.length + " " + no.sched.length);
+  // explicit stairs: the example's values typed in reproduce it; a job with 17 risers and a 1,200 flight arriving at the west edge of a long void
+  const EXS = Object.assign({}, lib.exampleGeometry(DEFAULT_CFG).stair);
+  const same = buildModel(Object.assign({}, DEFAULT_CFG, { stair: EXS }));
+  if (same.errors.length || same.sched.length !== M.sched.length || Math.round(same.kg) !== Math.round(M.kg) || same.warnings.some(w => /placeholders, not an engineer/.test(w))) p("explicit example stair differs: " + same.errors.join(" | "));
+  const job = buildModel(Object.assign({}, DEFAULT_CFG, { openings: [{ name: "STAIR VOID", x0: 6000, y0: 5500, x1: 9200, y1: 7300 }], stair: { void: "stair void", arrive: "W", rise: 3200, risers: 17, going: 255, waist: 200, width: 1200, main: "N12-150", dist: "N10-250", top: "N12-200" } }));
+  const J = job.STAIR;
+  if (job.errors.length || !J || J.n !== 17 || !near(J.R, 3200 / 17, 0.01) || J.G !== 255 || J.sg !== 1 || J.edge !== 6000 || J.w !== 1200 || J.c0 !== 5500 + 300 || J.run !== 4080 || J.headroom !== 2162 || J.steel.main !== "N12-150" || J.steel.dist !== "N10-250") p("job stair " + JSON.stringify(job.errors) + " " + JSON.stringify(J && [J.n, J.R, J.G, J.sg, J.edge, J.w, J.c0, J.run, J.headroom]));
+  if (job.warnings.some(w => /^Stair:/.test(w))) p("job warnings " + job.warnings.filter(w => /^Stair/.test(w)).join(" | "));   // 2,116 headroom, 1,200 wide, an entered detail: nothing to flag
+  const jm = job.runs.find(r => r.kind === "stairMain"); if (!jm || jm.bars.length !== Math.floor((1200 - 60 - 12) / 150) + 1 || jm.bars.some(b => b.pts[0][0] > b.pts[1][0]) || jm.bars[0].pts[1][0] > 6000 + 4080) p("job main bars");
+  // bad stairs: one error each (a job), the floor still builds without the flight
+  [[{ void: "LIFT" }, /no opening named LIFT/], [{ arrive: "Q" }, /arrival edge must be N, S, E or W/], [{ rise: "" }, /must all be numbers/], [{ rise: 7000 }, /rise must be 1,500–6,000/],
+   [{ going: 240 }, /going must be 250–355 \(NCC D3D14/], [{ waist: 100 }, /waist must be 120–400/], [{ risers: 19 }, /risers must be a whole number, 2–18/], [{ risers: 12 }, /riser 250 \(3,000 over 12 risers\) is outside 115–190/],
+   [{ risers: 18, going: 355 }, /2 × going \+ riser = 877 is outside 550–700/], [{ width: 2400 }, /flight width must be 600–2,200/], [{ main: "R6" }, /must each be an N bar with a spacing/], [{ arrive: "W" }, /leaves the slab plan \(x 14,550\)/],
+   [{ arrive: "N" }, /leaves the slab plan \(y -650\)/]].forEach(w => {
+    const ms = buildModel(Object.assign({}, DEFAULT_CFG, { stair: Object.assign({}, EXS, w[0]) }));
+    if (ms.errors.length !== 1 || !/^Stair: /.test(ms.errors[0]) || !w[1].test(ms.errors[0]) || ms.STAIR || ms.runs.some(r => r.stair) || ms.bars.filter(b => b.run.kind === "main").length < 100) p("bad stair " + JSON.stringify(w[0]) + ": " + ms.errors.join(" | ") + (ms.STAIR ? " (built)" : ""));
+  });
+  // a flight that would run into a column (grid 3/A) or through a beam line is refused
+  const col = buildModel(Object.assign({}, DEFAULT_CFG, { features: Object.assign({}, DEFAULT_CFG.features, { step: false }), openings: [{ name: "STAIR VOID", x0: 10800, y0: 3400, x1: 13400, y1: 5600 }], stair: EXS }));
+  if (col.errors.length !== 1 || !/^Stair: the flight runs into column 3\/B/.test(col.errors[0])) p("column clash: " + col.errors.join(" | "));
+  // the example's stair on a grid where it does not fit only warns
+  const small = buildModel({ gridX: [0, 4000], gridY: [0, 3000] });
+  if (small.errors.length || small.STAIR || !small.warnings.some(w => /^Example stair left out: /.test(w) || /^Example opening stair void left out/.test(w))) p("example stair on a small grid should warn, not error: " + small.errors.concat(small.warnings).join(" | "));
+  if (problems.length) fail("stair:\n" + problems.slice(0, 20).join("\n"));
+  console.log("  stair (#8): the example's flight (" + S.n + " risers × " + S.R + ", " + (S.n - 1) + " × " + S.G + " goings, waist " + S.waist + ", headroom " + S.headroom + " flagged), " + sr.length + " flight bars + " + top.bars.length + " top bars in the slab + " + start.bars.length + " starters below, SR sheet, a 17-riser job, 13 bad inputs, a column clash");
 }
 
 // error paths must report, not throw

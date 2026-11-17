@@ -178,6 +178,49 @@ const { chromium } = require("playwright");
   await page.click("#btnReset"); await page.waitForTimeout(800);
   const v6 = await stats(); Object.assign(v6, await levels()); v6.rise = await page.inputValue("#inSrise"); v6.depth = await page.inputValue("#dropRows .orow:nth-child(1) input[data-k=depth]");
 
+  // stair flight (#8): the example's flight is a ninth step; its fields in the panel drive the model; a flight that does not
+  // fit is an error on the stair fields that keeps the scene; the side preset shows the flight in profile
+  const stairInfo = () => page.evaluate(() => { const M = window.xstruc.model(), S = M.STAIR; return { stair: S && { n: S.n, R: Math.round(S.R * 10) / 10, G: S.G, run: S.run, arrive: S.arrive, w: S.w, headroom: S.headroom, label: S.label }, order: M.ORDER.join(), layers: M.LAYERS.length, srBars: M.bars.filter(b => b.layer === "SR" && !b.existing).length, topBars: M.runs.filter(r => r.kind === "stairTop").map(r => r.bars.length)[0], titles: [...document.querySelectorAll("#steps .step b")].map(e => e.textContent), legend: document.getElementById("legend").textContent, fields: { void: document.getElementById("inStVoid").value, arrive: document.getElementById("inStArrive").value, rise: document.getElementById("inStRise").value, risers: document.getElementById("inStRisers").value, going: document.getElementById("inStGoing").value, waist: document.getElementById("inStWaist").value, main: document.getElementById("inStMain").value }, warns: [...document.querySelectorAll("#inErrs li.warn")].map(e => e.textContent).filter(t => /^Stair/.test(t)) }; });
+  const st0 = await stairInfo(); Object.assign(st0, await stats());
+  console.log("stair:", JSON.stringify(st0));
+  if (!st0.stair || st0.stair.n !== 16 || st0.order !== "BM,A,B,CH,C,D,ST,SR" || st0.titles.length !== 9 || st0.titles[8] !== "Stair flight" || st0.srBars !== 29 || st0.topBars !== 11 || st0.fields.void !== "STAIR VOID" || st0.fields.arrive !== "E" || st0.fields.rise !== "3000" || st0.fields.risers !== "" || st0.warns.length !== 3 || !/Stair/.test(st0.legend)) throw new Error("stair: unexpected state " + JSON.stringify(st0));
+  await page.click("#steps .step[data-step='8']"); await page.waitForTimeout(400);   // the stair step: the flight's bars solid, the slab's ghosted
+  const st1 = { label: await page.textContent("#steplabel"), tags: (await stats()).tags };
+  console.log("stair step:", JSON.stringify(st1));
+  if (!/Step 8 of 8 · Stair flight/.test(st1.label)) throw new Error("stair step label " + st1.label);
+  const camBtn = await page.$eval("#camStair", el => !el.hidden);
+  await page.click("#camStair"); await page.waitForTimeout(800);
+  const camS = await page.evaluate(() => window.xstruc.camPos());
+  await page.screenshot({ path: path.join(outDir, "smoke-25-stair-side.png") });
+  if (!camBtn || !(camS[2] > 2 && camS[1] < 2)) throw new Error("stair camera " + JSON.stringify([camBtn, camS]));   // south of the flight, below the slab
+  await page.click(".side [data-cam=iso]"); await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(outDir, "smoke-25-stair-iso.png") });
+  // a main bar picked: the inspector reads its run, shape and setout
+  const mainId = await page.evaluate(() => window.xstruc.model().runs.find(r => r.kind === "stairMain").bars[0].id);
+  await page.evaluate(id => window.xstruc.selectBar(id), mainId); await page.waitForTimeout(200);
+  const st2 = await page.evaluate(() => document.getElementById("inspector").textContent.replace(/\s+/g, " ").slice(0, 300));
+  console.log("stair bar inspector:", st2);
+  if (!/STAIR FLIGHT N16-200 MAIN/.test(st2) || !/4,?540/.test(st2)) throw new Error("stair inspector " + st2);
+  // 17 risers typed: the riser drops to 176.5, the run grows a going; then the west edge: the flight would leave the slab (error, scene kept)
+  await page.fill("#inStRisers", "17"); await page.waitForTimeout(700);
+  const st3 = await stairInfo();
+  console.log("17 risers:", JSON.stringify(st3.stair));
+  if (!st3.stair || st3.stair.n !== 17 || st3.stair.R !== 176.5 || st3.stair.run !== 4000) throw new Error("17 risers " + JSON.stringify(st3.stair));
+  await page.selectOption("#inStArrive", "W"); await page.waitForTimeout(700);
+  const st4 = await stats(); st4.invalid = await page.getAttribute("#inStRise", "aria-invalid"); st4.stair = (await stairInfo()).stair;
+  console.log("arrive W:", JSON.stringify(st4.errs), "invalid", st4.invalid, "scene kept:", st4.stair && st4.stair.n);
+  if (!st4.errs.some(e => /^Stair: the flight runs 4,000 from the west edge .* leaves the slab plan/.test(e)) || st4.invalid !== "true" || !st4.stair || st4.stair.n !== 17) throw new Error("arrive W " + JSON.stringify(st4.errs));
+  await page.screenshot({ path: path.join(outDir, "smoke-25-stair-error.png") });
+  // the stair feature off: eight steps again, no SR layer
+  await page.click("#btnReset"); await page.waitForTimeout(800);
+  await page.click("#feats input[data-feat=stair]"); await page.waitForTimeout(700);
+  const st5 = await stairInfo(); st5.fsDisabled = await page.$eval("#geomStair", el => el.disabled);
+  console.log("stair off:", JSON.stringify({ stair: st5.stair, order: st5.order, steps: st5.titles.length, layers: st5.layers, fs: st5.fsDisabled }));
+  st5.camHidden = await page.$eval("#camStair", el => el.hidden);
+  if (st5.stair || st5.order !== "BM,A,B,CH,C,D,ST" || st5.titles.length !== 8 || st5.layers !== 8 || !st5.fsDisabled || !st5.camHidden) throw new Error("stair off " + JSON.stringify(st5));
+  await page.click("#feats input[data-feat=stair]"); await page.waitForTimeout(700);
+  await page.click("#all");
+
   // laps (#5): the flat lap is the default and the report shows the AS 3600 value beside every lap in use (the short ones
   // flagged); typing the drawing's lap table changes the laps per size and case, the inspector / report / header say so; a
   // bad table line is an error on the textarea that keeps the scene; clearing it goes back to the flat lap
@@ -551,11 +594,11 @@ const { chromium } = require("playwright");
   if (pn.siteStand.pose !== "standing" || pn.siteStand.kind !== "persp" || pn.siteStand.yMax < PH - 0.2 || pn.siteStand.tags < 1 || pn.siteStand.pressed !== "false,true" || pn.siteStand.overflow || pn.siteStand.hdr > 60 || !/Step 1 of 6/.test(pn.siteStand.label)) problems.push("standing in site mode wrong: " + JSON.stringify(pn.siteStand));
   if (pn.siteBed.pose !== "bed" || pn.siteBed.standing) problems.push("site Bed chip did not lay the panel down: " + JSON.stringify(pn.siteBed));
   if (pn.floorPose.pose !== "standing" || pn.floorPose.standing || pn.floorPose.yMax > 0.3 || pn.floorPose.plan !== "Plan" || pn.floorPose.shown) problems.push("a floor should lie flat whatever the pose setting and hide the pose buttons: " + JSON.stringify(pn.floorPose));
-  if (pn.floor.bars !== s0.bars || pn.floor.steps !== 8 || JSON.stringify(pn.floor.errs) !== JSON.stringify(s0.errs)) problems.push("back to the floor did not restore the example: " + JSON.stringify(pn.floor));
+  if (pn.floor.bars !== s0.bars || pn.floor.steps !== 9 || JSON.stringify(pn.floor.errs.filter(e => !/placeholders, not an engineer/.test(e))) !== JSON.stringify(s0.errs.filter(e => !/placeholders, not an engineer/.test(e)))) problems.push("back to the floor did not restore the example: " + JSON.stringify(pn.floor));
   siteRuns.forEach(r => {
     const p = m => problems.push("site " + r.vp + ": " + m);
     if (!r.on || !r.sideHidden || !r.inspectHidden || !r.barVisible) p("site mode did not strip the UI (" + JSON.stringify({ on: r.on, side: r.sideHidden, insp: r.inspectHidden, bar: r.barVisible }) + ")");
-    if (r.chips !== 9) p("expected 9 step chips, got " + r.chips);
+    if (r.chips !== 10) p("expected 10 step chips, got " + r.chips);
     if (r.tagPx < 18) p("tag font " + r.tagPx + "px < 18");
     if (r.minBtn < 44) p("smallest touch target " + r.minBtn + "px < 44");
     if (r.overflow) p("page scrolls at this size");
@@ -591,7 +634,7 @@ const { chromium } = require("playwright");
   siteRuns.forEach(r => { if (!/lap zone [\d,]+ [EW] of grid \d to/.test(r.card)) problems.push("site " + r.vp + ": bar card lap zone is not from a grid: " + r.card); });
   // 2D placing sheet
   if (!sh.on || !sh.canvas || sh.view || sh.pressed !== "true" || sh.cw < 300) problems.push("sheet did not replace the 3D stage: " + JSON.stringify(sh));
-  if (sh.solid !== "BMABCHCDST" || sh.bars < 1000 || sh.dims !== 0 || !/ALL LAYERS/.test(sh.title)) problems.push("finished-floor sheet wrong: " + JSON.stringify(sh));
+  if (sh.solid !== "BMABCHCDSTSR" || sh.bars < 1000 || sh.dims !== 0 || !/ALL LAYERS/.test(sh.title)) problems.push("finished-floor sheet wrong: " + JSON.stringify(sh));
   if (shA.solid !== "A" || shA.ghost !== "BM" || shA.ink < 100 || shA.dims < 2 || !/LAYER A/.test(shA.title)) problems.push("layer A sheet wrong: " + JSON.stringify(shA));
   if (shA.sel !== shA.id || !shA.insp.includes(shA.mark)) problems.push("clicking a bar on the sheet did not select it (" + shA.sel + " vs " + shA.id + "): " + shA.insp);
   if (tgA.tags < 5 || tgA.dl < 1 || tgA.laps < 1 || tgA.strip < 3) problems.push("layer A sheet lacks tags / distribution lines / lap zones / callout strip: " + JSON.stringify(tgA));
@@ -602,7 +645,7 @@ const { chromium } = require("playwright");
   if (shOff.on || !shOff.view || shOff.canvas || shOff.sel !== shA.id) problems.push("3D button did not restore the stage with the selection kept: " + JSON.stringify(shOff));
   if (errors.length) problems.push("console errors:\n  " + errors.join("\n  "));
   if (+s0.bars.replace(/\D/g, "") < 800) problems.push("default model has too few bars: " + s0.bars);
-  if (s0.steps !== 8) problems.push("expected 8 steps, got " + s0.steps);
+  if (s0.steps !== 9) problems.push("expected 9 steps, got " + s0.steps);
   if (!s1.errs.some(e => /mesh/.test(e))) problems.push("mesh line did not produce an error");
   // mesh in the floor (#6)
   if (fm.errs.some(e => /^Line/.test(e)) || fm.back !== s0.bars || !(fm.pieces >= 12) || !(fm.wires >= 400) || fm.layer !== "C" || !/C\+D · top mesh/.test(fm.legend) || !fm.meshRow || !fm.listShown || fm.listRows < fm.pieces / 2 || !/stock sheets? 6.0 × 2.4 to order/.test(fm.summary) || !/laps \+ waste \d+ %/.test(fm.summary)) problems.push("floor mesh did not build / schedule: " + JSON.stringify(fm).slice(0, 700));

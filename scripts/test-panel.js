@@ -489,9 +489,9 @@ checkSteel(Mstub, "door at 300");
 // the example panel is untouched by all this
 ok(M.outline.length === 4 && !M.HOLES[0].edge && !M.warnings.length, "example panel outline / flags");
 
-// ---- the floor is untouched ----
+// ---- the floor is untouched (1,458 bars / 78 marks / 5,300 kg before #8 added the stair flight: + 40 bars, 3 marks, 140 kg) ----
 const F = buildModel(DEFAULT_CFG);
-ok(F.kind === undefined && F.bars.filter(b => !b.existing).length === 1458 && F.marks.length === 78 && Math.round(F.kg) === 5300, "the Level 1 floor changed: " + [F.bars.filter(b => !b.existing).length, F.marks.length, Math.round(F.kg)]);
+ok(F.kind === undefined && F.bars.filter(b => !b.existing).length === 1498 && F.marks.length === 81 && Math.round(F.kg) === 5440, "the Level 1 floor changed: " + [F.bars.filter(b => !b.existing).length, F.marks.length, Math.round(F.kg)]);
 
 if (problems.length) { console.error("panel: FAIL\n" + problems.slice(0, 30).join("\n") + (problems.length > 30 ? "\n…and " + (problems.length - 30) + " more" : "")); process.exit(1); }
 console.log("panel: OK (" + M.bars.length + " bars + " + M.meshPieces.length + " mesh sheet on the example; " + [Ms, Mbig].reduce((s, m) => s + m.meshPieces.length, 0) + " stock pieces checked; elevation sheet: " + S4.inserts.length + " symbols, " + tbl.rows.length + " table rows)");

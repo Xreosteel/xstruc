@@ -414,6 +414,7 @@ html.print #sheet { background: #fff; }
         <label><input type="checkbox" data-feat="openings" checked> Openings + trims</label>
         <label><input type="checkbox" data-feat="extras" checked> Extra bars</label>
         <label><input type="checkbox" data-feat="edges" checked> Edge bars + cogs</label>
+        <label><input type="checkbox" data-feat="stair" checked> Stair flight</label>
       </div>
       <fieldset class="geom" id="geomOpen">
         <legend>Openings · mm from grid 1 / grid A</legend>
@@ -434,6 +435,22 @@ html.print #sheet { background: #fff; }
           <div class="field"><label for="inSnib">Nib mm</label><input id="inSnib" type="number" min="150" max="600" step="10" inputmode="numeric"></div>
         </div>
         <span class="hint">Over 160: L-bars lap each mat on both sides of the step; the nib is the step's vertical face.</span>
+      </fieldset>
+      <fieldset class="geom" id="geomStair">
+        <legend>Stair · straight flight up from the floor below into a void</legend>
+        <div class="grid2">
+          <div class="field"><label for="inStVoid">Void (opening name)</label><input id="inStVoid" type="text" maxlength="24" spellcheck="false" autocomplete="off"></div>
+          <div class="field"><label for="inStArrive">Top riser at its</label><select id="inStArrive"><option value="N">N edge</option><option value="S">S edge</option><option value="E">E edge</option><option value="W">W edge</option></select></div>
+          <div class="field"><label for="inStRise">Floor to floor mm</label><input id="inStRise" type="number" min="1500" max="6000" step="10" inputmode="numeric"></div>
+          <div class="field"><label for="inStRisers">Risers (blank = fewest)</label><input id="inStRisers" type="number" min="2" max="18" step="1" inputmode="numeric"></div>
+          <div class="field"><label for="inStGoing">Going mm</label><input id="inStGoing" type="number" min="250" max="355" step="5" inputmode="numeric"></div>
+          <div class="field"><label for="inStWaist">Waist mm</label><input id="inStWaist" type="number" min="120" max="400" step="10" inputmode="numeric"></div>
+          <div class="field"><label for="inStWidth">Width (blank = void)</label><input id="inStWidth" type="number" min="600" step="50" inputmode="numeric"></div>
+          <div class="field"><label for="inStMain">Main bars (bottom)</label><input id="inStMain" type="text" spellcheck="false" autocomplete="off" placeholder="N16-200"></div>
+          <div class="field"><label for="inStDist">Distribution bars</label><input id="inStDist" type="text" spellcheck="false" autocomplete="off" placeholder="N12-300"></div>
+          <div class="field"><label for="inStTop">Top bars at landing</label><input id="inStTop" type="text" spellcheck="false" autocomplete="off" placeholder="N16-200"></div>
+        </div>
+        <span class="hint">Risers 115–190, goings 250–355, 2G + R 550–700, up to 18 risers (NCC D3D14). The flight descends from the top riser back across the void and on under the slab; the top bars are cast into this slab, the flight is a later pour. Waist and bar sizes are placeholders until the engineer's detail is entered.</span>
       </fieldset>
       <fieldset class="geom" id="geomBalc">
         <legend>Balconies · edge, from / to along it, out, thk, set-down</legend>
@@ -463,6 +480,7 @@ html.print #sheet { background: #fff; }
         <button class="btn" type="button" data-cam="plan">Plan</button>
         <button class="btn" type="button" data-cam="side">Side</button>
         <button class="btn" type="button" data-cam="fit">Fit</button>
+        <button class="btn" type="button" data-cam="stair" id="camStair" hidden title="The stair flight from its open side, floor below to this slab">Stair</button>
       </div>
       <div class="modein in-panel" hidden>
         <div class="modesw" role="group" aria-label="Panel pose">
@@ -552,10 +570,11 @@ html.print #sheet { background: #fff; }
     { id: "CH", name: "Bar chairs", css: "#9aa7b4" },
     { id: "C", name: "Layer C · top 3rd", css: "#e8a33d" },
     { id: "D", name: "Layer D · top 4th", css: "#e5534b" },
-    { id: "ST", name: "Column starters", css: "#f0d24a" }
+    { id: "ST", name: "Column starters", css: "#f0d24a" },
+    { id: "SR", name: "Stair flight", short: "Stair", css: "#8fd17a" }   // #8: the flight below the slab, a later pour; left out of a floor without a stair
   ];
   const LBY = {}; LAYERS.forEach((l, i) => { l.idx = i; LBY[l.id] = l; });
-  const EXPLODE = { CL: 0, BM: 0, A: 0, B: 0.3, CH: 0, C: 0.65, D: 0.95, ST: 1.35 };
+  const EXPLODE = { CL: 0, BM: 0, A: 0, B: 0.3, CH: 0, C: 0.65, D: 0.95, ST: 1.35, SR: 0 };
   const KGM = { N10: 0.632, N12: 0.888, N16: 1.58, N20: 2.47, N24: 3.55, N28: 4.83, N32: 6.31, N36: 7.99, N40: 9.86, R6: 0.222, R10: 0.617, R12: 0.888, R16: 1.58, R20: 2.47 };
   const BAR_SIZES = { N: [10, 12, 16, 20, 24, 28, 32, 36, 40], R: [6, 10, 12, 16, 20, 24], S: [12], W: [4, 5, 6, 8, 10, 12] };
 
@@ -609,12 +628,15 @@ html.print #sheet { background: #fff; }
     // two-leg tension bar bent at the anchor's hole (legs A and B outside, the included angle between them)
     else if (sh === "U-bar") { code = "U"; dims = [["A", out[0]], ["B", out[1]], ["C", out[2]]]; }
     else if (sh === "TB") { const u = [b.pts[0][0] - b.pts[1][0], b.pts[0][1] - b.pts[1][1], b.pts[0][2] - b.pts[1][2]], v = [b.pts[2][0] - b.pts[1][0], b.pts[2][1] - b.pts[1][1], b.pts[2][2] - b.pts[1][2]]; const ang = Math.round(Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (Math.hypot(...u) * Math.hypot(...v))))) * 180 / Math.PI); code = "TB"; dims = [["A", out[0]], ["B", out[1]], ["angle", ang + "°"]]; }
+    // a stair bar bent from a slab leg to the slope (#8): an L whose bend is not a right angle, so the angle is scheduled with the legs
+    else if (sh === "stair L") { const u = [b.pts[0][0] - b.pts[1][0], b.pts[0][1] - b.pts[1][1], b.pts[0][2] - b.pts[1][2]], v = [b.pts[2][0] - b.pts[1][0], b.pts[2][1] - b.pts[1][1], b.pts[2][2] - b.pts[1][2]]; const ang = Math.round(Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (Math.hypot(...u) * Math.hypot(...v))))) * 180 / Math.PI); code = "L"; dims = [["A", out[0]], ["C", out[1]], ["angle", ang + "°"]]; }
     else if (sh === "L-bar" || sh === "L starter" || sh === "cogged top") { code = "L"; const ci = out[0] < out[n - 1] ? 0 : n - 1, mi = ci === 0 ? 1 : 0; dims = [["A", out[mi]], ["C", out[ci]]]; if (n > 2) dims = out.map((v, i) => [String.fromCharCode(65 + i), v]); }
     else { code = n <= 1 ? "S" : "V"; dims = out.map((v, i) => [String.fromCharCode(65 + i), v]); }
     return { code: code, name: SHAPES[code] || sh, dims: dims, dimStr: dims.map(d => d[0] + " " + d[1]).join(" · "), flags: flags };
   }
   const MESH_CODES = ["SL52", "SL62", "SL72", "SL81", "SL82", "SL92", "SL102", "RL718", "RL818", "RL918", "RL1018", "RL1118", "RL1218", "L8TM", "L11TM", "L12TM"];
   const MAT_LAYERS = ["A", "B", "C", "D"];
+  const FLOOR_ORDER = ["BM", "A", "B", "CH", "C", "D", "ST"];   // a floor's fixing order; a stair flight (#8) adds SR after it
   const STOCK = 12000;
 
   const fmt = n => Math.round(n).toLocaleString("en-AU");
@@ -775,7 +797,7 @@ html.print #sheet { background: #fff; }
     fc: 32,
     lap: 600,
     callouts: "N16-200 A E-W\nN12-200 B N-S\nN12-150 C N-S\nN12-150 D E-W",
-    features: { beams: true, columns: true, drop: true, step: true, balcony: true, openings: true, extras: true, edges: true },
+    features: { beams: true, columns: true, drop: true, step: true, balcony: true, openings: true, extras: true, edges: true, stair: true },
     scheme: "ABCD"
   };
 
@@ -896,7 +918,10 @@ html.print #sheet { background: #fff; }
     // the step line sits on the second-last grid each way (on a two-line grid that is grid 1 / A, which the model
     // rejects as too close to the slab edge, so a small grid gets no step, with a warning)
     const step = { x0: gx[Math.max(0, nX - 2)], y0: gy[Math.max(0, nY - 2)], rise: 200, nib: 300 };
-    return { openings: openings, balconies: balconies, setdowns: setdowns, step: step };
+    // stair (#8): a straight flight up from the floor below into the stair void, arriving at its east edge (the flight
+    // runs west under the slab); floor-to-floor and the steel are STAIR_DEFAULTS placeholders
+    const stair = Object.assign({}, STAIR_DEFAULTS);
+    return { openings: openings, balconies: balconies, setdowns: setdowns, step: step, stair: stair };
   }
   // Balcony edge frames (#7c): `along` is the plan axis the edge runs on, `sg` the direction out from the slab.
   const EDGES = { N: { along: "X", sg: 1, name: "north" }, S: { along: "X", sg: -1, name: "south" }, E: { along: "Y", sg: 1, name: "east" }, W: { along: "Y", sg: -1, name: "west" } };
@@ -910,6 +935,14 @@ html.print #sheet { background: #fff; }
   // L-bars and a nib. 160 is the threshold the example has always used, not a value from a cited source — asked Baji
   // (planning doc, Questions for Baji, 2026-11-10). The step rise and nib caps below are placeholders in the same question.
   const ZBAR_MAX_DROP = 160, STEP_MAX_RISE = 600, NIB_MAX = 600;
+  // Stair flight (#8). Geometry limits as the NCC gives them for a stairway (NCC 2022 Volume One D3D14 "Goings and
+  // risers", D2.13 in NCC 2019: riser 115–190, going 250–355 for a public stair (240–355 private), 2G + R 550–700, 2 to
+  // 18 risers in a flight, risers and goings constant within a flight; D3D14(e) 2,000 headroom measured vertically
+  // above the nosing line). Quoted from the code as remembered — verify the clause numbers and values against the NCC
+  // text before release. The waist (180, the backlog's figure), the bar sizes and the leg lengths below are
+  // placeholders, not engineered values: question for Baji (planning doc, Questions for Baji, 2026-11-17).
+  const STAIR_RULES = { riserMin: 115, riserMax: 190, goingMin: 250, goingMax: 355, twoGRMin: 550, twoGRMax: 700, risersMax: 18, headroom: 2000, waistMin: 120, waistMax: 400, widthMin: 600 };
+  const STAIR_DEFAULTS = { void: "STAIR VOID", arrive: "E", rise: 3000, risers: "", going: 250, waist: 180, width: "", main: "N16-200", dist: "N12-300", top: "N16-200", topLeg: 1000 };
 
   // ---------- model builder ----------
   function buildModel(cfg) {
@@ -1147,9 +1180,77 @@ html.print #sheet { background: #fff; }
         b.note = b.along === "X" ? [mid, inTip] : [inTip, mid];
       });
     }
+    // ---- stair flight (#8): one straight flight rising from the floor below to this slab, its top riser at one edge of a
+    // stair void (the slab beyond that edge is the top landing). Written in the flight's frame: s = plan distance from
+    // the arrival edge measured down the flight (the flight runs through the void, then on under the slab), c = the
+    // plan coordinate across it, z as everywhere. Riser k (0 = the slab edge) stands at s = k·G; the throat line
+    // joins the riser feet, the soffit lies the waist below it, and the steel is set off those two lines:
+    //   z_line(d, s) = T − R − s·R/G − d·L/G   (d = perpendicular offset below the throat; L = √(G² + R²), L/G = 1/cos θ)
+    // The flight is the pour after the slab: its concrete fills against the slab's edge face and the wedge under the
+    // slab soffit back to where its own soffit meets it. ----
+    let STAIR = null;
+    const stairIn = explicitStair => explicitStair ? cfg.stair : EX.stair;
+    const explicitStair = !!cfg.stair && typeof cfg.stair === "object";
+    if (F.stair && F.openings && (HOLES.length || explicitStair)) {
+      const o = Object.assign({}, STAIR_DEFAULTS, stairIn(explicitStair)), SR = STAIR_RULES;
+      const say = msg => explicitStair ? errors.push("Stair: " + msg) : warnings.push("Example stair left out: " + msg);
+      const vname = String(o.void == null ? "" : o.void).trim().toUpperCase(), h = HOLES.find(q => q.id === vname);
+      const arrive = String(o.arrive == null ? "" : o.arrive).trim().toUpperCase().slice(0, 1), E = EDGES[arrive];
+      const v = [o.rise, o.going, o.waist].map(numv), nIn = o.risers === "" || o.risers == null ? null : numv(o.risers), wIn = o.width === "" || o.width == null ? null : numv(o.width);
+      const main = parseCallout(String(o.main || ""), { scheme: "ABCD" }), dist = parseCallout(String(o.dist || ""), { scheme: "ABCD" }), top = parseCallout(String(o.top || ""), { scheme: "ABCD" });
+      const barOk = p => !p.error && p.kind === "bar" && p.type === "N" && p.size && p.spacing;
+      if (!h) say("no opening named " + (vname || "(blank)") + "; the flight needs a stair void to arrive in (" + HOLES.map(q => q.id).join(", ") + ").");
+      else if (!E) say("arrival edge must be N, S, E or W (the void edge the top riser stands at).");
+      else if (v.some(n => !isFinite(n))) say("floor-to-floor rise, going and waist must all be numbers.");
+      else if (!(v[0] >= 1500 && v[0] <= 6000)) say("floor-to-floor rise must be 1,500–6,000 (top of the floor below to top of this slab).");
+      else if (!(v[1] >= SR.goingMin && v[1] <= SR.goingMax)) say("going must be " + SR.goingMin + "–" + SR.goingMax + " (NCC D3D14, public stair).");
+      else if (!(v[2] >= SR.waistMin && v[2] <= SR.waistMax)) say("waist must be " + SR.waistMin + "–" + SR.waistMax + ".");
+      else if (nIn != null && !(Number.isInteger(nIn) && nIn >= 2 && nIn <= SR.risersMax)) say("risers must be a whole number, 2–" + SR.risersMax + " in one flight (NCC D3D14); leave it blank for the fewest risers.");
+      else if (!barOk(main) || !barOk(dist) || !barOk(top)) say("main, distribution and top bars must each be an N bar with a spacing (N16-200).");
+      else {
+        const rise = v[0], G = v[1], waist = v[2];
+        const n = nIn != null ? nIn : Math.ceil(rise / SR.riserMax), R = rise / n;
+        const alongX = E.along === "Y", edge = alongX ? (arrive === "E" ? h.x1 : h.x0) : (arrive === "N" ? h.y1 : h.y0), sg = -E.sg;   // the flight descends away from the landing, back across the void
+        const c0 = alongX ? h.y0 : h.x0, c1 = alongX ? h.y1 : h.x1, cc = (c0 + c1) / 2, voidLen = alongX ? h.x1 - h.x0 : h.y1 - h.y0;
+        const w = wIn != null ? wIn : c1 - c0;
+        const L = Math.hypot(G, R), run = (n - 1) * G, zLo = T - rise;
+        const zLine = (d, s) => T - R - s * R / G - d * L / G, sAt = (d, z) => (T - R - d * L / G - z) * G / R;   // s where the line d reaches z
+        const sFoot = sAt(waist, zLo);           // where the soffit meets the floor below (short of the bottom riser by waist / sin θ)
+        const sWedge = sAt(waist, 0);            // where the soffit meets this slab's soffit (negative: under the slab, past the arrival edge)
+        const a0 = Math.min(edge, edge + sg * run), a1 = Math.max(edge, edge + sg * run);
+        const foot = alongX ? { x0: a0, x1: a1, y0: cc - w / 2, y1: cc + w / 2 } : { x0: cc - w / 2, x1: cc + w / 2, y0: a0, y1: a1 };   // plan footprint, top riser to bottom riser
+        const colsHit = F.columns ? gx.map(x => gy.map(y => ({ x: x, y: y, name: GX[gx.indexOf(x)][0] + "/" + GY[gy.indexOf(y)][0] }))).flat().filter(c => overlaps(foot, { x0: c.x - 200, x1: c.x + 200, y0: c.y - 200, y1: c.y + 200 })) : [];
+        const bm = beamOn(foot);
+        if (!(R >= SR.riserMin - 1e-9 && R <= SR.riserMax + 1e-9)) say("riser " + Math.round(R * 10) / 10 + " (" + fmt(rise) + " over " + n + " risers) is outside " + SR.riserMin + "–" + SR.riserMax + " (NCC D3D14); change the riser count or the rise.");
+        else if (!(2 * G + R >= SR.twoGRMin - 1e-9 && 2 * G + R <= SR.twoGRMax + 1e-9)) say("2 × going + riser = " + Math.round(2 * G + R) + " is outside " + SR.twoGRMin + "–" + SR.twoGRMax + " (NCC D3D14); change the going.");
+        else if (!(w >= SR.widthMin && w <= c1 - c0)) say("flight width must be " + SR.widthMin + "–" + fmt(c1 - c0) + " (the void is " + fmt(c1 - c0) + " across).");
+        else if (sFoot < 300) say("waist " + waist + " is too thick for a flight this short: the soffit would meet the floor below " + fmt(sFoot) + " down the flight.");
+        else if (!(foot.x0 >= SL.x0 && foot.x1 <= SL.x1 && foot.y0 >= SL.y0 && foot.y1 <= SL.y1)) say("the flight runs " + fmt(run) + " from the " + E.name + " edge of " + h.id + " and leaves the slab plan (" + (alongX ? "x " : "y ") + fmt(edge + sg * run) + "); arrive at the other edge, add risers or shorten the going.");
+        else if (colsHit.length) say("the flight runs into column " + colsHit.map(c => c.name).join(", ") + " under the slab.");
+        else if (bm) say("the flight passes under beam " + bm + "; the model cannot detail a flight through a beam line.");
+        else {
+          const headroom = run > voidLen ? Math.round(voidLen * R / G - T) : null;   // under the slab at the void's far edge: the nosing line's drop less the slab thickness
+          STAIR = { void: h.id, hole: h, arrive: arrive, along: E.along, alongX: alongX, sg: sg, edge: edge, cc: cc, w: w, c0: cc - w / 2, c1: cc + w / 2, n: n, R: R, G: G, L: L, rise: rise, run: run, waist: waist, zLo: zLo,
+            sFoot: sFoot, sWedge: sWedge, voidLen: voidLen, headroom: headroom, foot: foot, under: run > voidLen ? (alongX ? { x0: Math.min(edge + sg * voidLen, edge + sg * run), x1: Math.max(edge + sg * voidLen, edge + sg * run), y0: foot.y0, y1: foot.y1 } : { x0: foot.x0, x1: foot.x1, y0: Math.min(edge + sg * voidLen, edge + sg * run), y1: Math.max(edge + sg * voidLen, edge + sg * run) }) : null,
+            main: main, dist: dist, top: top, topLeg: Math.max(300, numv(o.topLeg) || STAIR_DEFAULTS.topLeg), zLine: zLine, sAt: sAt, kind: "stair" };
+          // the plan point for an along / across pair and the section polygon (s, z) the viewer extrudes across the width
+          STAIR.P = (s, c, z) => alongX ? [edge + sg * s, c, z] : [c, edge + sg * s, z];
+          const poly = [[0, T - R]];
+          for (let k = 1; k < n; k++) poly.push([k * G, T - k * R], [k * G, T - (k + 1) * R]);
+          poly.push([sFoot, zLo]);
+          if (sWedge < 0) poly.push([sWedge, 0], [0, 0]); else poly.push([0, zLine(waist, 0)]);
+          STAIR.poly = poly;
+          STAIR.label = "STAIR " + n + "R × " + Math.round(R) + " · " + (n - 1) + "G × " + G + " · WAIST " + waist + " · UP " + ({ E: "E", W: "W", N: "N", S: "S" })[arrive];
+          STAIR.text = n + " risers × " + (Math.round(R * 10) / 10) + ", " + (n - 1) + " goings × " + G + ", waist " + waist + ", " + fmt(w) + " wide, up " + fmt(rise) + " to the " + E.name + " edge of " + h.id;
+          if (headroom != null && headroom < SR.headroom) warnings.push("Stair: headroom under the slab at the " + (alongX ? (sg > 0 ? "east" : "west") : (sg > 0 ? "north" : "south")) + " edge of " + h.id + " is " + fmt(headroom) + ", less than the 2,000 the NCC asks for above the nosing line (D3D14); the flight runs " + fmt(run - voidLen) + " on under the slab. Lengthen the void or check with the engineer.");
+          if (w < 1000) warnings.push("Stair: the flight is " + fmt(w) + " wide; a required exit stair is usually at least 1,000 clear (NCC Volume One exit-width rules; check for this building).");
+          if (stairIn(explicitStair) === EX.stair) warnings.push("Stair: the example's floor-to-floor rise (" + fmt(rise) + "), waist, bar sizes and leg lengths are placeholders, not an engineer's detail.");
+        }
+      }
+    }
     // plan extents of the pour: the slab plus its balconies (grids, bubbles, dimension strings and the sheet frame it)
     const EXT = { x0: Math.min(SL.x0, ...BALCS.map(b => b.x0)), x1: Math.max(SL.x1, ...BALCS.map(b => b.x1)), y0: Math.min(SL.y0, ...BALCS.map(b => b.y0)), y1: Math.max(SL.y1, ...BALCS.map(b => b.y1)) };
-    const COLB = -1500, COL = 400;
+    const COLB = STAIR ? Math.min(-1500, STAIR.zLo - T) : -1500, COL = 400;   // with a stair the columns below reach the floor below
     // starter projection = the lap with the column bars above (#5): the example's 950 unless the lap table has a COLUMN
     // row for N24 (compression lap, Cl 13.2.4; the AS 3600 value is computed beside it either way)
     const STLAP = F.columns ? lapUse({ size: 24, kase: "column", sp: 0, cover: C, below: 0, fixed: 950, what: "column starters" }) : null, PROJ = STLAP ? STLAP.len : 950;
@@ -1520,6 +1621,86 @@ html.print #sheet { background: #fff; }
       st.tagPos = [mid.x, mid.y, T + PROJ + 60];
     })();
 
+    // ---- stair flight bars (#8). Detailing as the CIA Reinforcement Detailing Handbook (Z6) shows a flight: main bars in
+    // the bottom of the waist along the slope, distribution bars across them, top bars over the landing support bent down
+    // the flight over the convex top corner. At the top junction the soffit corner is re-entrant, so the bottom bars are
+    // not bent round it: they run straight into the wedge under the slab and stop; how they anchor into the landing
+    // (and the starters for them) is the engineer's detail — asked (planning doc, Questions for Baji, 2026-11-17). The
+    // top bars are cast into this slab (layer ST, placed with the column starters); the flight's bars are a later pour. ----
+    if (STAIR) (function () {
+      const S = STAIR, alongX = S.alongX, P = S.P, G = S.G, L = S.L, w = S.w, cc = S.cc;
+      const dm = S.main.size, spm = S.main.spacing, dd = S.dist.size, spd = S.dist.spacing, dt = S.top.size, spt = S.top.spacing;
+      const alDir = alongX ? "X" : "Y", crDir = alongX ? "Y" : "X";
+      const soC = c => so(alongX, c);                       // a bar line along the flight: its position across, from grid A / 1
+      const soS = s => so(!alongX, S.edge + S.sg * s);      // a bar across the flight: its position along, from grid 1 / A
+      const spread = (sp, d) => { const k = Math.floor((w - 2 * C - d) / sp) + 1, st = S.c0 + (w - (k - 1) * sp) / 2; return Array.from({ length: k }, (_, i) => st + i * sp); };
+      const sLen = ds => ds * L / G, sPlan = ls => ls * G / L;   // plan run ↔ sloped length
+      const crossPts = (s, d, size) => [P(s, S.c0 + C + size / 2, S.zLine(d, s)), P(s, S.c1 - C - size / 2, S.zLine(d, s))];
+      // steel lines as offsets below the throat: bottom main bars at cover above the soffit, bottom distribution bars on
+      // them; top bars at cover under the throat (the treads' inner corners), top distribution bars under those
+      const dMain = S.waist - C - dm / 2, dDist = dMain - dm / 2 - dd / 2, dTop = C + dt / 2, dTopD = dTop + dt / 2 + dd / 2;
+      if (dDist < dTopD + dd / 2 + dt / 2 + 10) { errors.push("Stair: waist " + S.waist + " is too thin for N" + dm + " main, N" + dd + " distribution and N" + dt + " top bars at " + C + " cover each face."); return; }
+      // bottom main bars: from cover above the floor below (where the starters cast there lap them) up into the wedge
+      // under this slab's soffit, stopping cover under it
+      const sMainLo = S.sAt(dMain, S.zLo + C + dm / 2), sMainHi = Math.max(S.sWedge + C, S.sAt(dMain, -(C + dm / 2)));
+      const lapM = lapUse({ size: dm, kase: "slab", sp: spm, cover: C, below: 0, what: "stair main bars" });
+      const mainRun = addRun({ layer: "SR", size: dm, dir: alDir, kind: "stairMain", stair: S, z: S.zLine(dMain, S.run / 2), lap: lapM,
+        label: "STAIR N" + dm + "-" + spm + " MAIN · B", callout: "STAIR FLIGHT N" + dm + "-" + spm + " MAIN BARS IN THE BOTTOM OF THE " + S.waist + " WAIST, LAP " + lapM.len + " WITH THE STARTERS FROM THE FLOOR BELOW" });
+      const cm = spread(spm, dm); mainRun.n = cm.length; mainRun.sp = spm; runSetout(mainRun, alongX, cm[0], cm[cm.length - 1]);
+      cm.forEach((c, i) => addBar(mainRun, { pts: [P(sMainHi, c, S.zLine(dMain, sMainHi)), P(sMainLo, c, S.zLine(dMain, sMainLo))], shape: "straight", line: i + 1, stair: true, setout: soC(c),
+        note: "Stair main bar in the bottom of the waist, along the slope: laps the starter from the floor below at its lower end, stops " + C + " under this slab's soffit at the top. How the bottom bars anchor into the landing is the engineer's detail." }));
+      const sTag = Math.min(S.run * 0.45, S.voidLen * 0.6);
+      mainRun.dist = { dir: alDir, at: S.edge + S.sg * sTag, p0: cm[0], p1: cm[cm.length - 1], z: S.zLine(dMain, sTag) + 22, frac: 0.5 };
+      // starters cast in the floor below (existing, context only): a leg in that slab's top, bent up the slope under the
+      // main bars and lapping them (the soffit corner at the foot is convex, so the bend is allowed)
+      const lapS = lapM.len, zLowTop = S.zLo - C - 6 - dm / 2;   // the floor below is taken as the same cover
+      const sStHi = sMainLo - sPlan(lapS + 50), sStLo = S.sAt(dMain, zLowTop);
+      const stRun = addRun({ layer: "SR", size: dm, dir: alDir, kind: "stairStart", stair: S, z: S.zLo, existing: true, label: "N" + dm + "-" + spm + " STARTERS · FLOOR BELOW", callout: "STAIR STARTERS N" + dm + "-" + spm + " CAST IN THE FLOOR BELOW (EXISTING), SLOPED LEG LAPS " + lapS + " WITH THE MAIN BARS" });
+      cm.forEach((c, i) => addBar(stRun, { pts: [P(sStHi, c, S.zLine(dMain, sStHi)), P(sStLo, c, zLowTop), P(sStLo + lapS, c, zLowTop)], shape: "stair L", existing: true, stair: true, line: i + 1, setout: soC(c),
+        note: "Starter cast in the floor below (existing): a leg in that slab's top, bent up the slope under the flight's main bars and lapping them " + lapS + ". Shown for context; not in this pour's schedule." }));
+      stRun.tagPos = P(S.run + 150, cc, S.zLo + 40);
+      // bottom distribution bars across the flight, on the main bars, at their spacing along the slope
+      const lapD = lapUse({ size: dd, kase: "slab", sp: 0, cover: C + dm, below: 0, what: "stair distribution bars" });
+      const distRun = addRun({ layer: "SR", size: dd, dir: crDir, kind: "stairDist", stair: S, z: S.zLine(dDist, S.run / 2), lap: lapD, label: "STAIR N" + dd + "-" + spd + " DIST · B", callout: "STAIR FLIGHT N" + dd + "-" + spd + " DISTRIBUTION BARS ACROSS THE FLIGHT, ON THE MAIN BARS" });
+      const slopeB = sLen(sMainLo - sMainHi), nD = Math.floor(slopeB / spd) + 1, sD0 = sMainHi + sPlan((slopeB - (nD - 1) * spd) / 2);
+      distRun.n = nD; distRun.sp = Math.round(sPlan(spd) * 10) / 10;   // the run's pitch is the plan pitch: the bars sit spd apart along the slope
+      distRun.callout += " AT " + spd + " ALONG THE SLOPE (" + Math.round(sPlan(spd)) + " IN PLAN)";
+      const lineNo = (i, k) => S.sg > 0 ? i + 1 : k - i;   // bar lines count up the plan axis, so a flight descending west or south counts from its foot
+      for (let i = 0; i < nD; i++) { const s = sD0 + sPlan(i * spd); addBar(distRun, { pts: crossPts(s, dDist, dd), shape: "straight", line: lineNo(i, nD), stair: true, setout: soS(s) + " (" + fmt(sLen(Math.max(0, s))) + " down the slope)", note: "Distribution bar across the flight, tied on the main bars at " + spd + " along the slope." }); }
+      runSetout(distRun, !alongX, Math.min(S.edge + S.sg * sD0, S.edge + S.sg * (sD0 + sPlan((nD - 1) * spd))), Math.max(S.edge + S.sg * sD0, S.edge + S.sg * (sD0 + sPlan((nD - 1) * spd))));
+      const sDT = Math.min(S.run * 0.3, S.voidLen * 0.4);
+      distRun.dist = { dir: crDir, at: S.c1 - C - 250, p0: Math.min(S.edge + S.sg * sD0, S.edge + S.sg * (sD0 + sPlan((nD - 1) * spd))), p1: Math.max(S.edge + S.sg * sD0, S.edge + S.sg * (sD0 + sPlan((nD - 1) * spd))), z: S.zLine(dDist, sDT) + 22, frac: 0.3 };
+      // top bars over the landing support, cast into this slab: a leg under layer C in the flight's direction, bent at
+      // the slab's edge corner (convex) down the flight's top, where the top distribution bars tie to it. The slab leg
+      // is the lap; it is shortened (and flagged) where the landing is narrower than that.
+      const zTopLeg = Z.C - dC / 2 - dt / 2 - 2;
+      const lapT = lapUse({ size: dt, kase: "slab", sp: spt, cover: C + dD + dC, below: zTopLeg - dt / 2, what: "stair top bars" });
+      const sCorner = S.sAt(dTop, zTopLeg), sLegEnd = sCorner + sPlan(S.topLeg);
+      const posCorner = S.edge + S.sg * sCorner, back = -S.sg;   // the slab leg runs back from the corner into the landing
+      let limit = alongX ? (back > 0 ? SL.x1 - C : SL.x0 + C) : (back > 0 ? SL.y1 - C : SL.y0 + C);
+      HOLES.filter(q => q !== S.hole && (alongX ? q.y1 > S.c0 && q.y0 < S.c1 : q.x1 > S.c0 && q.x0 < S.c1)).forEach(q => {   // another opening across the leg's path
+        const near = alongX ? (back > 0 ? q.x0 : q.x1) : (back > 0 ? q.y0 : q.y1);
+        if ((near - posCorner) * back > 0 && Math.abs(near - posCorner) < Math.abs(limit - posCorner)) limit = near - back * C;
+      });
+      const room = Math.max(0, (limit - posCorner) * back), slabLeg = Math.min(lapT.len, Math.floor(room / 10) * 10);
+      if (slabLeg < 300) { errors.push("Stair: no room in the landing for the top bars' slab leg beyond the " + ({ E: "east", W: "west", N: "north", S: "south" })[S.arrive] + " edge of " + S.void + " (" + fmt(room) + " to the slab edge or the next opening); arrive at another edge."); return; }
+      if (slabLeg < lapT.len) warnings.push("Stair: the top bars' slab leg is " + slabLeg + ", shorter than the " + lapT.len + " lap, because the landing beyond " + S.void + " is only " + fmt(room + C) + " wide there. Check the anchorage with the engineer.");
+      const topRun = addRun({ layer: "ST", size: dt, dir: alDir, kind: "stairTop", stair: S, z: zTopLeg, lap: lapT, label: "STAIR N" + dt + "-" + spt + " TOP · INTO SLAB", callout: "STAIR TOP BARS N" + dt + "-" + spt + " CAST INTO THE SLAB: " + slabLeg + " LEG UNDER LAYER C, BENT DOWN THE FLIGHT " + S.topLeg });
+      const ct = spread(spt, dt); topRun.n = ct.length; topRun.sp = spt; runSetout(topRun, alongX, ct[0], ct[ct.length - 1]);
+      ct.forEach((c, i) => addBar(topRun, { pts: [P(sCorner - slabLeg, c, zTopLeg), P(sCorner, c, zTopLeg), P(sLegEnd, c, S.zLine(dTop, sLegEnd))], shape: "stair L", line: i + 1, stair: true, setout: soC(c),
+        note: "Stair top bar cast into the slab with the column starters: " + slabLeg + " leg under layer C into the landing, bent at the void edge down the flight's top for " + S.topLeg + " along the slope (placeholder length: the engineer sets it)." }));
+      topRun.dist = { dir: alDir, at: posCorner + back * Math.max(60, slabLeg * 0.5), p0: ct[0], p1: ct[ct.length - 1], z: zTopLeg + 22, frac: 0.5 };
+      // top distribution bars along the sloped leg, in the flight
+      const sT0 = Math.max(100, sCorner + 100), nTD = Math.floor(sLen(Math.max(0, sLegEnd - sT0)) / spd) + 1;
+      if (sLegEnd > sT0) {
+        const tdRun = addRun({ layer: "SR", size: dd, dir: crDir, kind: "stairDistT", stair: S, z: S.zLine(dTopD, sT0), lap: lapD, label: "STAIR N" + dd + "-" + spd + " DIST · T", callout: "STAIR FLIGHT N" + dd + "-" + spd + " DISTRIBUTION BARS UNDER THE TOP BARS" });
+        tdRun.n = nTD; tdRun.sp = Math.round(sPlan(spd) * 10) / 10;
+        for (let i = 0; i < nTD; i++) { const s = sT0 + sPlan(i * spd); addBar(tdRun, { pts: crossPts(s, dTopD, dd), shape: "straight", line: lineNo(i, nTD), stair: true, setout: soS(s) + " (" + fmt(sLen(s)) + " down the slope)", note: "Distribution bar across the flight under the top bars' sloped legs." }); }
+        tdRun.tagPos = P(sT0 + sPlan((nTD - 1) * spd) / 2, S.c0 + C + 300, S.zLine(dTopD, sT0 + sPlan((nTD - 1) * spd) / 2) + 30);
+      }
+      S.steel = { main: "N" + dm + "-" + spm, dist: "N" + dd + "-" + spd, top: "N" + dt + "-" + spt, mainLines: cm.length, topLines: ct.length, distBars: nD, topDist: sLegEnd > sT0 ? nTD : 0, slabLeg: slabLeg, lapMain: lapM.len };
+    })();
+
     // ---- bar chairs at 1000 both ways (800 under a top mesh) ----
     // the grid starts half a pitch in from the slab's SW corner and extends over any balcony on the south / west edges
     const CP = CHAIR_PITCH, x00 = SL.x0 + CP / 2 - CP * Math.ceil((SL.x0 - EXT.x0) / CP), y00 = SL.y0 + CP / 2 - CP * Math.ceil((SL.y0 - EXT.y0) / CP);
@@ -1578,10 +1759,13 @@ html.print #sheet { background: #fff; }
       });
       VLBY = {}; VLAYERS.forEach(l => { VLBY[l.id] = l; });
     }
+    // the stair layer (#8) exists only on a floor with a flight; its step is the last in the fixing order (a later pour)
+    if (!STAIR) { VLAYERS = VLAYERS.filter(l => l.id !== "SR"); VLBY = {}; VLAYERS.forEach(l => { VLBY[l.id] = l; }); }
+    const ORDER = STAIR ? FLOOR_ORDER.concat(["SR"]) : FLOOR_ORDER.slice();
 
     return { cfg: cfg, errors: errors, warnings: warnings, parsed: parsed, mats: mats, meshes: meshes, matText: matText, Z: Z, T: T, C: C, L: L, W: Wd, SL: SL, GX: GX, GY: GY, gx: gx, gy: gy,
-      HOLES: HOLES, DROPS: DROPS, STEP: STEP, BALCS: BALCS, EXT: EXT, BEAMS: BEAMS, COLS: COLS, COL: COL, COLB: COLB, PROJ: PROJ, chairPitch: CHAIR_PITCH,
-      bars: bars, wires: wires, meshPieces: meshPieces, meshSummary: MSUM, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kg, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS, LAYERS: VLAYERS, LBY: VLBY, EXPLODE: EXPLODE, lvl: lvl };
+      HOLES: HOLES, DROPS: DROPS, STEP: STEP, BALCS: BALCS, STAIR: STAIR, EXT: EXT, BEAMS: BEAMS, COLS: COLS, COL: COL, COLB: COLB, PROJ: PROJ, chairPitch: CHAIR_PITCH,
+      bars: bars, wires: wires, meshPieces: meshPieces, meshSummary: MSUM, runs: runs, chairs: chairs, sched: sched, marks: marks, kg: kg, kgBars: kgBars, kgMesh: kgMesh, laps: LAPS, LAYERS: VLAYERS, LBY: VLBY, EXPLODE: EXPLODE, ORDER: ORDER, lvl: lvl };
   }
 
   // ---------- precast panels (backlog #33a/#33b, Findings 12; mesh layout from Findings 11) ----------
@@ -2477,6 +2661,8 @@ html.print #sheet { background: #fff; }
         drops: M.DROPS.map(dd => rect(dd, "SET DOWN " + dd.d)),
         step: M.STEP ? { rect: rect(M.STEP, "STEP UP " + M.STEP.rise), nib: M.STEP.nib } : null,
         balconies: M.BALCS.map(b => rect(b, b.plain ? "BALCONY" : b.id)),
+        // the stair flight (#8) below the slab: its plan footprint and the riser lines, drawn dashed like the beams
+        stair: M.STAIR ? { rect: rect(M.STAIR.foot, "STAIR"), risers: Array.from({ length: M.STAIR.n }, (_, k) => { const a = M.STAIR.P(k * M.STAIR.G, M.STAIR.c0, 0), b = M.STAIR.P(k * M.STAIR.G, M.STAIR.c1, 0); return [a[0], a[1], b[0], b[1]]; }), up: M.STAIR.arrive } : null,
         beams: M.BEAMS.map(beamRect),
         cols: M.COLS.map(c => ({ x0: c.x - M.COL / 2, x1: c.x + M.COL / 2, y0: c.y - M.COL / 2, y1: c.y + M.COL / 2, id: c.name }))
       },
@@ -2497,6 +2683,7 @@ html.print #sheet { background: #fff; }
     if (M.STEP) S.notes.push({ x: (M.STEP.x0 + M.STEP.x1) / 2, y: (M.STEP.y0 + M.STEP.y1) / 2, text: "STEP UP " + M.STEP.rise });
     M.BALCS.forEach(b => S.notes.push({ x: b.note[0], y: b.note[1], text: b.label }));
     M.HOLES.forEach(h => S.notes.push({ x: (h.x0 + h.x1) / 2, y: h.small ? h.y0 - 250 : (h.y0 + h.y1) / 2, text: h.label }));
+    if (M.STAIR) { const q = M.STAIR.P(M.STAIR.run * 0.7, M.STAIR.cc, 0); S.notes.push({ x: q[0], y: q[1], text: M.STAIR.label }); }
     M.BEAMS.forEach(bm => S.notes.push({ x: bm.dir === "X" ? bm.a + (bm.b - bm.a) * 0.52 : bm.at + 520, y: bm.dir === "X" ? bm.at : bm.a + (bm.b - bm.a) * 0.36, text: bm.id + " " + bm.D + " × " + bm.w }));
     // bars: plan polyline (vertical legs collapse to their point); a near-vertical leg at either end is a cog or hook,
     // drawn as a tick of the leg's height, perpendicular to the bar, as on a placing drawing
@@ -2961,6 +3148,19 @@ html.print #sheet { background: #fff; }
     M.DROPS.forEach(dd => slabPiece(dd, [], -dd.d, T, cMat));
     if (M.STEP) { slabPiece(M.STEP, [], M.STEP.rise, T, cMat); box(M.STEP.x0, M.STEP.x0 + M.STEP.nib, M.STEP.y0, M.STEP.y1, 0, M.STEP.rise + T, cMat); box(M.STEP.x0, M.STEP.x1, M.STEP.y0, M.STEP.y0 + M.STEP.nib, 0, M.STEP.rise + T, cMat); }
     M.BALCS.forEach(b => slabPiece(b, [], b.bot, b.top - b.bot, cMat));
+    if (M.STAIR) {   // the stair flight (#8): its section polygon (plan position along the flight, z) extruded across its width
+      const S = M.STAIR, sh = new THREE.Shape();
+      S.poly.forEach((p, i) => sh[i ? "lineTo" : "moveTo"](S.edge + S.sg * p[0], p[1]));
+      const g = new THREE.ExtrudeGeometry(sh, { depth: S.w, bevelEnabled: false });
+      if (S.alongX) { g.scale(0.001, 0.001, -0.001); g.translate(-OX / 1000, 0, -(S.c0 - OY) / 1000); }   // the shape's extrusion runs north (scene −z)
+      else { g.rotateY(Math.PI / 2); g.scale(0.001, 0.001, 0.001); g.translate((S.c0 - OX) / 1000, 0, OY / 1000); }   // the shape's x is plan y; extrusion runs east
+      const m = new THREE.Mesh(g, cMat); m.renderOrder = 10; concrete.add(m);
+      concrete.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat));
+      // the floor below (existing, context): a pad under the foot of the flight out to a landing past the bottom riser
+      const padA = S.edge + S.sg * (S.sFoot - 600), padB = S.edge + S.sg * (S.run + 1000);
+      if (S.alongX) box(Math.min(padA, padB), Math.max(padA, padB), S.c0 - 300, S.c1 + 300, S.zLo - T, S.zLo, colMat);
+      else box(S.c0 - 300, S.c1 + 300, Math.min(padA, padB), Math.max(padA, padB), S.zLo - T, S.zLo, colMat);
+    }
     M.BEAMS.forEach(bm => bm.dir === "X" ? box(bm.a, bm.b, bm.at - bm.w / 2, bm.at + bm.w / 2, T - bm.D, 0, cMat) : box(bm.at - bm.w / 2, bm.at + bm.w / 2, bm.a, bm.b, T - bm.D, 0, cMat));
     M.COLS.forEach(c => box(c.x - M.COL / 2, c.x + M.COL / 2, c.y - M.COL / 2, c.y + M.COL / 2, M.COLB, c.top, colMat));
 
@@ -3045,6 +3245,7 @@ html.print #sheet { background: #fff; }
     if (M.STEP) ann.push(["STEP UP " + M.STEP.rise, (M.STEP.x0 + M.STEP.x1) / 2, (M.STEP.y0 + M.STEP.y1) / 2, M.STEP.rise + T + 6]);
     M.BALCS.forEach(b => ann.push([b.label, b.note[0], b.note[1], b.top + 6]));
     M.HOLES.forEach(h => ann.push([h.label, (h.x0 + h.x1) / 2, h.small ? h.y0 - 250 : (h.y0 + h.y1) / 2, T + 6]));
+    if (M.STAIR) { const S = M.STAIR, q = S.P(S.run * 0.7, S.cc, T - S.run * 0.7 * S.R / S.G + 120); ann.push([S.label, q[0], q[1], q[2]]); }   // on the lower part of the flight, under its void label
     M.BEAMS.forEach(bm => ann.push([bm.id + " " + bm.D + " × " + bm.w, bm.dir === "X" ? bm.a + (bm.b - bm.a) * 0.52 : bm.at + 520, bm.dir === "X" ? bm.at : bm.a + (bm.b - bm.a) * 0.36, T + 6]));
     ann.forEach(a => mkLabel(esc(a[0]), "anno", W(a[1], a[2], a[3]), { kind: "anno", center: true }));
     const barTag = mkLabel("", "tag bar", new THREE.Vector3(), { kind: "barTag" });
@@ -3075,8 +3276,8 @@ html.print #sheet { background: #fff; }
       { title: "Bar chairs", sub: "@" + (M.chairPitch || 1000) + " both ways", c: VLBY.CH.css },
       { title: VLBY.C.name, sub: md("C") + (M.mats.C && M.cfg.features.edges ? " cogged" : "") + " · add N16", c: VLBY.C.css },
       { title: VLBY.D.name, sub: md("D") + (M.mats.D && M.cfg.features.edges ? " cogged" : "") + (M.cfg.features.edges ? " · edge bars" : "") + " · extras", c: VLBY.D.css },
-      { title: "Column starters", sub: M.COLS.length ? "8N24 per column · project " + M.PROJ : "no columns", c: VLBY.ST.css }
-    ];
+      { title: "Column starters", sub: (M.COLS.length ? "8N24 per column · project " + M.PROJ : "no columns") + (M.STAIR ? " · stair top bars" : ""), c: VLBY.ST.css }
+    ].concat(M.STAIR ? [{ title: VLBY.SR.name, sub: M.STAIR.n + " risers · " + (M.STAIR.steel ? M.STAIR.steel.main + " main, " + M.STAIR.steel.dist + " dist" : "") + " · later pour", c: VLBY.SR.css }] : []);
   }
   function renderSteps() {
     stepsEl.innerHTML = "";
@@ -3632,6 +3833,7 @@ html.print #sheet { background: #fff; }
     if (K.drops.length) { c.setLineDash([8, 5]); K.drops.forEach(dd => { R(dd); c.stroke(); }); c.setLineDash([]); }
     if (K.step) { R(K.step.rect); c.stroke(); c.setLineDash([3, 3]); line(K.step.rect.x0 + K.step.nib, K.step.rect.y0, K.step.rect.x0 + K.step.nib, K.step.rect.y1); line(K.step.rect.x0, K.step.rect.y0 + K.step.nib, K.step.rect.x1, K.step.rect.y0 + K.step.nib); c.setLineDash([]); }
     c.lineWidth = 1.6; K.balconies.forEach(r => { R(r); c.stroke(); });
+    if (K.stair) { c.lineWidth = 1; c.setLineDash([6, 4]); R(K.stair.rect); c.stroke(); K.stair.risers.forEach(l => line(l[0], l[1], l[2], l[3])); c.setLineDash([]); }   // the flight below the slab (#8)
     // grids: dashed centre lines, bubbles at both ends, dimension strings between them
     c.strokeStyle = GRIDC; c.lineWidth = 1; c.setLineDash([14, 5, 3, 5]);
     sheet.grids.x.forEach(g => line(g.v, g.a, g.v, g.b));
@@ -3958,6 +4160,15 @@ html.print #sheet { background: #fff; }
       };
     }
     ["iso", "side", "fit"].forEach(k => { pr[k].p = fitCam(pr[k].p, pr[k].t); });
+    // the stair flight (#8) from its open side: the camera off the flight's cross axis, a little up and towards the
+    // landing, far enough for the whole flight (floor below to this slab) to fit the stage
+    if (M.STAIR) {
+      const S = M.STAIR, q = S.P(S.run / 2, S.cc, (S.zLo + M.T) / 2), c = W(q[0], q[1], q[2]);
+      const span = Math.max(S.run, S.rise, S.w) / 1000, asp = view.clientWidth / Math.max(1, view.clientHeight), fov = persp.fov * Math.PI / 180;
+      const d = span / (2 * Math.tan(fov / 2) * Math.min(1, asp)) * 1.9;
+      const along = S.alongX ? new THREE.Vector3(-S.sg, 0, 0) : new THREE.Vector3(0, 0, S.sg), cross = S.alongX ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);   // scene: +x east, −z north
+      pr.stair = { p: c.clone().addScaledVector(cross, d).addScaledVector(along, 0.25 * d).add(new THREE.Vector3(0, 0.22 * d, 0)), t: c.clone() };
+    }
     return pr;
   }
   function setPlan(on) {
@@ -4075,9 +4286,12 @@ html.print #sheet { background: #fff; }
   const IN = { gridX: $("inGridX"), gridY: $("inGridY"), thk: $("inThk"), cover: $("inCover"), fc: $("inFc"), lap: $("inLap"), lapTable: $("inLapTable"), callouts: $("inCallouts") };
   const featBoxes = [...document.querySelectorAll("#feats input[data-feat]")];
   // geometry lists (#7a, #7b, #7c): opening, set-down and balcony rows, the step fields; the example's rows come from exampleGeometry(cfg)
-  const GEO = { rows: $("openRows"), dropRows: $("dropRows"), balcRows: $("balcRows"), fsOpen: $("geomOpen"), fsBalc: $("geomBalc"), fsDrop: $("geomDrop"), fsStep: $("geomStep"),
+  const GEO = { rows: $("openRows"), dropRows: $("dropRows"), balcRows: $("balcRows"), fsOpen: $("geomOpen"), fsBalc: $("geomBalc"), fsDrop: $("geomDrop"), fsStep: $("geomStep"), fsStair: $("geomStair"),
     sx0: $("inSx0"), sy0: $("inSy0"), rise: $("inSrise"), nib: $("inSnib") };
   const STEP_KEYS = { x0: "sx0", y0: "sy0", rise: "rise", nib: "nib" };
+  // the stair fields (#8): cfg.stair keys → input ids; text fields are read as typed, numbers as numbers (blank stays blank)
+  const STAIR_KEYS = { void: "inStVoid", arrive: "inStArrive", rise: "inStRise", risers: "inStRisers", going: "inStGoing", waist: "inStWaist", width: "inStWidth", main: "inStMain", dist: "inStDist", top: "inStTop" };
+  const stairEl = k => $(STAIR_KEYS[k]);
   // a set-down row carries its depth beside the name (head), a balcony row its edge (a select); the numbers sit on the second line
   const ROW_KINDS = {
     open: { what: "opening", nums: ["x0", "y0", "x1", "y1"], ph: "OPENING" },
@@ -4113,17 +4327,20 @@ html.print #sheet { background: #fff; }
     GEO.dropRows.innerHTML = ""; drops.forEach(o => GEO.dropRows.appendChild(geoRow("drop", o)));
     GEO.balcRows.innerHTML = ""; balcs.forEach(o => GEO.balcRows.appendChild(geoRow("balc", o)));
     Object.keys(STEP_KEYS).forEach(k => { GEO[STEP_KEYS[k]].value = s[k] == null ? "" : s[k]; });
+    const st = Object.assign({}, STAIR_DEFAULTS, cfg.stair && typeof cfg.stair === "object" ? cfg.stair : EX.stair);
+    Object.keys(STAIR_KEYS).forEach(k => { stairEl(k).value = st[k] == null ? "" : st[k]; });
     syncGeomEnabled();
   }
   function syncGeomEnabled() {
     const f = {}; featBoxes.forEach(b => { f[b.dataset.feat] = b.checked; });
-    GEO.fsOpen.disabled = !f.openings; GEO.fsBalc.disabled = !f.balcony; GEO.fsDrop.disabled = !f.drop; GEO.fsStep.disabled = !f.step;
+    GEO.fsOpen.disabled = !f.openings; GEO.fsBalc.disabled = !f.balcony; GEO.fsDrop.disabled = !f.drop; GEO.fsStep.disabled = !f.step; GEO.fsStair.disabled = !f.stair || !f.openings;
   }
   const numOf = el => el.value.trim() === "" ? NaN : +el.value;
   const readRows = box => [...box.querySelectorAll(".orow")].map(r => { const o = {}; r.querySelectorAll("input, select").forEach(el => { o[el.dataset.k] = el.type === "number" ? numOf(el) : el.value; }); return o; });
   function readGeom() {
     const step = {}; Object.keys(STEP_KEYS).forEach(k => { step[k] = numOf(GEO[STEP_KEYS[k]]); });
-    return { openings: readRows(GEO.rows), balconies: readRows(GEO.balcRows), setdowns: readRows(GEO.dropRows), step: step };
+    const stair = {}; Object.keys(STAIR_KEYS).forEach(k => { const el = stairEl(k); stair[k] = el.type === "number" ? (el.value.trim() === "" ? "" : +el.value) : el.value; });
+    return { openings: readRows(GEO.rows), balconies: readRows(GEO.balcRows), setdowns: readRows(GEO.dropRows), step: step, stair: stair };
   }
   function fillInputs(cfg) {
     IN.gridX.value = cfg.gridX.join(", "); IN.gridY.value = cfg.gridY.join(", ");
@@ -4152,12 +4369,13 @@ html.print #sheet { background: #fff; }
     }
     IN.callouts.setAttribute("aria-invalid", String(model.errors.some(e => /^Line \d/.test(e))));
     IN.lapTable.setAttribute("aria-invalid", String(model.errors.some(e => /^Lap table/.test(e))));
-    const plain = model.errors.filter(e => !/^(Line \d|Opening \d|Balcony \d|Set-down \d|Step:|Lap table)/.test(e));
+    const plain = model.errors.filter(e => !/^(Line \d|Opening \d|Balcony \d|Set-down \d|Step:|Stair:|Lap table)/.test(e));
     [[IN.gridX, /grid/i], [IN.gridY, /grid/i], [IN.thk, /thickness|thin/i], [IN.cover, /cover/i], [IN.fc, /f'c/], [IN.lap, /^Lap must/]].forEach(p => p[0].setAttribute("aria-invalid", String(plain.some(e => p[1].test(e)))));
     [...GEO.rows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Opening " + (i + 1) + " ") === 0)); });
     [...GEO.dropRows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Set-down " + (i + 1) + " ") === 0)); });
     [...GEO.balcRows.querySelectorAll(".orow")].forEach((r, i) => { r.dataset.invalid = String(model.errors.some(e => e.indexOf("Balcony " + (i + 1) + " ") === 0)); });
     const badS = model.errors.some(e => /^Step:/.test(e)); Object.values(STEP_KEYS).forEach(k => GEO[k].setAttribute("aria-invalid", String(badS)));
+    const badSt = model.errors.some(e => /^Stair:/.test(e)); Object.keys(STAIR_KEYS).forEach(k => stairEl(k).setAttribute("aria-invalid", String(badSt)));
   }
   function slabline(model) {
     const c = model.cfg;
@@ -4187,6 +4405,7 @@ html.print #sheet { background: #fff; }
     teardown(); buildScene(model); lastGood = cfg;
     sheet = null; sheetKey = "";   // the sheet is rebuilt from the new model by apply()
     renderSteps(); renderLegend(); renderSchedule(); showDefault(); slabline(model); renderLaps(model); apply(); resize();
+    $("camStair").hidden = !model.STAIR;
     $("siteFloor").textContent = model.cfg.name + " · " + model.T + " THK · laps " + model.laps.text;
     if (opts.camera) goCam("iso", true); else if (planMode) goCam("plan");
     return true;
@@ -4198,6 +4417,7 @@ html.print #sheet { background: #fff; }
   }
   Object.values(IN).forEach(el => { el.addEventListener("input", scheduleRebuild); el.id = el.id; });
   Object.values(STEP_KEYS).forEach(k => GEO[k].addEventListener("input", scheduleRebuild));
+  Object.keys(STAIR_KEYS).forEach(k => { stairEl(k).addEventListener("input", scheduleRebuild); if (stairEl(k).tagName === "SELECT") stairEl(k).addEventListener("change", scheduleRebuild); });
   featBoxes.forEach(b => b.addEventListener("change", () => { syncGeomEnabled(); scheduleRebuild(); }));
   // a new row on a free patch of the current slab (nearest the middle, clear of the openings, set-downs, step and beams
   // already built, by `clear`), named by its row number; the user moves it from there
