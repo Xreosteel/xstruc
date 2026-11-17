@@ -453,19 +453,54 @@ const { chromium } = require("playwright");
   await page.click("#btnPanelReset"); await page.waitForTimeout(900);
   pn.doorReset = await page.evaluate(() => ({ holes: window.xstruc.model().HOLES.length, rows: document.querySelectorAll("#pnOpenRows .orow").length, bars: document.getElementById("stBars").textContent, warns: document.querySelectorAll("#inErrs li").length }));
   await page.click("#all");
-  // site mode on a tablet
+  // standing pose (#33f-ii): the panel stood on its bottom edge with the face that was up on the bed towards the
+  // camera; tags, picking, the stepper, the explode and the elevation (Plan) work in both poses; the model is untouched
+  await page.click(".side [data-cam=iso]"); await page.waitForTimeout(300);
+  pn.poseBed = await page.evaluate(() => { const X = window.xstruc, M = X.model(), ids = M.bars.filter(b => b.layer !== "IN").map(b => b.id), ys = ids.map(id => X.barWorld(id)[1]); return { pose: X.state.pose, standing: X.standing(), yMax: +Math.max(...ys).toFixed(3), plan: document.querySelector(".side [data-cam=plan]").textContent, shown: document.querySelector(".side [data-pose=standing]").offsetParent !== null, siteShown: document.querySelector(".sitectl [data-pose=standing]") !== null, cap: document.getElementById("poseCap").textContent.slice(0, 17), kg: document.getElementById("stMass").textContent }; });
+  await page.click(".side [data-pose=standing]"); await page.waitForTimeout(600);
+  pn.stand = await page.evaluate(() => { const X = window.xstruc, M = X.model(), mids = M.bars.filter(b => b.layer !== "IN").map(b => X.barWorld(b.id)); const ys = mids.map(p => p[1]), zs = mids.map(p => p[2]); return { pose: X.state.pose, standing: X.standing(), yMin: +Math.min(...ys).toFixed(3), yMax: +Math.max(...ys).toFixed(3), zMin: +Math.min(...zs).toFixed(3), zMax: +Math.max(...zs).toFixed(3), cam: X.camPos().map(v => +v.toFixed(2)), kind: X.camKind(), tags: document.querySelectorAll("#tags .tag:not([hidden])").length, anno: [...document.querySelectorAll("#tags .anno:not([hidden])")].map(a => a.textContent), plan: document.querySelector(".side [data-cam=plan]").textContent, pressed: document.querySelector(".side [data-pose=standing]").getAttribute("aria-pressed"), bars: document.getElementById("stBars").textContent, kg: document.getElementById("stMass").textContent, hud: document.getElementById("hud").textContent.slice(0, 26), cap: document.getElementById("poseCap").textContent.slice(0, 26) }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-24-panel-standing.png") });
+  // pick a bar in the face towards the camera: select it through the handle, read where its tag was laid out, then
+  // raycast at the tag's anchor (the bar's midpoint on screen) as a tap would
+  pn.standPick = await page.evaluate(() => { const X = window.xstruc, M = X.model(), top = M.panel.topFace + "1", cands = M.bars.filter(b => b.layer === top && Math.abs(b.pts[0][1] - b.pts[1][1]) < 1); const b = cands.reduce((a, c) => Math.abs(c.pts[0][1] - M.W / 2) < Math.abs(a.pts[0][1] - M.W / 2) ? c : a); X.selectBar(b.id); return { id: b.id, layer: b.layer }; });
+  await page.waitForTimeout(250);
+  pn.standPick = Object.assign(pn.standPick, await page.evaluate(sel => { const X = window.xstruc, el = document.querySelector("#tags .tag.bar"), m = /translate\((-?\d+)px,\s*(-?\d+)px\)/.exec(el.style.transform), r = document.querySelector("#view canvas").getBoundingClientRect(); const x = +m[1] + el.offsetWidth / 2, y = +m[2] + el.offsetHeight + 10; const hit = X.pickAt(r.left + x, r.top + y); return { hidden: el.hidden, inStage: x > 0 && x < r.width && y > 0 && y < r.height, hit: hit, hitIsSel: hit === sel, tag: el.textContent.replace(/\s+/g, " ").slice(0, 40), insp: document.getElementById("inspector").textContent.replace(/\s+/g, " ").slice(0, 40) }; }, pn.standPick.id));
+  // the explode spreads the layers along the thickness (scene z when standing), the stepper shows one layer
+  await page.click("#tgExplode"); await page.click('#steps .step[data-step="6"]'); await page.waitForTimeout(400);
+  pn.standStep = await page.evaluate(() => { const X = window.xstruc, M = X.model(), off = X.layerOffset(M.ORDER[5]); return { off: off.map(v => +v.toFixed(2)), label: document.getElementById("steplabel").textContent, tags: document.querySelectorAll("#tags .tag:not([hidden])").length, sel: X.state.sel && X.state.sel.id }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-24-panel-standing-explode.png") });
+  await page.click("#tgExplode"); await page.click("#all");
+  // Plan is a true elevation while standing
+  await page.click(".side [data-cam=plan]"); await page.waitForTimeout(400);
+  pn.standElev = await page.evaluate(() => ({ kind: window.xstruc.camKind(), hud: document.getElementById("hud").textContent.slice(0, 31), tags: document.querySelectorAll("#tags .tag:not([hidden])").length, cam: window.xstruc.camPos().map(v => +v.toFixed(1)) }));
+  await page.screenshot({ path: path.join(outDir, "smoke-24-panel-standing-elevation.png") });
+  // back on the bed from the elevation: the plan camera again, the selection kept
+  await page.click(".side [data-pose=bed]"); await page.waitForTimeout(400);
+  pn.poseBack = await page.evaluate(() => { const X = window.xstruc, M = X.model(), ys = M.bars.filter(b => b.layer !== "IN").map(b => X.barWorld(b.id)[1]); return { pose: X.state.pose, kind: X.camKind(), yMax: +Math.max(...ys).toFixed(3), plan: document.querySelector(".side [data-cam=plan]").textContent, sel: X.state.sel && X.state.sel.id, bars: document.getElementById("stBars").textContent }; });
+  await page.click(".side [data-cam=iso]"); await page.waitForTimeout(300);
+  // site mode on a tablet, with the Bed / Standing chips
   await page.setViewportSize({ width: 1024, height: 768 }); await page.waitForTimeout(300); await page.click("#btnSite"); await page.waitForTimeout(700);
-  pn.site = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#siteChips .chip-step")].map(c => c.lastElementChild.textContent), now: document.getElementById("siteNow").textContent, overflow: document.documentElement.scrollHeight > innerHeight + 1 }));
+  pn.site = await page.evaluate(() => ({ chips: [...document.querySelectorAll("#siteChips .chip-step")].map(c => c.lastElementChild.textContent), now: document.getElementById("siteNow").textContent, overflow: document.documentElement.scrollHeight > innerHeight + 1, poseChips: [...document.querySelectorAll(".sitectl [data-pose]")].map(b => b.textContent + ":" + (b.offsetParent !== null) + ":" + b.getAttribute("aria-pressed")) }));
+  await page.click(".sitectl [data-pose=standing]"); await page.waitForTimeout(600);
+  pn.siteStand = await page.evaluate(() => { const X = window.xstruc, M = X.model(), ys = M.bars.filter(b => b.layer !== "IN").map(b => X.barWorld(b.id)[1]); return { pose: X.state.pose, kind: X.camKind(), yMax: +Math.max(...ys).toFixed(3), tags: document.querySelectorAll("#tags .tag:not([hidden])").length, label: document.getElementById("siteNow").textContent.slice(0, 40), pressed: [...document.querySelectorAll(".sitectl [data-pose]")].map(b => b.getAttribute("aria-pressed")).join(), overflow: document.documentElement.scrollHeight > innerHeight + 1, hdr: document.querySelector(".sitectl").getBoundingClientRect().height }; });
+  await page.screenshot({ path: path.join(outDir, "smoke-24-panel-standing-site.png") });
+  await page.click(".sitectl [data-pose=bed]"); await page.waitForTimeout(500);
+  pn.siteBed = await page.evaluate(() => ({ pose: window.xstruc.state.pose, standing: window.xstruc.standing() }));
   await page.screenshot({ path: path.join(outDir, "smoke-18-panel-site.png") });
   await page.click("#btnSiteExit"); await page.waitForTimeout(300);
   await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300);
   // back to the floor: the Level 1 example as it was
+  // (with the pose left on Standing first: a floor always lies flat and hides the pose buttons)
+  await page.evaluate(() => window.xstruc.setPose("standing"));
   await page.click("#modeFloor"); await page.waitForTimeout(900);
   pn.floor = await stats();
+  pn.floorPose = await page.evaluate(() => { const X = window.xstruc, M = X.model(), ys = M.bars.filter(b => b.layer === "A").slice(0, 20).map(b => X.barWorld(b.id)[1]); return { pose: X.state.pose, standing: X.standing(), yMax: +Math.max(...ys).toFixed(3), plan: document.querySelector(".side [data-cam=plan]").textContent, shown: document.querySelector(".side [data-pose=standing]").offsetParent !== null }; });
+  await page.evaluate(() => window.xstruc.setPose("bed"));
   console.log("panel:", JSON.stringify(pn).slice(0, 1500));
   console.log("panel elevation:", JSON.stringify({ elev: pn.elev, tap: pn.elevTap, appr: pn.elevAppr, all: pn.elevAll, print: pn.elevPrint }));
   console.log("panel cover:", JSON.stringify({ cover: pn.cover, rigid: pn.coverRigid, low: pn.coverLow, none: pn.coverNone }));
   console.log("panel door:", JSON.stringify({ door: Object.assign({}, pn.door, { summary: pn.door.summary.slice(pn.door.summary.indexOf("Openings"), pn.door.summary.indexOf("Openings") + 120) }), sheet: pn.doorSheet, ins: pn.doorIns, reset: pn.doorReset }));
+  console.log("panel standing:", JSON.stringify({ bed: pn.poseBed, stand: pn.stand, pick: pn.standPick, step: pn.standStep, elev: pn.standElev, back: pn.poseBack, site: pn.site.poseChips, siteStand: pn.siteStand, siteBed: pn.siteBed, floor: pn.floorPose }));
 
   await browser.close();
   const problems = [];
@@ -504,6 +539,18 @@ const { chromium } = require("playwright");
   if (!/^P1 · PANEL SHEET · ALL LAYERS/.test(pn.elevAll.title) || pn.elevAll.symbols !== 4 || pn.elevAll.rows !== 4) problems.push("finished panel sheet wrong: " + JSON.stringify(pn.elevAll));
   if (!pn.elevPrint.fits || ![50, 75, 100].includes(pn.elevPrint.den) || pn.elevPrint.w > pn.elevPrint.stageW || pn.elevPrint.h > pn.elevPrint.stageH - 50) problems.push("panel elevation does not print on A3 at a standard scale: " + JSON.stringify(pn.elevPrint));
   if (pn.site.chips.join("|") !== "Formwork|Far face mesh|Far face edge bars|Bar chairs|Inserts|Near face inner bars|Near face outer bars|Finished panel" || pn.site.overflow) problems.push("panel site mode: " + JSON.stringify(pn.site));
+  // standing pose (#33f-ii)
+  const PH = 3, PT = 0.2;   // the example panel: 3,000 high, 200 thick (metres in the scene)
+  if (pn.poseBed.pose !== "bed" || pn.poseBed.standing || pn.poseBed.yMax > PT || pn.poseBed.plan !== "Plan" || !pn.poseBed.shown || !pn.poseBed.siteShown || !/^Lying on the bed/.test(pn.poseBed.cap)) problems.push("bed pose wrong before the switch: " + JSON.stringify(pn.poseBed));
+  if (pn.stand.pose !== "standing" || !pn.stand.standing || pn.stand.yMin < 0 || pn.stand.yMin > 0.2 || pn.stand.yMax < PH - 0.2 || pn.stand.yMax > PH || pn.stand.zMin < -PT / 2 || pn.stand.zMax > PT / 2 || pn.stand.kind !== "persp" || pn.stand.cam[1] < 0.5 || pn.stand.cam[2] < 1 || pn.stand.tags < 6 || !pn.stand.anno.some(a => /^P1 · STANDING · VIEWED FROM NF$/.test(a)) || pn.stand.anno.some(a => /BOTTOM EDGE$/.test(a)) || pn.stand.plan !== "Elevation" || pn.stand.pressed !== "true" || pn.stand.bars !== "85" || pn.stand.kg !== pn.poseBed.kg || !/^Standing · NF towards you/.test(pn.stand.hud) || !/^Stood on its bottom edge/.test(pn.stand.cap)) problems.push("standing pose wrong: " + JSON.stringify(pn.stand));
+  if (pn.standPick.layer !== "NF1" || pn.standPick.hidden || !pn.standPick.inStage || !pn.standPick.hitIsSel || !/N12/.test(pn.standPick.tag) || !/N12/.test(pn.standPick.insp)) problems.push("picking / the bar tag failed in the standing pose: " + JSON.stringify(pn.standPick));
+  if (pn.standStep.off[1] !== 0 || !(pn.standStep.off[2] > 0.5) || !/Step 6 of 6 · Near face outer bars/.test(pn.standStep.label) || pn.standStep.tags < 1 || pn.standStep.sel !== pn.standPick.id) problems.push("explode / stepper in the standing pose wrong (the explode should move layers along z): " + JSON.stringify(pn.standStep));
+  if (pn.standElev.kind !== "elevation" || !/^Elevation · NF towards you/.test(pn.standElev.hud) || pn.standElev.tags < 6 || pn.standElev.cam[2] < 50 || Math.abs(pn.standElev.cam[1] - PH / 2) > 0.2) problems.push("Plan while standing should be a true elevation: " + JSON.stringify(pn.standElev));
+  if (pn.poseBack.pose !== "bed" || pn.poseBack.kind !== "plan" || pn.poseBack.yMax > PT || pn.poseBack.plan !== "Plan" || pn.poseBack.sel !== pn.standPick.id || pn.poseBack.bars !== "85") problems.push("back to the bed from the elevation went wrong: " + JSON.stringify(pn.poseBack));
+  if (JSON.stringify(pn.site.poseChips) !== JSON.stringify(["Bed:true:true", "Standing:true:false"])) problems.push("site mode lacks the Bed / Standing chips: " + JSON.stringify(pn.site.poseChips));
+  if (pn.siteStand.pose !== "standing" || pn.siteStand.kind !== "persp" || pn.siteStand.yMax < PH - 0.2 || pn.siteStand.tags < 1 || pn.siteStand.pressed !== "false,true" || pn.siteStand.overflow || pn.siteStand.hdr > 60 || !/Step 1 of 6/.test(pn.siteStand.label)) problems.push("standing in site mode wrong: " + JSON.stringify(pn.siteStand));
+  if (pn.siteBed.pose !== "bed" || pn.siteBed.standing) problems.push("site Bed chip did not lay the panel down: " + JSON.stringify(pn.siteBed));
+  if (pn.floorPose.pose !== "standing" || pn.floorPose.standing || pn.floorPose.yMax > 0.3 || pn.floorPose.plan !== "Plan" || pn.floorPose.shown) problems.push("a floor should lie flat whatever the pose setting and hide the pose buttons: " + JSON.stringify(pn.floorPose));
   if (pn.floor.bars !== s0.bars || pn.floor.steps !== 8 || JSON.stringify(pn.floor.errs) !== JSON.stringify(s0.errs)) problems.push("back to the floor did not restore the example: " + JSON.stringify(pn.floor));
   siteRuns.forEach(r => {
     const p = m => problems.push("site " + r.vp + ": " + m);

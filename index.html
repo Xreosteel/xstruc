@@ -236,6 +236,9 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .sitebtn { margin-left: 6px; }
 .sitectl { display: flex; gap: 8px; margin-left: auto; align-items: center; flex-wrap: wrap; }
 .sitectl .lv { font-family: var(--mono); font-size: 15px; color: var(--muted); margin-right: 6px; }
+.sitectl .posesw { display: flex; gap: 0; }
+.sitectl .posesw .btn:first-child { border-radius: 6px 0 0 6px; }
+.sitectl .posesw .btn:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 html.site, html.site body { height: 100%; overflow: hidden; }
 html.site .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; min-height: 0; padding-block: 8px; }
 html.site .side, html.site .inspect, html.site .slabline, html.site .stats, html.site .sitebtn, html.site .hud, html.site #tip { display: none !important; }
@@ -318,6 +321,7 @@ html.print #sheet { background: #fff; }
       <button class="btn" type="button" data-cam="iso">3D</button>
       <button class="btn" type="button" data-cam="plan">Plan</button>
       <button class="btn" type="button" id="btnSiteSheet" aria-pressed="false" title="This layer as a 2D placing sheet: pinch to zoom, tap a bar or a tag">Sheet</button>
+      <span class="modein in-panel posesw" role="group" aria-label="Panel pose" hidden><button class="btn" type="button" data-pose="bed" aria-pressed="true" title="The panel as it lies on the casting bed">Bed</button><button class="btn" type="button" data-pose="standing" aria-pressed="false" title="The panel stood on its bottom edge, the face that was up on the bed towards you">Standing</button></span>
       <button class="btn" type="button" id="btnSiteExit">Exit site mode</button>
     </div>
   </header>
@@ -460,6 +464,13 @@ html.print #sheet { background: #fff; }
         <button class="btn" type="button" data-cam="side">Side</button>
         <button class="btn" type="button" data-cam="fit">Fit</button>
       </div>
+      <div class="modein in-panel" hidden>
+        <div class="modesw" role="group" aria-label="Panel pose">
+          <button class="btn" type="button" data-pose="bed" aria-pressed="true" title="The panel as it lies on the casting bed: looking down, bottom edge towards you">On the bed</button>
+          <button class="btn" type="button" data-pose="standing" aria-pressed="false" title="The panel stood on its bottom edge, the face that was up on the bed towards you (the face the sheet is viewed from)">Standing</button>
+        </div>
+        <p class="caption" id="poseCap">Lying on the bed as it is cast and fixed.</p>
+      </div>
       <button class="btn" type="button" id="tgSheet" aria-pressed="false" title="Draw the current layer as a 2D placing sheet: bars as lines, cogs as ticks, setout from the grids">2D placing sheet</button>
       <button class="btn small" type="button" id="btnPrint" title="Print the current layer's placing sheet on A3 landscape at a standard scale (Ctrl/Cmd+P does the same)">Print sheet · A3</button>
       <div class="toggles">
@@ -474,6 +485,7 @@ html.print #sheet { background: #fff; }
       <p class="caption">Each tag is one run of bars, written like the placing drawing: <b>count, size, spacing, layer</b>. The tick-ended line under it shows which bars it covers.</p>
       <p class="caption"><b>Plan</b> gives a true top-down floor plan with grids and dimensions. Step through the layers in fixing order: the layer being placed is solid, the ones below are ghosted.</p>
       <p class="caption"><b>2D placing sheet</b> draws the current layer as a placing drawing: bars as lines, cogs as ticks, grids with dimension strings, and the first and last bar line dimensioned from the nearest grid. Drag to pan, scroll or pinch to zoom, double-click to fit, click a bar for its details. A schedule row highlights that mark on the sheet with its labels. <b>Print sheet</b> puts the layer on A3 landscape at a standard scale.</p>
+      <p class="caption">A <b>precast panel</b> has two poses: <b>On the bed</b> as it is cast and fixed, or <b>Standing</b> on its bottom edge with the face that was up on the bed towards you; Plan becomes a true elevation when it stands.</p>
       <p class="caption"><b>Site mode</b> (top right) is the tablet view for fixing: one layer at a time, big tags, tap a bar for its mark, cut length, setout from the grids and laps.</p>
     </div>
   </aside>
@@ -2868,7 +2880,16 @@ html.print #sheet { background: #fff; }
   ctlO.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   ctlO.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
   ctlO.enabled = false;
+  // a standing panel's "Plan" is a true elevation: a second orthographic camera looking at the viewed face (#33f-ii);
+  // OrbitControls fixes its up vector at construction, so the plan camera (up = north) cannot be reused
+  const orthoE = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
+  const ctlE = new THREE.OrbitControls(orthoE, renderer.domElement);
+  ctlE.enableRotate = false; ctlE.screenSpacePanning = true;
+  ctlE.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+  ctlE.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
+  ctlE.enabled = false;
   let cam = persp, planMode = false;
+  const planCtl = () => cam === orthoE ? ctlE : ctlO;
   scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x1a2028, 0.9));
   const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(-6, 14, 8); scene.add(sun);
   const planGrid = new THREE.GridHelper(80, 80, 0x222a33, 0x182028); scene.add(planGrid);
@@ -2886,12 +2907,20 @@ html.print #sheet { background: #fff; }
   let ORDER = SLAB_ORDER, NSTEP = ORDER.length, VL = LAYERS, VLBY = LBY, VEXP = EXPLODE;
   const isPanel = () => !!(M && M.kind === "panel");
   const finWord = () => isPanel() ? "panel" : "floor";
-  const state = { step: NSTEP, all: true, conc: true, tags: true, ghost: true, explode: false, sel: null, selRun: null, mark: null, site: false, sheet: false };
+  const state = { step: NSTEP, all: true, conc: true, tags: true, ghost: true, explode: false, sel: null, selRun: null, mark: null, site: false, sheet: false, pose: "bed" };
   let M = null, built = null;   // current model and its scene objects
 
   // scene: x = east, y = up, -z = north (so a top-down camera reads north-up)
+  // A panel has two poses (#33f-ii): on the bed (model z, the thickness, is up; the bottom edge towards the plan
+  // camera, as on the bed and the sheet) or standing (model y, the height, is up; the bottom edge on the ground at
+  // scene y = 0; the face that was up on the bed — the face the sheet is viewed from — towards +z, the default camera).
+  // The model never changes pose: only W() and the two concrete helpers read it, so bars, tags, picking, the
+  // explode and the cameras all follow. A floor always lies flat.
   let OX = 0, OY = 0;
-  const W = (x, y, z) => new THREE.Vector3((x - OX) / 1000, z / 1000, -(y - OY) / 1000);
+  const standing = () => state.pose === "standing" && !!(M && M.kind === "panel");
+  const W = (x, y, z) => standing() ? new THREE.Vector3((x - OX) / 1000, y / 1000, (z - (M.T || 0) / 2) / 1000) : new THREE.Vector3((x - OX) / 1000, z / 1000, -(y - OY) / 1000);
+  // the explode moves each layer off its neighbours along the model's z: scene y on the bed, scene z standing
+  const upAxis = () => standing() ? "z" : "y";
 
   function teardown() {
     if (!built) return;
@@ -2916,12 +2945,13 @@ html.print #sheet { background: #fff; }
       if (outline) { outline.forEach((p, i) => s[i ? "lineTo" : "moveTo"](p[0], p[1])); s.lineTo(outline[0][0], outline[0][1]); } else rectPath(s, r, false);
       holes.forEach(h => { if (h.edge) return; const p = new THREE.Path(); rectPath(p, h, true); s.holes.push(p); });   // a door or notch is cut out of the outline (#33f)
       const g = new THREE.ExtrudeGeometry(s, { depth: th, bevelEnabled: false });
-      g.rotateX(-Math.PI / 2); g.scale(0.001, 0.001, 0.001); g.translate(-OX / 1000, z0 / 1000, OY / 1000);
+      if (standing()) { g.scale(0.001, 0.001, 0.001); g.translate(-OX / 1000, 0, (z0 - T / 2) / 1000); }   // the shape is the elevation; extrude towards the viewer
+      else { g.rotateX(-Math.PI / 2); g.scale(0.001, 0.001, 0.001); g.translate(-OX / 1000, z0 / 1000, OY / 1000); }
       const m = new THREE.Mesh(g, mat); m.renderOrder = 10; concrete.add(m);
       concrete.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat));
     }
     function box(x0, x1, y0, y1, z0, z1, mat) {
-      const g = new THREE.BoxGeometry((x1 - x0) / 1000, (z1 - z0) / 1000, (y1 - y0) / 1000);
+      const g = standing() ? new THREE.BoxGeometry((x1 - x0) / 1000, (y1 - y0) / 1000, (z1 - z0) / 1000) : new THREE.BoxGeometry((x1 - x0) / 1000, (z1 - z0) / 1000, (y1 - y0) / 1000);
       const c = W((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2); g.translate(c.x, c.y, c.z);
       const m = new THREE.Mesh(g, mat); m.renderOrder = 10; concrete.add(m);
       concrete.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat));
@@ -2936,7 +2966,8 @@ html.print #sheet { background: #fff; }
 
     // grid lines + dimension strings
     const gridGrp = new THREE.Group(); scene.add(gridGrp); groups.push(gridGrp);
-    const EXT = M.EXT, GZ = T + 6, ext = 1450, DYL = isPanel() ? -700 : Math.min(M.gy[0] - 1050, EXT.y0 - 800), DXL = isPanel() ? -700 : Math.min(M.gx[0] - 1050, EXT.x0 - 800);
+    // a standing panel's width string sits above the top edge (below the bottom edge would be under the ground)
+    const EXT = M.EXT, GZ = T + 6, ext = 1450, DYL = isPanel() ? (standing() ? M.W + 450 : -700) : Math.min(M.gy[0] - 1050, EXT.y0 - 800), DXL = isPanel() ? -700 : Math.min(M.gx[0] - 1050, EXT.x0 - 800), DYT = standing() ? 220 : -220;
     function gline(a, b) { const g = new THREE.BufferGeometry().setFromPoints([a, b]); const l = new THREE.Line(g, dashMat); l.computeLineDistances(); gridGrp.add(l); }
     M.GX.forEach(g => gline(W(g[1], EXT.y0 - ext + 250, GZ), W(g[1], EXT.y1 + ext - 250, GZ)));
     M.GY.forEach(g => gline(W(EXT.x0 - ext + 250, g[1], GZ), W(EXT.x1 + ext - 250, g[1], GZ)));
@@ -2946,7 +2977,7 @@ html.print #sheet { background: #fff; }
     dimPts.push(W(DXL, dimY[0], GZ), W(DXL, dimY[dimY.length - 1], GZ));
     dimY.forEach(y => dimPts.push(W(DXL - 90, y - 90, GZ), W(DXL + 90, y + 90, GZ)));
     gridGrp.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(dimPts), dimMat));
-    planGrid.position.set(0, M.COLB / 1000 - 0.01, 0);
+    planGrid.position.set(0, standing() ? -0.01 : M.COLB / 1000 - 0.01, 0);   // standing: the ground is under the bottom edge
 
     // bars → instanced cylinder segments, one mesh per layer
     function segMatrix(p0, p1, r) {
@@ -3002,10 +3033,13 @@ html.print #sheet { background: #fff; }
     const yTop = EXT.y1 + 1700 - 250, yBot = EXT.y0 - 1700 + 250, xL = EXT.x0 - 1700 + 250, xR = EXT.x1 + 1700 - 250;
     M.GX.forEach(g => { mkLabel(g[0], "bub", W(g[1], yBot, GZ), { kind: "bub", center: true }); mkLabel(g[0], "bub", W(g[1], yTop, GZ), { kind: "bub", center: true }); });
     M.GY.forEach(g => { mkLabel(g[0], "bub", W(xL, g[1], GZ), { kind: "bub", center: true }); mkLabel(g[0], "bub", W(xR, g[1], GZ), { kind: "bub", center: true }); });
-    for (let i = 1; i < dimX.length; i++) mkLabel(fmt(dimX[i] - dimX[i - 1]), "dimt", W((dimX[i] + dimX[i - 1]) / 2, DYL - 220, GZ), { kind: "dim", center: true });
+    for (let i = 1; i < dimX.length; i++) mkLabel(fmt(dimX[i] - dimX[i - 1]), "dimt", W((dimX[i] + dimX[i - 1]) / 2, DYL + DYT, GZ), { kind: "dim", center: true });
     for (let i = 1; i < dimY.length; i++) mkLabel(fmt(dimY[i] - dimY[i - 1]), "dimt", W(DXL - 380, (dimY[i] + dimY[i - 1]) / 2, GZ), { kind: "dim", center: true });
+    const pSize = isPanel() ? M.name + " · " + fmt(M.L) + " × " + fmt(M.W) + " × " + T : "";
     const ann = isPanel()
-      ? [[M.name + " · " + fmt(M.L) + " × " + fmt(M.W) + " × " + T + " · " + M.panel.castFace + " ON THE BED", M.L / 2, M.W + 650, T + 6], ["TOP EDGE", M.L / 2, M.W + 250, T + 6], ["BOTTOM EDGE", M.L / 2, -300, T + 6], ["CoG", M.panel.cog.x, M.panel.cog.y, T + 6]]
+      ? standing()
+        ? [[M.name + " · STANDING · VIEWED FROM " + M.panel.topFace, M.L / 2, M.W + 1250, T + 6], ["CoG", M.panel.cog.x, M.panel.cog.y, T + 6]]   // short (the header has the size); above the width string and the top-edge lifter tags
+        : [[pSize + " · " + M.panel.castFace + " ON THE BED", M.L / 2, M.W + 650, T + 6], ["TOP EDGE", M.L / 2, M.W + 250, T + 6], ["BOTTOM EDGE", M.L / 2, -300, T + 6], ["CoG", M.panel.cog.x, M.panel.cog.y, T + 6]]
       : [[M.cfg.name.toUpperCase() + " · " + T + " THK SLAB", (M.SL.x0 + M.SL.x1) / 2, M.SL.y0 + M.W * 0.72, T + 6]];
     M.DROPS.forEach(dd => ann.push(["SET DOWN " + dd.d + " · " + dd.id, (dd.x0 + dd.x1) / 2, (dd.y0 + dd.y1) / 2, T - dd.d + 6]));
     if (M.STEP) ann.push(["STEP UP " + M.STEP.rise, (M.STEP.x0 + M.STEP.x1) / 2, (M.STEP.y0 + M.STEP.y1) / 2, M.STEP.rise + T + 6]);
@@ -3017,7 +3051,7 @@ html.print #sheet { background: #fff; }
     barTag.el.hidden = true;
 
     built = { groups: groups, labels: labels, layerObj: layerObj, concrete: concrete, barTag: barTag };
-    const mg = isPanel() ? 900 : 1500, bx0 = EXT.x0 - mg, bx1 = EXT.x1 + mg, by0 = EXT.y0 - mg, by1 = EXT.y1 + mg;
+    const mg = isPanel() ? 1200 : 1500, bx0 = EXT.x0 - mg, bx1 = EXT.x1 + mg, by0 = EXT.y0 - mg, by1 = EXT.y1 + mg;
     built.bounds = { cx: (bx0 + bx1) / 2, cy: (by0 + by1) / 2, w: bx1 - bx0, h: by1 - by0 };
   }
 
@@ -3068,7 +3102,7 @@ html.print #sheet { background: #fff; }
       const ghost = m === "ghost";
       o.mat.transparent = ghost; o.mat.opacity = ghost ? 0.15 : 1; o.mat.depthWrite = !ghost; o.mat.needsUpdate = true;
       o.lineMat.opacity = ghost ? 0.18 : 1;
-      o.group.position.y = state.explode ? VEXP[l.id] : 0;
+      o.group.position.set(0, 0, 0); o.group.position[upAxis()] = state.explode ? VEXP[l.id] : 0;
       o.mode = m;
     });
     built.concrete.visible = state.conc;
@@ -3903,31 +3937,76 @@ html.print #sheet { background: #fff; }
     return t.clone().addScaledVector(dir, d);
   }
   function presets() {
-    const bd = built.bounds, c = W(bd.cx, bd.cy, 0), s = Math.max(bd.w, bd.h) / 1000;
-    const pr = {
-      iso: { p: new THREE.Vector3(c.x - 0.72 * s, 0.6 * s, c.z + 0.78 * s), t: new THREE.Vector3(c.x, -0.3, c.z) },
-      side: { p: new THREE.Vector3(c.x, 0.03 * s, c.z + 1.05 * s), t: new THREE.Vector3(c.x, -0.4, c.z) },
-      fit: { p: new THREE.Vector3(c.x - 0.62 * s, 0.85 * s, c.z + 0.95 * s), t: new THREE.Vector3(c.x, -0.4, c.z) },
-      planC: c
-    };
+    const bd = built.bounds, s = Math.max(bd.w, bd.h) / 1000;
+    let pr;
+    if (standing()) {
+      // the panel's centre at mid-height; every preset looks at it from the viewed face's side, above the ground
+      const c = W(bd.cx, bd.cy, M.T / 2);
+      pr = {
+        iso: { p: new THREE.Vector3(c.x - 0.72 * s, c.y + 0.35 * s, c.z + 0.78 * s), t: c.clone() },
+        side: { p: new THREE.Vector3(c.x, c.y + 0.02 * s, c.z + 1.05 * s), t: c.clone() },
+        fit: { p: new THREE.Vector3(c.x - 0.62 * s, c.y + 0.55 * s, c.z + 0.95 * s), t: c.clone() },
+        planC: c
+      };
+    } else {
+      const c = W(bd.cx, bd.cy, 0);
+      pr = {
+        iso: { p: new THREE.Vector3(c.x - 0.72 * s, 0.6 * s, c.z + 0.78 * s), t: new THREE.Vector3(c.x, -0.3, c.z) },
+        side: { p: new THREE.Vector3(c.x, 0.03 * s, c.z + 1.05 * s), t: new THREE.Vector3(c.x, -0.4, c.z) },
+        fit: { p: new THREE.Vector3(c.x - 0.62 * s, 0.85 * s, c.z + 0.95 * s), t: new THREE.Vector3(c.x, -0.4, c.z) },
+        planC: c
+      };
+    }
     ["iso", "side", "fit"].forEach(k => { pr[k].p = fitCam(pr[k].p, pr[k].t); });
     return pr;
   }
   function setPlan(on) {
-    planMode = on; cam = on ? ortho : persp; ctlO.enabled = on; ctlP.enabled = !on;
-    $("hud").textContent = on ? "Plan view · drag to pan · scroll to zoom · click a bar or tag" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag";
+    planMode = on; cam = on ? (standing() ? orthoE : ortho) : persp;
+    ctlO.enabled = cam === ortho; ctlE.enabled = cam === orthoE; ctlP.enabled = !on;
+    $("hud").textContent = on
+      ? (cam === orthoE ? "Elevation · " + M.panel.topFace + " towards you · drag to pan · scroll to zoom · click a bar or tag" : "Plan view · drag to pan · scroll to zoom · click a bar or tag")
+      : (standing() ? "Standing · " + M.panel.topFace + " towards you · drag to orbit · right-drag or two fingers to pan · scroll to zoom" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag");
     resize();
   }
-  function goCam(name, snap) {
-    if (!built) return;
-    if (state.sheet) setSheet(false);   // a camera preset is a 3D view; the sheet comes back with its button
+  // move the camera to a preset without touching the sheet (goCam closes the sheet first: a preset is a 3D view)
+  function camTo(name, snap) {
     const pr = presets();
-    if (name === "plan") { const c = pr.planC; ortho.zoom = 1; ctlO.target.copy(c); ortho.position.set(c.x, 80, c.z); ortho.lookAt(c.x, 0, c.z); ortho.updateProjectionMatrix(); setPlan(true); return; }
+    if (name === "plan") {
+      const c = pr.planC;
+      if (standing()) { orthoE.zoom = 1; ctlE.target.copy(c); orthoE.position.set(c.x, c.y, 80); orthoE.lookAt(c.x, c.y, c.z); orthoE.updateProjectionMatrix(); }
+      else { ortho.zoom = 1; ctlO.target.copy(c); ortho.position.set(c.x, 80, c.z); ortho.lookAt(c.x, 0, c.z); ortho.updateProjectionMatrix(); }
+      setPlan(true); return;
+    }
     setPlan(false);
     const p = pr[name];
     if (reduce || snap) { persp.position.copy(p.p); ctlP.target.copy(p.t); tween = null; return; }
     tween = { p0: persp.position.clone(), t0: ctlP.target.clone(), p1: p.p, t1: p.t, s: performance.now(), d: 650 };
   }
+  function goCam(name, snap) {
+    if (!built) return;
+    if (state.sheet) setSheet(false);   // a camera preset is a 3D view; the sheet comes back with its button
+    camTo(name, snap);
+  }
+  // panel pose (#33f-ii): rebuild the scene objects from the same model in the other pose; the selection, the step
+  // and the sheet stay; the camera refits to the pose (the plan becomes an elevation when standing)
+  function setPose(p) {
+    if (p !== "bed" && p !== "standing") return false;
+    const was = state.pose; state.pose = p;
+    if (!built || !isPanel() || was === p) { poseUI(); return true; }
+    const sel = state.sel, selRun = state.selRun, mark = state.mark;
+    teardown(); buildScene(M); apply();
+    if (sel) selectBar(sel); else if (selRun) selectRun(selRun); else if (mark) highlightMark(mark);
+    resize(); poseUI();
+    camTo(planMode ? "plan" : "iso", true);
+    return true;
+  }
+  function poseUI() {
+    const st = standing();
+    document.querySelectorAll("[data-pose]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.pose === state.pose)));
+    document.querySelectorAll("[data-cam=plan]").forEach(b => { b.textContent = st ? "Elevation" : "Plan"; });
+    $("poseCap").textContent = st ? "Stood on its bottom edge with " + M.panel.topFace + " (the face that was up on the bed) towards you, as the sheet views it. Plan is a true elevation." : "Lying on the bed as it is cast and fixed: looking down, bottom edge towards you.";
+  }
+  document.querySelectorAll("[data-pose]").forEach(b => b.addEventListener("click", () => setPose(b.dataset.pose)));
   document.querySelectorAll("[data-cam]").forEach(b => b.addEventListener("click", () => goCam(b.dataset.cam)));
   window.addEventListener("keydown", e => {
     if (e.target.closest && e.target.closest("input,textarea")) return;
@@ -3943,8 +4022,7 @@ html.print #sheet { background: #fff; }
     persp.aspect = w / h; persp.fov = w < 560 ? 54 : 38; persp.updateProjectionMatrix();
     const asp = w / h, bd = built ? built.bounds : { w: 18600, h: 14600 };
     const viewH = Math.max(bd.h / 1000 + 0.6, (bd.w / 1000 + 0.6) / asp);
-    ortho.left = -viewH * asp / 2; ortho.right = viewH * asp / 2; ortho.top = viewH / 2; ortho.bottom = -viewH / 2;
-    ortho.updateProjectionMatrix();
+    [ortho, orthoE].forEach(o => { o.left = -viewH * asp / 2; o.right = viewH * asp / 2; o.top = viewH / 2; o.bottom = -viewH / 2; o.updateProjectionMatrix(); });
   }
   if (window.ResizeObserver) new ResizeObserver(resize).observe(document.querySelector(".stage")); else window.addEventListener("resize", resize);
 
@@ -3959,14 +4037,14 @@ html.print #sheet { background: #fff; }
   }
   function placeLabels() {
     if (!built) return;
-    const w = view.clientWidth, h = view.clientHeight, placed = [];
+    const w = view.clientWidth, h = view.clientHeight, placed = [], ax = upAxis();
     built.labels.slice().sort((a, b) => prio(a) - prio(b)).forEach(L => {
       let show = true, off = 0;
-      if (L.kind === "run") { const o = built.layerObj[L.layer]; show = state.tags && o.group.visible && o.mode === "full"; off = o.group.position.y; }
+      if (L.kind === "run") { const o = built.layerObj[L.layer]; show = state.tags && o.group.visible && o.mode === "full"; off = o.group.position[ax]; }
       else if (L.kind === "anno") show = state.tags;
-      else if (L.kind === "barTag") { show = !!state.sel && !state.sel.chair; if (show) off = built.layerObj[L.layer].group.position.y; }
+      else if (L.kind === "barTag") { show = !!state.sel && !state.sel.chair; if (show) off = built.layerObj[L.layer].group.position[ax]; }
       if (!show) { L.el.hidden = true; return; }
-      v.copy(L.pos); v.y += off; v.project(cam);
+      v.copy(L.pos); v[ax] += off; v.project(cam);
       if (v.z > 1 || v.x < -1.05 || v.x > 1.05 || v.y < -1.05 || v.y > 1.05) { L.el.hidden = true; return; }
       const x = (v.x + 1) / 2 * w, y = (1 - v.y) / 2 * h;
       L.el.hidden = false;
@@ -3986,7 +4064,7 @@ html.print #sheet { background: #fff; }
       if (k >= 1) tween = null;
     }
     if (!state.sheet) {   // the 2D sheet draws on its own canvas; the 3D stage is hidden, so skip the WebGL frame
-      (planMode ? ctlO : ctlP).update();
+      (planMode ? planCtl() : ctlP).update();
       renderer.render(scene, cam);
       placeLabels();
     }
@@ -4259,6 +4337,7 @@ html.print #sheet { background: #fff; }
       if (state.sheet) setSheet(false);
       state.all = true;
       rebuild(readInputs(), { example: modeExample[m], camera: true });
+      poseUI();   // a floor lies flat; the pose buttons are panel-only, the Plan button reads Plan again
       if (state.site) { state.all = false; state.step = Math.min(1, NSTEP); apply(); }
     }
     return true;
@@ -4281,6 +4360,8 @@ html.print #sheet { background: #fff; }
   window.xstruc = { model: () => M, state: state, selectBar: id => { const b = M.bars.find(x => x.id === id); if (b) selectBar(b); return !!b; }, selectRun: id => { const r = M.runs.find(x => x.id === id); if (r) selectRun(r); return !!r; }, setSite: setSite,
     sheet: () => sheet, setSheet: setSheet, sheetXY: (x, y) => [sx(x), sy(y)], sheetScale: () => sv.s, drawnMarks: () => drawnMarks,
     highlightMark: highlightMark, printPrep: printPrep, printing: () => printing, setMode: setMode, mode: () => mode, selectPiece: id => { const pc = (M.meshPieces || []).find(x => x.id === id); if (pc) selectPiece(pc); return !!pc; },
-    selectInsert: id => { const q = (M.inserts || []).find(x => x.id === id); if (q) selectInsert(q); return !!q; } };
+    selectInsert: id => { const q = (M.inserts || []).find(x => x.id === id); if (q) selectInsert(q); return !!q; },
+    setPose: setPose, standing: standing, camKind: () => planMode ? (cam === orthoE ? "elevation" : "plan") : "persp", camPos: () => cam.position.toArray(), barWorld: id => { const b = M.bars.find(x => x.id === id); return b ? midPoint(b).toArray() : null; },
+    pickAt: (cx, cy) => { const b = pick(cx, cy); return b ? b.id : null; }, layerOffset: id => built.layerObj[id].group.position.toArray() };
 })();
 </script>
