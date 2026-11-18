@@ -165,6 +165,14 @@ details.sec:not([open]) { gap: 0; }
 #sheet.pan { cursor: grabbing; }
 .stage.sheet .legend { display: none; }   /* the sheet's title names the layer and what is ghosted below */
 .stage.sheet .building { background: rgba(243,240,232,0.6); color: #4a5560; }
+/* Section cut (backlog #10): the true section drawn on a paper strip along the foot of the 3D stage, which is clipped on the same plane */
+#seccv { position: absolute; left: 0; right: 0; bottom: 0; height: var(--sec-h, 36%); width: 100%; display: block; touch-action: none; cursor: crosshair; background: #f3f0e8; border-top: 2px solid #c9c2b3; }
+#seccv.pan { cursor: grabbing; }
+.stage.section .hud { bottom: calc(var(--sec-h, 36%) + 8px); }
+.secbox { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.secbox .secpos { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.secbox input[type=range] { width: 100%; accent-color: var(--hi); min-height: 24px; }
+.secbox input[type=number] { width: 78px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; font-size: 13px; }
 .lbl { position: absolute; left: 0; top: 0; }
 .tag { pointer-events: auto; cursor: pointer; font-family: var(--mono); font-size: 11.5px; line-height: 1.25; white-space: nowrap; background: rgba(14, 18, 22, 0.9); border: 1px solid rgba(255,255,255,0.08); border-left: 3px solid var(--c); color: var(--fg); padding: 3px 7px 3px 6px; border-radius: 3px; }
 .tag small { display: block; color: var(--muted); font-size: 10px; }
@@ -497,6 +505,19 @@ html.print #sheet { background: #fff; }
         <button class="btn" type="button" id="tgGhost" aria-pressed="true">Ghost below</button>
         <button class="btn" type="button" id="tgExplode" aria-pressed="false">Explode</button>
       </div>
+      <button class="btn" type="button" id="tgSection" aria-pressed="false" title="Cut the model on a vertical plane: the 3D view is clipped at it and the true section (layer stack, cover) is drawn under the stage">Section cut</button>
+      <div class="secbox" id="secbox" hidden>
+        <div class="modesw" role="group" aria-label="Section line">
+          <button class="btn small" type="button" data-secdir="EW" aria-pressed="true" title="The cut line runs east–west; the section looks north or south">E–W line</button>
+          <button class="btn small" type="button" data-secdir="NS" aria-pressed="false" title="The cut line runs north–south; the section looks east or west">N–S line</button>
+        </div>
+        <label class="secpos"><span id="secAxis">y</span><input type="range" id="secAt" min="0" max="1000" step="50" value="500" aria-label="Section position, mm"><input type="number" id="secAtN" step="50" aria-label="Section position, mm from grid 1 / grid A"></label>
+        <div class="modesw">
+          <button class="btn small" type="button" id="secFlip" title="Look at the cut face from the other side">Look the other way</button>
+          <button class="btn small" type="button" data-cam="section" title="Stand square to the cut face">Section camera</button>
+        </div>
+        <p class="caption" id="secCap"></p>
+      </div>
     </div>
     <div class="sec">
       <h2>How to read it</h2>
@@ -504,6 +525,7 @@ html.print #sheet { background: #fff; }
       <p class="caption"><b>Plan</b> gives a true top-down floor plan with grids and dimensions. Step through the layers in fixing order: the layer being placed is solid, the ones below are ghosted.</p>
       <p class="caption"><b>2D placing sheet</b> draws the current layer as a placing drawing: bars as lines, cogs as ticks, grids with dimension strings, and the first and last bar line dimensioned from the nearest grid. Drag to pan, scroll or pinch to zoom, double-click to fit, click a bar for its details. A schedule row highlights that mark on the sheet with its labels. <b>Print sheet</b> puts the layer on A3 landscape at a standard scale.</p>
       <p class="caption">A <b>precast panel</b> has two poses: <b>On the bed</b> as it is cast and fixed, or <b>Standing</b> on its bottom edge with the face that was up on the bed towards you; Plan becomes a true elevation when it stands.</p>
+      <p class="caption"><b>Section cut</b> slices the model on a vertical E–W or N–S plane: the 3D view is clipped at it and the true section is drawn under the stage with every layer's level and the cover to the nearest face. Drag the slider to move the cut, look the other way, zoom the strip, click a cut bar for its details.</p>
       <p class="caption"><b>Site mode</b> (top right) is the tablet view for fixing: one layer at a time, big tags, tap a bar for its mark, cut length, setout from the grids and laps.</p>
     </div>
   </aside>
@@ -512,6 +534,7 @@ html.print #sheet { background: #fff; }
     <div id="view"></div>
     <div id="tags"></div>
     <canvas id="sheet" hidden aria-label="2D placing sheet of the current layer"></canvas>
+    <canvas id="seccv" hidden aria-label="True section at the cut plane: concrete, bars cut, layer stack and cover"></canvas>
     <div id="tip" hidden></div>
     <div class="steplabel" id="steplabel"></div>
     <div class="legend" id="legend"></div>
@@ -3047,6 +3070,176 @@ html.print #sheet { background: #fff; }
     const den = PRINT_SCALES.find(d => d >= need);
     return den ? { den: den, fits: true } : { den: PRINT_SCALES[PRINT_SCALES.length - 1], fits: false };
   }
+
+  // ---------- section cut (backlog #10) ----------
+  // A true section through the model on a vertical plane, as plain geometry in millimetres: s along the cut line, z up
+  // (z = 0 at the main slab soffit). dir "NS": the cut line runs north–south at x = at, s is plan y; dir "EW": the line
+  // runs east–west at y = at, s is plan x. look is the way the viewer faces (N / S / E / W, at right angles to the line):
+  // the half of the model between the viewer and the plane is removed, the cut face is what remains. Bars crossing the
+  // plane are dots at their true size; bars running parallel to the plane within `depth` behind it (default 300, about
+  // one bar pitch) are lines, nearest line of each run first. The layer stack lists each layer at the cut with the clear
+  // cover to the nearest concrete face below and above; the covers at the outer layers are dimensioned. Headless: the
+  // viewer draws this on a canvas and clips the 3D scene on the same plane; a DXF export can write the same primitives.
+  // `mirror` tells the drawing which way s runs across the page: seen from the viewer's side north / west is on the
+  // left when looking east / south, so s increases to the LEFT there (true section, not a mirror image).
+  const SECTION_LOOK = { NS: ["E", "W"], EW: ["N", "S"] };
+  function buildSection(M, opt) {
+    opt = opt || {};
+    const PNL = M.kind === "panel", T = M.T;
+    const dir = opt.dir === "EW" ? "EW" : "NS", looks = SECTION_LOOK[dir], look = looks.indexOf(opt.look) >= 0 ? opt.look : looks[0];
+    const ax = dir === "NS" ? 0 : 1, sa = 1 - ax;   // ax: the plan index the plane is fixed on; sa: the index that runs along the cut
+    const EXT = M.EXT, lo = ax ? EXT.y0 : EXT.x0, hi = ax ? EXT.y1 : EXT.x1;
+    const at = Math.max(lo, Math.min(hi, isFinite(+opt.at) ? +opt.at : (lo + hi) / 2));
+    const keep = look === "N" || look === "E" ? 1 : -1;   // the kept half: coordinate - at has this sign
+    const depth = isFinite(+opt.depth) && +opt.depth >= 0 ? +opt.depth : 300;
+    const mirror = look === "E" || look === "S";
+    const S = { dir: dir, at: at, look: look, keep: keep, depth: depth, mirror: mirror, axis: ax ? "y" : "x", along: sa ? "y" : "x", pieces: [], dots: [], lines: [], stack: [], covers: [], grids: [], title: "", sub: "", bounds: null, lookName: (PNL ? { N: "towards the top edge", S: "towards the bottom edge", E: "towards the right edge", W: "towards the left edge" } : { N: "north", S: "south", E: "east", W: "west" })[look] };
+    // --- concrete: the s-intervals a solid covers on the plane, as (s, z) rectangles or polygons ---
+    // intervals of a closed polygon [[x, y], …] along the line (ax = at): scanline crossings paired up
+    function polyIntervals(poly, ax, at) {
+      const xs = [];
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i], q = poly[(i + 1) % poly.length], a = p[ax], b = q[ax];
+        if (a === b) continue;
+        if ((a < at && b >= at) || (b < at && a >= at)) { const t = (at - a) / (b - a); xs.push(p[1 - ax] + t * (q[1 - ax] - p[1 - ax])); }
+      }
+      xs.sort((u, v) => u - v);
+      const out = []; for (let i = 0; i + 1 < xs.length; i += 2) if (xs[i + 1] - xs[i] > 0.5) out.push([xs[i], xs[i + 1]]);
+      return out;
+    }
+    const rectInt = r => { const a = ax ? r.y0 : r.x0, b = ax ? r.y1 : r.x1; return at >= a && at <= b ? [[sa ? r.y0 : r.x0, sa ? r.y1 : r.x1]] : []; };
+    const minus = (ivs, cuts) => { let out = ivs; cuts.forEach(c => { const nx = []; out.forEach(iv => { if (c[1] <= iv[0] || c[0] >= iv[1]) nx.push(iv); else { if (c[0] - iv[0] > 0.5) nx.push([iv[0], c[0]]); if (iv[1] - c[1] > 0.5) nx.push([c[1], iv[1]]); } }); out = nx; }); return out; };
+    const piece = (iv, z0, z1, kind, id, extra) => { if (z1 - z0 < 0.5) return; S.pieces.push(Object.assign({ s0: iv[0], s1: iv[1], z0: z0, z1: z1, kind: kind, id: id || "" }, extra || {})); };
+    const prism = (r, z0, z1, kind, id, holes, extra) => minus(rectInt(r), (holes || []).map(h => rectInt(h)).flat()).forEach(iv => piece(iv, z0, z1, kind, id, extra));
+    // the main slab (a panel: its net outline with the doors and notches cut), less the voids, set-downs and the step
+    const slabHoles = M.HOLES.filter(h => !h.edge).concat(M.DROPS).concat(M.STEP ? [M.STEP] : []);
+    (M.outline ? minus(polyIntervals(M.outline, ax, at), slabHoles.map(h => rectInt(h)).flat()) : minus(rectInt(M.SL), slabHoles.map(h => rectInt(h)).flat())).forEach(iv => piece(iv, 0, T, PNL ? "panel" : "slab", PNL ? M.name : "SLAB"));
+    M.DROPS.forEach(dd => prism(dd, -dd.d, T - dd.d, "drop", dd.id));
+    if (M.STEP) {
+      const st = M.STEP;
+      prism(st, st.rise, st.rise + T, "step", "STEP");
+      prism({ x0: st.x0, x1: st.x0 + st.nib, y0: st.y0, y1: st.y1 }, 0, st.rise + T, "nib", "NIB");
+      prism({ x0: st.x0, x1: st.x1, y0: st.y0, y1: st.y0 + st.nib }, 0, st.rise + T, "nib", "NIB");
+    }
+    M.BALCS.forEach(b => prism(b, b.bot, b.top, "balcony", b.plain ? "BALCONY" : b.id));
+    M.BEAMS.forEach(bm => prism(bm.dir === "X" ? { x0: bm.a, x1: bm.b, y0: bm.at - bm.w / 2, y1: bm.at + bm.w / 2 } : { x0: bm.at - bm.w / 2, x1: bm.at + bm.w / 2, y0: bm.a, y1: bm.b }, T - bm.D, 0, "beam", bm.id));
+    M.COLS.forEach(c => prism({ x0: c.x - M.COL / 2, x1: c.x + M.COL / 2, y0: c.y - M.COL / 2, y1: c.y + M.COL / 2 }, M.COLB, c.top, "column", c.name, null, { existing: true }));
+    if (M.STAIR) {   // the flight (#8): along the flight the section is its own polygon; across it, the riser / soffit depth at that point
+      const ST = M.STAIR, flightAlong = ST.alongX === (sa === 0);   // the cut line runs the way the flight runs
+      const planPoly = ST.poly.map(p => [ST.edge + ST.sg * p[0], p[1]]);   // (plan coordinate along the flight, z)
+      if (flightAlong) { if (at >= ST.c0 && at <= ST.c1) S.pieces.push({ kind: "stair", id: "STAIR", poly: planPoly, s0: Math.min(...planPoly.map(p => p[0])), s1: Math.max(...planPoly.map(p => p[0])), z0: Math.min(...planPoly.map(p => p[1])), z1: Math.max(...planPoly.map(p => p[1])) }); }
+      else polyIntervals(planPoly, 0, at).forEach(zz => piece([ST.c0, ST.c1], zz[0], zz[1], "stair", "STAIR"));
+      // the floor below (context), as the viewer draws it: a pad under the foot of the flight out to a landing past the bottom riser
+      const padA = ST.edge + ST.sg * (ST.sFoot - 600), padB = ST.edge + ST.sg * (ST.run + 1000);
+      prism(ST.alongX ? { x0: Math.min(padA, padB), x1: Math.max(padA, padB), y0: ST.c0 - 300, y1: ST.c1 + 300 } : { x0: ST.c0 - 300, x1: ST.c1 + 300, y0: Math.min(padA, padB), y1: Math.max(padA, padB) }, ST.zLo - T, ST.zLo, "floor", "FLOOR BELOW", null, { existing: true });
+    }
+    // --- bars and mesh wires: crossing the plane → a dot; parallel within `depth` behind it → a line ---
+    const list = M.bars.concat(M.wires || []);
+    list.forEach(b => {
+      const pts = b.pts, d = b.size, segs = [];
+      let behind = null;
+      for (let i = 1; i < pts.length; i++) {
+        const p = pts[i - 1], q = pts[i], a = p[ax], c = q[ax];
+        if ((a < at && c >= at) || (c < at && a >= at)) {   // one dot per crossing (half-open, so a bend on the plane counts once)
+          const t = (at - a) / (c - a);
+          S.dots.push({ s: p[sa] + t * (q[sa] - p[sa]), z: p[2] + t * (q[2] - p[2]), d: d, bar: b, layer: b.layer, id: b.id, wire: !!b.wire, chair: !!b.chair, existing: !!b.existing });
+        } else if (Math.abs(a - c) < 1) {   // parallel to the plane
+          const dist = (a - at) * keep;
+          if (dist >= 0 && dist <= depth) { segs.push([[p[sa], p[2]], [q[sa], q[2]]]); behind = dist; }
+        }
+      }
+      if (segs.length) {
+        const line = segs.reduce((acc, sg) => { const last = acc[acc.length - 1]; if (last && Math.abs(last[last.length - 1][0] - sg[0][0]) < 0.5 && Math.abs(last[last.length - 1][1] - sg[0][1]) < 0.5) last.push(sg[1]); else acc.push([sg[0], sg[1]]); return acc; }, []);
+        line.forEach(pl => S.lines.push({ pts: pl, d: d, dist: behind, bar: b, layer: b.layer, id: b.id, wire: !!b.wire, existing: !!b.existing, run: b.run ? b.run.id : null }));
+      }
+    });
+    // nearest line of each run first; lines further behind are kept (dimmer in the drawing) but ranked
+    const nearest = {}; S.lines.forEach(L => { const k = L.run || "b" + L.id; if (!(k in nearest) || L.dist < nearest[k]) nearest[k] = L.dist; });
+    S.lines.forEach(L => { L.near = Math.abs(L.dist - nearest[L.run || "b" + L.id]) < 1; });
+    S.lines.sort((p, q) => (p.near ? 0 : 1) - (q.near ? 0 : 1) || p.dist - q.dist);
+    // --- cover: the concrete faces nearest below and above each dot (the piece it sits in; a bar outside concrete has none) ---
+    const inPiece = (pc, s, z) => s >= pc.s0 - 0.5 && s <= pc.s1 + 0.5 && z >= pc.z0 - 0.5 && z <= pc.z1 + 0.5 && !pc.poly;
+    const inPoly = (poly, s, z) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const pi = poly[i], pj = poly[j]; if ((pi[1] > z) !== (pj[1] > z) && s < (pj[0] - pi[0]) * (z - pi[1]) / (pj[1] - pi[1]) + pi[0]) c = !c; } return c; };
+    const faces = (s, z) => {   // the concrete piece a point sits in and its faces below / above along a vertical through it
+      let below = null, above = null, host = null;
+      S.pieces.forEach(pc => {
+        if (pc.poly) {   // the stair polygon: faces are where a vertical through the point leaves it
+          if (!inPoly(pc.poly, s, z)) return;
+          const zs = polyIntervals(pc.poly, 0, s).find(zz => z >= zz[0] && z <= zz[1]); if (!zs) return;
+          host = host || pc; if (below == null || zs[0] > below) below = zs[0]; if (above == null || zs[1] < above) above = zs[1];
+        } else if (inPiece(pc, s, z)) { host = host || pc; if (below == null || pc.z0 > below) below = pc.z0; if (above == null || pc.z1 < above) above = pc.z1; }
+      });
+      return host ? { host: host.kind, below: below, above: above } : null;
+    };
+    S.dots.forEach(dt => {
+      const f = faces(dt.s, dt.z);
+      dt.host = f ? f.host : null;
+      dt.cover = f ? { below: Math.round(dt.z - dt.d / 2 - f.below), above: Math.round(f.above - dt.z - dt.d / 2) } : null;
+    });
+    // a line beyond the plane sits at its own z: its cover is read at the middle of each straight piece (the least governs)
+    // (its running pieces: a cog or crank leg is not where the layer sits, so near-vertical pieces are left out when there are others)
+    const runSegs = L => { const all = L.pts.slice(1).map((q, i) => [L.pts[i], q]), flat = all.filter(sg => Math.abs(sg[1][1] - sg[0][1]) < 20); return flat.length ? flat : all; };
+    S.lines.forEach(L => {
+      let cb = null, ca = null, host = null;
+      L.segs = runSegs(L); L.segInfo = [];
+      for (let i = 0; i < L.segs.length; i++) {
+        const s = (L.segs[i][0][0] + L.segs[i][1][0]) / 2, z = (L.segs[i][0][1] + L.segs[i][1][1]) / 2, f = faces(s, z);
+        if (!f) { L.segInfo.push(null); continue; }
+        host = host || f.host; const b = Math.round(z - L.d / 2 - f.below), a = Math.round(f.above - z - L.d / 2);
+        L.segInfo.push({ host: f.host, below: b, above: a });
+        if (cb == null || b < cb) cb = b; if (ca == null || a < ca) ca = a;
+      }
+      L.host = host; L.cover = host ? { below: cb, above: ca } : null;
+    });
+    // --- the layer stack at the cut: every layer with a dot or a near line, in the model's layer order; the bars in the
+    // main slab (or the panel) set its level and cover when there are any, else whatever the layer has at the cut ---
+    const LAY = M.LAYERS || LAYERS, isSlab = h => h === "slab" || h === "panel";
+    LAY.forEach(l => {
+      const ds = S.dots.filter(dt => dt.layer === l.id && !dt.chair && !dt.existing);
+      const ls = S.lines.filter(L => L.layer === l.id && L.near && !L.existing);
+      if (!ds.length && !ls.length) return;
+      // every bar at the cut as (z, size, type, host, cover): a dot once, a line once per straight piece
+      const lbl = b => b.wire ? (b.sheet ? b.sheet.code : "wire") : b.type + b.size;   // a wire is named by its mesh, a bar by type and size
+      const items = ds.map(dt => ({ z: dt.z, d: dt.d, lbl: lbl(dt.bar), host: dt.host, cover: dt.cover, line: false }))
+        .concat(ls.map(L => L.segs.map(sg => ({ z: (sg[0][1] + sg[1][1]) / 2, d: L.d, lbl: lbl(L.bar), host: L.host, cover: L.cover, line: true }))).flat());
+      const inSlab = items.filter(it => isSlab(it.host)), use = inSlab.length ? inSlab : items;
+      const zs = use.map(it => it.z), sizes = [...new Set(use.map(it => it.lbl))];
+      const cb = use.filter(it => it.cover && it.cover.below != null).map(it => it.cover.below), ca = use.filter(it => it.cover && it.cover.above != null).map(it => it.cover.above);
+      const hist = {}; zs.forEach(z => { const k = Math.round(z); hist[k] = (hist[k] || 0) + 1; });   // the level most bars sit at (a crank or cog leg does not move the layer)
+      const zMode = +Object.keys(hist).reduce((a, k) => hist[k] > hist[a] ? k : a, Object.keys(hist)[0]);
+      S.stack.push({ layer: l.id, name: l.name, short: l.short || l.id, css: l.css, n: ds.length, nLines: ls.length, sizes: sizes, z: zMode, zMean: Math.round(zs.reduce((a, b) => a + b, 0) / zs.length), zMin: Math.round(Math.min(...zs)), zMax: Math.round(Math.max(...zs)),
+        coverBelow: cb.length ? Math.min(...cb) : null, coverAbove: ca.length ? Math.min(...ca) : null, inSlab: inSlab.length, host: use[0].host });
+    });
+    // cover dimensions at the outer layers: the lowest bar's bottom cover and the highest bar's top cover in the main slab,
+    // dots first (a dot is the bar at the cut), else the nearest line beyond; at the bar nearest the middle of the cut
+    const sMid = (lo + hi) / 2;
+    const cands = S.dots.filter(dt => isSlab(dt.host) && dt.cover && !dt.chair && !dt.existing).map(dt => ({ s: dt.s, z: dt.z, d: dt.d, layer: dt.layer, cover: dt.cover, dot: true }))
+      .concat(S.lines.filter(L => L.near && !L.existing).map(L => {   // each running piece of a line in the main slab, at its point nearest the middle
+        const near = sg => { const a = Math.min(sg[0][0], sg[1][0]), b = Math.max(sg[0][0], sg[1][0]), s = Math.max(a, Math.min(b, sMid)), t = b > a ? (s - sg[0][0]) / (sg[1][0] - sg[0][0]) : 0; return { s: s, z: sg[0][1] + t * (sg[1][1] - sg[0][1]) }; };
+        return L.segs.map((sg, i) => L.segInfo[i] && isSlab(L.segInfo[i].host) ? Object.assign(near(sg), { d: L.d, layer: L.layer, cover: { below: L.segInfo[i].below, above: L.segInfo[i].above }, dot: false }) : null).filter(Boolean);
+      }).flat());
+    if (cands.length) {
+      const pick = ds => ds.reduce((a, b) => (b.dot && !a.dot) || (b.dot === a.dot && Math.abs(b.s - sMid) < Math.abs(a.s - sMid)) ? b : a, ds[0]);
+      const zLo = Math.min(...cands.map(c => c.z - c.d / 2)), zHi = Math.max(...cands.map(c => c.z + c.d / 2));
+      const dLo = pick(cands.filter(c => c.z - c.d / 2 < zLo + 1)), dHi = pick(cands.filter(c => c.z + c.d / 2 > zHi - 1));
+      S.covers.push({ side: "below", layer: dLo.layer, s: dLo.s, zBar: dLo.z - dLo.d / 2, zFace: dLo.z - dLo.d / 2 - dLo.cover.below, v: dLo.cover.below, line: !dLo.dot, text: dLo.cover.below + " BTM COVER" + (dLo.cover.below !== M.C ? " (" + M.C + " SPECIFIED)" : "") });
+      S.covers.push({ side: "above", layer: dHi.layer, s: dHi.s, zBar: dHi.z + dHi.d / 2, zFace: dHi.z + dHi.d / 2 + dHi.cover.above, v: dHi.cover.above, line: !dHi.dot, text: dHi.cover.above + " TOP COVER" + (dHi.cover.above !== M.C ? " (" + M.C + " SPECIFIED)" : "") });
+    }
+    // grids the cut line crosses (NS line: the lettered grids; EW line: the numbered grids), and where the cut sits from its nearest grid
+    (sa ? M.GY : M.GX).forEach(g => S.grids.push({ name: g[0], s: g[1] }));
+    const G = ax ? M.GY : M.GX, ref = G.length ? nearestGrid(G, at, ax ? ["N", "S"] : ["E", "W"]) : null;
+    S.ref = ref;
+    // --- extents: everything cut plus a margin; the title ---
+    const allS = S.pieces.map(pc => [pc.s0, pc.s1]).flat().concat(S.dots.map(dt => dt.s)), allZ = S.pieces.map(pc => [pc.z0, pc.z1]).flat().concat(S.dots.map(dt => dt.z));
+    const s0 = allS.length ? Math.min(...allS) : (sa ? EXT.y0 : EXT.x0), s1 = allS.length ? Math.max(...allS) : (sa ? EXT.y1 : EXT.x1);
+    S.bounds = { s0: Math.min(s0, sa ? EXT.y0 : EXT.x0) - 400, s1: Math.max(s1, sa ? EXT.y1 : EXT.x1) + 400, z0: (allZ.length ? Math.min(...allZ) : 0) - 150, z1: Math.max(allZ.length ? Math.max(...allZ) : T, T) + 250 };
+    S.empty = !S.pieces.length && !S.dots.length;
+    const where = PNL ? (ax ? fmt(at) + " UP FROM THE BOTTOM EDGE" : fmt(at) + " FROM THE LEFT EDGE") : (ref ? ref.text.toUpperCase() : (ax ? "y " : "x ") + fmt(at));
+    S.title = (PNL ? (ax ? "HORIZONTAL" : "VERTICAL") : dir === "NS" ? "N–S" : "E–W") + " SECTION · " + where + " · LOOKING " + S.lookName.toUpperCase();
+    const cut = S.dots.filter(dt => !dt.chair && !dt.existing && !dt.wire).length, wires = S.dots.filter(dt => dt.wire).length;
+    S.sub = T + " THK · COVER " + M.C + " · " + cut + " BARS CUT" + (wires ? " · " + wires + " WIRES CUT" : "") + " · " + S.lines.filter(L => L.near && !L.existing).length + " BARS BEYOND WITHIN " + depth + (S.stack.length ? " · LAYERS " + S.stack.map(st => st.layer).join(" ") : "");
+    return S;
+  }
   // === MODEL END ===
 
   // =============== VIEWER ===============
@@ -3338,11 +3531,13 @@ html.print #sheet { background: #fff; }
     if (state.sel && !state.sel.chair && built.layerObj[state.sel.layer].mode === "off") clearSel();
     if (state.site && !state.sel && !state.selRun && !state.mark) siteDefault();
     if (state.sheet) updateSheet();
+    secApply();   // the section cut (#10) clips the scene and follows the layer modes
     recolor();
   }
   function recolor() {
     if (!built) return;
     if (state.sheet) drawSheet();
+    secDraw();
     const c = new THREE.Color(), white = new THREE.Color(0xffffff);
     VL.forEach(l => {
       const o = built.layerObj[l.id];
@@ -3652,6 +3847,7 @@ html.print #sheet { background: #fff; }
   });
   $("sitecard").addEventListener("pointerdown", e => e.stopPropagation());
   function setSite(on) {
+    if (on && sec.on) setSection(false);   // site mode (#19) is the plain fixing view: no section cut
     state.site = on;
     document.documentElement.classList.toggle("site", on);
     $("btnSite").setAttribute("aria-pressed", String(on));
@@ -4037,6 +4233,7 @@ html.print #sheet { background: #fff; }
     view.hidden = on; tagsEl.hidden = on; sheetCv.hidden = !on; $("steplabel").hidden = on; tip.hidden = true;
     $("hud").textContent = on ? "2D placing sheet · drag to pan · scroll or pinch to zoom · double-click to fit · click a bar" : planMode ? "Plan view · drag to pan · scroll to zoom · click a bar or tag" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag";
     if (on) { sheetSize(); updateSheet(true); drawSheet(); } else resize();
+    secUI(); if (!on) secDraw();   // the section strip (#10) gives way to the sheet and comes back with the 3D stage
   }
   $("tgSheet").onclick = () => setSheet(!state.sheet);
   $("btnSiteSheet").onclick = () => setSheet(!state.sheet);
@@ -4097,6 +4294,249 @@ html.print #sheet { background: #fff; }
     zoomAt(e.clientX - rect.left, e.clientY - rect.top, sv.s * Math.exp(-e.deltaY * 0.0015)); drawSheet();
   }, { passive: false });
   sheetCv.addEventListener("dblclick", () => { sheetFit(); drawSheet(); });
+
+  // ---- section cut (#10): a vertical E–W or N–S plane clips the 3D scene; the true section at it (buildSection, headless)
+  // is drawn on a paper strip along the foot of the stage: concrete cut, bars cut as dots at their size, the bars running
+  // beyond the plane as faint lines, each layer's level and cover in a stack list, the outer covers dimensioned. The half
+  // of the model nearer the viewer is removed; "Look the other way" keeps the plane and removes the other half. ----
+  const secCv = $("seccv"), secCtx = secCv.getContext("2d");
+  const sec = { on: false, dir: "EW", at: null, look: "N", data: null, obj: null, view: { s: 0.3, tx: 0, ty: 0 }, fitAll: false };
+  const secPlane = new THREE.Plane();
+  // the plane in scene coordinates, through the cut with its normal into the kept half (three.js discards what lies behind it)
+  function secUpdatePlane() {
+    const D = sec.data; if (!D) return;
+    const p0 = D.dir === "NS" ? W(D.at, 0, 0) : W(0, D.at, 0), p1 = D.dir === "NS" ? W(D.at + 1000 * D.keep, 0, 0) : W(0, D.at + 1000 * D.keep, 0);
+    secPlane.setFromNormalAndCoplanarPoint(p1.sub(p0).normalize(), p0);
+  }
+  const secRange = () => { const E = M.EXT, lo = sec.dir === "NS" ? E.x0 : E.y0, hi = sec.dir === "NS" ? E.x1 : E.y1; return [Math.ceil(lo / 50) * 50, Math.floor(hi / 50) * 50]; };
+  function secBuild() {
+    if (!M) return;
+    const r = secRange();
+    if (sec.at == null || !isFinite(sec.at)) sec.at = Math.round((r[0] + r[1]) / 2 / 50) * 50;
+    sec.at = Math.max(r[0], Math.min(r[1], sec.at));
+    if (SECTION_LOOK[sec.dir].indexOf(sec.look) < 0) sec.look = SECTION_LOOK[sec.dir][0];
+    sec.data = buildSection(M, { dir: sec.dir, at: sec.at, look: sec.look });
+    secUpdatePlane();
+  }
+  // the cut plane drawn in 3D: a faint pane with an outline, a hair into the kept half so the clip does not eat it
+  function secScene() {
+    if (sec.obj) { scene.remove(sec.obj); sec.obj.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); sec.obj = null; }
+    if (!sec.on || !sec.data || !built) return;
+    const D = sec.data, b = D.bounds, g = new THREE.Group();
+    const P = (s, z) => D.dir === "NS" ? W(D.at + 0.5 * D.keep, s, z) : W(s, D.at + 0.5 * D.keep, z);
+    const c = [P(b.s0, b.z0), P(b.s1, b.z0), P(b.s1, b.z1), P(b.s0, b.z1)];
+    const geo = new THREE.BufferGeometry().setFromPoints([c[0], c[1], c[2], c[0], c[2], c[3]]);
+    geo.computeVertexNormals();
+    const pane = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xf3f0e8, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false }));
+    pane.renderOrder = 9; g.add(pane);
+    g.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(c), new THREE.LineBasicMaterial({ color: 0xf3f0e8, transparent: true, opacity: 0.6 })));
+    scene.add(g); sec.obj = g;
+  }
+  // called from apply(): the clip, the materials (a cut bar shows its inside) and the pane follow the state
+  function secApply() {
+    const on = sec.on && !!sec.data;
+    renderer.clippingPlanes = on ? [secPlane] : [];
+    const side = on ? THREE.DoubleSide : THREE.FrontSide;
+    if (built) VL.forEach(l => { const o = built.layerObj[l.id]; if (o.mat.side !== side) { o.mat.side = side; o.mat.needsUpdate = true; } });
+    if (colMat.side !== side) { colMat.side = side; colMat.needsUpdate = true; }
+    secScene();
+  }
+  function secRefresh(fit) { if (!sec.on || !M) return; secBuild(); secUI(); secApply(); if (fit) secFit(sec.fitAll); secDraw(); }
+  function setSection(on) {
+    on = !!on;
+    if (on === sec.on) { secUI(); return sec.on; }
+    sec.on = on;
+    if (on) { if (state.sheet) setSheet(false); secBuild(); }
+    secUI();   // shows the strip first: the fit needs its size
+    if (on) secFit(false);
+    secApply(); secDraw(); resize();
+    if (!on) $("hud").textContent = planMode ? "Plan view · drag to pan · scroll to zoom · click a bar or tag" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag";
+    return sec.on;
+  }
+  function secUI() {
+    const on = sec.on && !!M;
+    $("tgSection").setAttribute("aria-pressed", String(on));
+    $("secbox").hidden = !on;
+    secCv.hidden = !on || state.sheet;
+    stageEl.classList.toggle("section", on && !state.sheet);
+    if (!on) return;
+    const PNL = isPanel(), r = secRange(), D = sec.data;
+    document.querySelectorAll("[data-secdir]").forEach(b => { b.setAttribute("aria-pressed", String(b.dataset.secdir === sec.dir)); b.textContent = PNL ? (b.dataset.secdir === "EW" ? "Horizontal line" : "Vertical line") : (b.dataset.secdir === "EW" ? "E–W line" : "N–S line"); });
+    const sl = $("secAt"), nb = $("secAtN");
+    sl.min = r[0]; sl.max = r[1]; sl.value = sec.at; nb.min = r[0]; nb.max = r[1]; if (document.activeElement !== nb) nb.value = sec.at;
+    $("secAxis").textContent = PNL ? (sec.dir === "NS" ? "x from the left edge" : "y from the bottom edge") : (sec.dir === "NS" ? "x from grid 1" : "y from grid A");
+    const stack = D.stack.filter(st => st.layer !== "CH").map(st => st.layer + " " + st.sizes.join("/") + " at " + fmt(st.z) + (secCoverWord(st) ? " (cover " + secCoverWord(st) + ")" : "")).join(" · ");
+    $("secCap").innerHTML = "<b>" + esc(D.title) + "</b>. The half nearer you is cut away; the cut face is drawn below (drag to pan, scroll to zoom, double-click to fit everything, click a bar). " +
+      (D.empty ? "Nothing is cut at this position." : esc(D.sub.toLowerCase().replace(/ · layers .*/, "")) + ". Layers at the cut: " + esc(stack) + ".");
+    if (!state.sheet) $("hud").textContent = "Section cut · the half nearer you is removed · drag to orbit · the strip below is the true section";
+  }
+  // the cover a layer is placed to: bottom layers (and the stair) to the face below, top layers to the face above
+  const secCoverWord = st => st.coverBelow != null && st.coverAbove != null ? (st.z < M.T / 2 || st.host === "stair" ? st.coverBelow + " btm" : st.coverAbove + " top") : st.coverBelow != null ? st.coverBelow + " btm" : st.coverAbove != null ? st.coverAbove + " top" : "";
+  // the strip: a true-scale drawing, zoomed to the slab depth by default (double-click fits everything), centred on the
+  // selected bar's position along the cut when there is one
+  const secScreen = () => ({ w: secCv.clientWidth, h: secCv.clientHeight });
+  const secLegendW = () => Math.min(300, Math.max(222, secCv.clientWidth * 0.3));
+  function secFocusS() {
+    const D = sec.data, b = D.bounds;
+    if (state.sel) { const dt = D.dots.find(q => q.bar === state.sel); if (dt) return dt.s; const L = D.lines.find(q => q.bar === state.sel); if (L) return (L.pts[0][0] + L.pts[L.pts.length - 1][0]) / 2; }
+    if (D.covers.length) return D.covers.reduce((a, cv) => a + cv.s, 0) / D.covers.length;   // the cover strings in view
+    return (b.s0 + b.s1) / 2;
+  }
+  function secFit(all) {
+    const D = sec.data, sc = secScreen(); if (!D || !sc.w || !sc.h) return;
+    const b = D.bounds, top = 40, dw = sc.w - secLegendW() - 24, dh = sc.h - top - 16, V = sec.view;
+    sec.fitAll = !!all;
+    const zf0 = all ? b.z0 : Math.min(-150, Math.min(...D.pieces.filter(pc => pc.kind === "beam").map(pc => pc.z0), 0) - 100), zf1 = all ? b.z1 : M.T + 300;
+    V.s = all ? Math.min(dw / (b.s1 - b.s0), dh / (b.z1 - b.z0)) * 0.96 : Math.min(dh / (zf1 - zf0), 0.9);
+    const cs = all ? (b.s0 + b.s1) / 2 : secFocusS(), cz = (zf0 + zf1) / 2;
+    V.tx = 12 + dw / 2 - (D.mirror ? -cs : cs) * V.s; V.ty = top + dh / 2 + cz * V.s;
+  }
+  function secDraw() {
+    if (!sec.on || !sec.data || state.sheet || !M) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), sc = secScreen(), w = sc.w, h = sc.h; if (!w || !h) return;
+    if (secCv.width !== Math.round(w * dpr) || secCv.height !== Math.round(h * dpr)) { secCv.width = Math.round(w * dpr); secCv.height = Math.round(h * dpr); }
+    const c = secCtx, D = sec.data, V = sec.view, X = s => V.tx + (D.mirror ? -s : s) * V.s, Y = z => V.ty - z * V.s;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.fillStyle = PAPER; c.fillRect(0, 0, w, h);
+    c.lineJoin = "round"; c.lineCap = "butt";
+    const legW = secLegendW(), drawW = w - legW - 8;
+    c.save(); c.beginPath(); c.rect(0, 0, drawW, h); c.clip();
+    // concrete: the pieces of this pour filled, the columns and the floor below (context) lighter and dashed
+    const path = pc => { c.beginPath(); if (pc.poly) pc.poly.forEach((p, i) => c[i ? "lineTo" : "moveTo"](X(p[0]), Y(p[1]))); else c.rect(Math.min(X(pc.s0), X(pc.s1)), Y(pc.z1), Math.abs(X(pc.s1) - X(pc.s0)), (pc.z1 - pc.z0) * V.s); c.closePath(); };
+    D.pieces.forEach(pc => { path(pc); c.fillStyle = pc.existing ? "#e7e3da" : "#d6d0c2"; c.fill(); });
+    // a light hatch on the cut concrete of this pour (concrete in section), clipped to each piece
+    D.pieces.filter(pc => !pc.existing).forEach(pc => {
+      c.save(); path(pc); c.clip();
+      const x0 = Math.min(X(pc.s0), X(pc.s1)) - 40, x1 = Math.max(X(pc.s0), X(pc.s1)) + 40, y0 = Y(pc.z1), y1 = Y(pc.z0), step = 14;
+      c.strokeStyle = "rgba(110,119,129,0.28)"; c.lineWidth = 1; c.beginPath();
+      for (let x = x0 - (y1 - y0); x < x1; x += step) { c.moveTo(x, y1); c.lineTo(x + (y1 - y0), y0); }
+      c.stroke(); c.restore();
+    });
+    D.pieces.forEach(pc => { path(pc); c.strokeStyle = CONC; c.lineWidth = pc.existing ? 1 : 1.5; c.setLineDash(pc.existing ? [5, 4] : []); c.stroke(); c.setLineDash([]); });
+    // grid lines the cut crosses, with their bubbles at the top
+    c.font = "600 11px " + UIF; c.textAlign = "center"; c.textBaseline = "middle";
+    D.grids.forEach(g => {
+      const x = X(g.s); if (x < -20 || x > drawW + 20) return;
+      c.strokeStyle = GRIDC; c.lineWidth = 1; c.setLineDash([6, 5]); c.beginPath(); c.moveTo(x, 54); c.lineTo(x, h); c.stroke(); c.setLineDash([]);
+      c.beginPath(); c.arc(x, 44, 9, 0, Math.PI * 2); c.fillStyle = PAPER; c.fill(); c.strokeStyle = INK; c.lineWidth = 1.2; c.stroke();
+      c.fillStyle = INK; c.fillText(g.name, x, 44.5);
+    });
+    // bars beyond the plane: the nearest line of each run in the layer's colour, further ones fainter
+    const vis = l => (VLBY[l] ? layerMode(l) : "full");
+    D.lines.forEach(L => {
+      const m = vis(L.layer); if (m === "off") return;
+      const dimmed = state.mark ? L.bar.mark !== state.mark : state.selRun ? L.bar.run !== state.selRun : false;
+      c.strokeStyle = L.existing ? "#9aa3ad" : (VLBY[L.layer] ? VLBY[L.layer].css : INK); c.globalAlpha = (m === "ghost" ? 0.12 : L.near ? 0.5 : 0.18) * (dimmed ? 0.4 : 1);
+      c.lineWidth = Math.max(1, (L.wire ? L.d * 0.6 : L.d) * V.s); c.beginPath(); L.pts.forEach((p, i) => c[i ? "lineTo" : "moveTo"](X(p[0]), Y(p[1]))); c.stroke();
+    });
+    c.globalAlpha = 1;
+    // bars cut: dots at their true size (at least 2 px), ghosted layers faint, the selection white, a mark highlighted
+    const white = "#ffffff";
+    D.dots.forEach(dt => {
+      const m = vis(dt.layer); if (m === "off") return;
+      const x = X(dt.s), y = Y(dt.z), r = Math.max(dt.wire ? 1.2 : 2, dt.d / 2 * V.s);
+      if (x < -r || x > drawW + r || y < -r || y > h + r) return;
+      const isSel = state.sel && (dt.bar === state.sel || (dt.bar.sheet && dt.bar.sheet === state.sel));
+      let col = dt.existing ? "#9aa3ad" : (VLBY[dt.layer] ? VLBY[dt.layer].css : INK), alpha = m === "ghost" ? 0.22 : 1;
+      if (state.mark && dt.bar.mark !== state.mark) alpha *= 0.3; else if (state.selRun && dt.bar.run !== state.selRun) alpha *= 0.35;
+      c.globalAlpha = alpha; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fillStyle = isSel ? white : col; c.fill();
+      c.strokeStyle = INK; c.lineWidth = isSel ? 2 : 0.8; c.stroke(); c.globalAlpha = 1;
+    });
+    // cover dimensions at the outer layers: a vertical string from the concrete face to the bar, the value beside it
+    c.font = "600 10.5px " + MONO; c.textBaseline = "middle";
+    D.covers.forEach(cv => {
+      const x = X(cv.s) + 18, y0 = Y(cv.zFace), y1 = Y(cv.zBar);
+      if (x < 0 || x > drawW) return;
+      c.strokeStyle = DIMC; c.lineWidth = 1; c.beginPath(); c.moveTo(x, y0); c.lineTo(x, y1); c.moveTo(x - 5, y0); c.lineTo(x + 5, y0); c.moveTo(x - 5, y1); c.lineTo(x + 5, y1); c.stroke();
+      c.textAlign = "left"; const ty = (y0 + y1) / 2;
+      const txt = cv.v + (cv.v !== M.C ? " (" + M.C + " spec.)" : "") + " cover", tw = c.measureText(txt).width;
+      c.fillStyle = "rgba(243,240,232,0.85)"; c.fillRect(x + 6, ty - 7, tw + 4, 14);
+      c.fillStyle = cv.v < M.C ? BAD_INK : DIMC; c.fillText(txt, x + 8, ty);
+    });
+    // scale bar (500 or 1,000 mm) at the foot, and the title at the head
+    const sbMM = V.s * 1000 > 120 ? 500 : 1000, sbPx = sbMM * V.s;
+    c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.moveTo(12, h - 12); c.lineTo(12 + sbPx, h - 12); c.stroke();
+    c.font = "500 10.5px " + MONO; c.fillStyle = "#4a5560"; c.textAlign = "left"; c.fillText(fmt(sbMM) + " mm", 12 + sbPx + 6, h - 12);
+    c.restore();
+    c.fillStyle = PAPER; c.fillRect(0, 0, drawW, 30);
+    c.fillStyle = INK; c.textAlign = "left"; c.textBaseline = "middle";
+    let title = D.title, tf = 12.5;   // the title shrinks, then shortens, to fit the strip
+    c.font = "700 " + tf + "px " + UIF; while (c.measureText(title).width > drawW - 24 && tf > 10) { tf -= 0.5; c.font = "700 " + tf + "px " + UIF; }
+    while (c.measureText(title).width > drawW - 24 && title.length > 8) title = title.slice(0, -2) + "…";
+    c.fillText(title, 12, 12);
+    c.font = "500 10.5px " + MONO; c.fillStyle = "#4a5560"; c.fillText(D.sub.replace(/ · LAYERS .*/, ""), 12, 26);
+    // the layer stack at the cut, as a list at the right: colour, layer, size, level above the soffit, cover
+    const lx = drawW + 8;
+    c.fillStyle = "#ebe7dd"; c.fillRect(lx - 4, 0, legW + 4, h);
+    c.strokeStyle = "#c9c2b3"; c.lineWidth = 1; c.beginPath(); c.moveTo(lx - 4, 0); c.lineTo(lx - 4, h); c.stroke();
+    c.font = "700 11px " + UIF; c.fillStyle = INK; c.textAlign = "left"; c.fillText("LAYERS AT THE CUT", lx + 4, 12);
+    c.font = "500 10px " + MONO; c.fillStyle = "#4a5560"; c.fillText("size · level above soffit · cover", lx + 4, 26);
+    const rows = D.stack.filter(st => st.layer !== "CH"), rowH = Math.min(24, Math.max(14, (h - 40) / Math.max(1, rows.length)));
+    rows.forEach((st, i) => {
+      const y = 38 + i * rowH + rowH / 2, m = vis(st.layer);
+      c.globalAlpha = m === "off" ? 0.35 : 1;
+      c.fillStyle = st.css; c.fillRect(lx + 4, y - 5, 10, 10); c.strokeStyle = INK; c.lineWidth = 0.6; c.strokeRect(lx + 4, y - 5, 10, 10);
+      c.font = "700 11px " + MONO; c.fillStyle = INK; c.fillText(st.layer, lx + 20, y);
+      const cover = secCoverWord(st) || "no concrete";
+      c.font = "500 10.5px " + MONO; c.fillStyle = "#2d3640";
+      c.fillText(st.sizes.join("/") + " · " + (st.host === "stair" ? fmt(st.zMin) + " to " + fmt(st.zMax) : fmt(st.z) + (st.zMax - st.zMin > 3 ? "*" : "")) + " · " + cover, lx + 46, y);
+      c.globalAlpha = 1;
+    });
+    if (!rows.length) { c.font = "500 10.5px " + MONO; c.fillStyle = "#4a5560"; c.fillText("no bars at this position", lx + 4, 48); }
+    else if (rows.some(st => st.zMax - st.zMin > 3)) { c.font = "500 9.5px " + MONO; c.fillStyle = "#4a5560"; const fy = Math.min(h - 22, 38 + rows.length * rowH + 6); c.fillText("* also at other levels here", lx + 4, fy); c.fillText("  (cranks, cogs, a set-down)", lx + 4, fy + 12); }
+  }
+  // picking on the strip: the nearest cut bar within 8 px, else the nearest line within 6 px
+  function secPick(px, py) {
+    const D = sec.data, V = sec.view, X = s => V.tx + (D.mirror ? -s : s) * V.s, Y = z => V.ty - z * V.s;
+    let best = null, bd = 9;
+    D.dots.forEach(dt => { if (vis(dt.layer) === "off") return; const d = Math.hypot(X(dt.s) - px, Y(dt.z) - py) - Math.max(2, dt.d / 2 * V.s); if (d < bd) { bd = d; best = dt.bar; } });
+    if (best) return best;
+    const segD = (ax, ay, bx, by) => { const L2 = (bx - ax) ** 2 + (by - ay) ** 2 || 1, t = Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / L2)); return Math.hypot(px - (ax + t * (bx - ax)), py - (ay + t * (by - ay))); };
+    bd = 6;
+    D.lines.forEach(L => { if (vis(L.layer) === "off") return; for (let i = 1; i < L.pts.length; i++) { const d = segD(X(L.pts[i - 1][0]), Y(L.pts[i - 1][1]), X(L.pts[i][0]), Y(L.pts[i][1])); if (d < bd) { bd = d; best = L.bar; } } });
+    return best;
+    function vis(l) { return VLBY[l] ? layerMode(l) : "full"; }
+  }
+  let secDown = null;
+  secCv.addEventListener("pointerdown", e => { try { secCv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ } secDown = { x: e.clientX, y: e.clientY, tx: sec.view.tx, ty: sec.view.ty, moved: false }; });
+  secCv.addEventListener("pointermove", e => {
+    const rect = secCv.getBoundingClientRect();
+    if (secDown) {
+      if (!secDown.moved && Math.hypot(e.clientX - secDown.x, e.clientY - secDown.y) > 4) { secDown.moved = true; secCv.classList.add("pan"); tip.hidden = true; }
+      if (secDown.moved) { sec.view.tx = secDown.tx + (e.clientX - secDown.x); sec.view.ty = secDown.ty + (e.clientY - secDown.y); secDraw(); }
+      return;
+    }
+    const b = sec.data ? secPick(e.clientX - rect.left, e.clientY - rect.top) : null;
+    if (!b) { tip.hidden = true; return; }
+    tip.textContent = b.wire ? b.mark + " · " + b.sheet.code + " sheet · " + b.layer : b.mark + " · " + b.type + b.size + " · " + fmt(b.len) + " · " + b.layer;
+    tip.style.left = (e.clientX - rect.left) + "px"; tip.style.top = (e.clientY - rect.top + (stageEl.clientHeight - secCv.clientHeight)) + "px"; tip.hidden = false;
+  });
+  secCv.addEventListener("pointerup", e => {
+    if (!secDown) return;
+    const d = secDown; secDown = null; secCv.classList.remove("pan");
+    if (d.moved || !sec.data) return;
+    const rect = secCv.getBoundingClientRect(), b = secPick(e.clientX - rect.left, e.clientY - rect.top);
+    if (b) selectBar(b); else { clearSel(); state.mark = null; markRows(); showDefault(); recolor(); }
+  });
+  secCv.addEventListener("pointercancel", () => { secDown = null; secCv.classList.remove("pan"); });
+  secCv.addEventListener("pointerleave", () => { tip.hidden = true; });
+  secCv.addEventListener("wheel", e => {
+    e.preventDefault();
+    const rect = secCv.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top, V = sec.view;
+    const s1 = Math.max(0.01, Math.min(3, V.s * Math.exp(-e.deltaY * 0.0015))), kk = s1 / V.s;
+    V.tx = px - (px - V.tx) * kk; V.ty = py - (py - V.ty) * kk; V.s = s1; secDraw();
+  }, { passive: false });
+  secCv.addEventListener("dblclick", () => { secFit(!sec.fitAll); secDraw(); });
+  $("tgSection").onclick = () => setSection(!sec.on);
+  document.querySelectorAll("[data-secdir]").forEach(b => b.addEventListener("click", () => { if (sec.dir === b.dataset.secdir) return; sec.dir = b.dataset.secdir; sec.at = null; sec.look = SECTION_LOOK[sec.dir][0]; secRefresh(true); }));
+  $("secFlip").onclick = () => {   // the other way round: the drawing mirrors about the middle of the strip, the zoom stays
+    const ks = SECTION_LOOK[sec.dir], was = sec.data && sec.data.mirror; sec.look = ks[(ks.indexOf(sec.look) + 1) % 2]; secBuild();
+    if (sec.data.mirror !== was) sec.view.tx = 2 * (12 + (secCv.clientWidth - secLegendW() - 24) / 2) - sec.view.tx;
+    secUI(); secApply(); secDraw();
+  };
+  $("secAt").addEventListener("input", () => { sec.at = +$("secAt").value; secRefresh(false); });
+  $("secAtN").addEventListener("input", () => { const v = +$("secAtN").value; if (!isFinite(v) || $("secAtN").value.trim() === "") return; sec.at = Math.round(v / 50) * 50; secRefresh(false); });
+  $("secAtN").addEventListener("blur", () => { if (sec.on) $("secAtN").value = sec.at; });
 
   // ---- print (#9c): the current layer's sheet alone on A3 landscape at a standard scale ----
   // beforeprint sets html.print, the stage takes the paper size (print CSS), the sheet is redrawn at the scale that
@@ -4169,12 +4609,21 @@ html.print #sheet { background: #fff; }
       const along = S.alongX ? new THREE.Vector3(-S.sg, 0, 0) : new THREE.Vector3(0, 0, S.sg), cross = S.alongX ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);   // scene: +x east, −z north
       pr.stair = { p: c.clone().addScaledVector(cross, d).addScaledVector(along, 0.25 * d).add(new THREE.Vector3(0, 0.22 * d, 0)), t: c.clone() };
     }
+    // the section cut (#10) square on: the camera on the cut-away side of the plane, a little above the slab, far enough
+    // for the cut's whole length to fit the stage above the strip
+    if (sec.on && sec.data) {
+      const D = sec.data, b = D.bounds, sMid = (b.s0 + b.s1) / 2, zMid = (Math.max(b.z0, -700) + Math.min(b.z1, M.T + 700)) / 2;
+      const cen = D.dir === "NS" ? W(D.at, sMid, zMid) : W(sMid, D.at, zMid), n = secPlane.normal;
+      const asp = view.clientWidth / Math.max(1, view.clientHeight), fov = persp.fov * Math.PI / 180;
+      const d = Math.max((b.s1 - b.s0) / 1000 / (2 * Math.tan(fov / 2) * asp) * 1.15, (b.z1 - b.z0) / 1000 / (2 * Math.tan(fov / 2)) * 0.9, 3);
+      pr.section = { p: cen.clone().addScaledVector(n, -d).add(new THREE.Vector3(0, 0.06 * d, 0)), t: cen.clone() };
+    }
     return pr;
   }
   function setPlan(on) {
     planMode = on; cam = on ? (standing() ? orthoE : ortho) : persp;
     ctlO.enabled = cam === ortho; ctlE.enabled = cam === orthoE; ctlP.enabled = !on;
-    $("hud").textContent = on
+    $("hud").textContent = sec.on && !state.sheet ? "Section cut · the half nearer you is removed · drag to orbit · the strip below is the true section" : on
       ? (cam === orthoE ? "Elevation · " + M.panel.topFace + " towards you · drag to pan · scroll to zoom · click a bar or tag" : "Plan view · drag to pan · scroll to zoom · click a bar or tag")
       : (standing() ? "Standing · " + M.panel.topFace + " towards you · drag to orbit · right-drag or two fingers to pan · scroll to zoom" : "Drag to orbit · right-drag or two fingers to pan · scroll to zoom · click a bar or tag");
     resize();
@@ -4188,8 +4637,9 @@ html.print #sheet { background: #fff; }
       else { ortho.zoom = 1; ctlO.target.copy(c); ortho.position.set(c.x, 80, c.z); ortho.lookAt(c.x, 0, c.z); ortho.updateProjectionMatrix(); }
       setPlan(true); return;
     }
-    setPlan(false);
     const p = pr[name];
+    if (!p) return;   // a preset that is not available now (Stair without a flight, Section with the cut off)
+    setPlan(false);
     if (reduce || snap) { persp.position.copy(p.p); ctlP.target.copy(p.t); tween = null; return; }
     tween = { p0: persp.position.clone(), t0: ctlP.target.clone(), p1: p.p, t1: p.t, s: performance.now(), d: 650 };
   }
@@ -4205,7 +4655,7 @@ html.print #sheet { background: #fff; }
     const was = state.pose; state.pose = p;
     if (!built || !isPanel() || was === p) { poseUI(); return true; }
     const sel = state.sel, selRun = state.selRun, mark = state.mark;
-    teardown(); buildScene(M); apply();
+    teardown(); buildScene(M); if (sec.on) secBuild(); apply();
     if (sel) selectBar(sel); else if (selRun) selectRun(selRun); else if (mark) highlightMark(mark);
     resize(); poseUI();
     camTo(planMode ? "plan" : "iso", true);
@@ -4234,6 +4684,7 @@ html.print #sheet { background: #fff; }
     const asp = w / h, bd = built ? built.bounds : { w: 18600, h: 14600 };
     const viewH = Math.max(bd.h / 1000 + 0.6, (bd.w / 1000 + 0.6) / asp);
     [ortho, orthoE].forEach(o => { o.left = -viewH * asp / 2; o.right = viewH * asp / 2; o.top = viewH / 2; o.bottom = -viewH / 2; o.updateProjectionMatrix(); });
+    if (sec.on) secDraw();
   }
   if (window.ResizeObserver) new ResizeObserver(resize).observe(document.querySelector(".stage")); else window.addEventListener("resize", resize);
 
@@ -4248,16 +4699,19 @@ html.print #sheet { background: #fff; }
   }
   function placeLabels() {
     if (!built) return;
-    const w = view.clientWidth, h = view.clientHeight, placed = [], ax = upAxis();
+    const w = view.clientWidth, h = view.clientHeight, placed = [], ax = upAxis(), secOn = sec.on && !!sec.data, stripH = secOn ? secCv.clientHeight : 0;
     built.labels.slice().sort((a, b) => prio(a) - prio(b)).forEach(L => {
       let show = true, off = 0;
       if (L.kind === "run") { const o = built.layerObj[L.layer]; show = state.tags && o.group.visible && o.mode === "full"; off = o.group.position[ax]; }
       else if (L.kind === "anno") show = state.tags;
       else if (L.kind === "barTag") { show = !!state.sel && !state.sel.chair; if (show) off = built.layerObj[L.layer].group.position[ax]; }
       if (!show) { L.el.hidden = true; return; }
-      v.copy(L.pos); v[ax] += off; v.project(cam);
+      v.copy(L.pos); v[ax] += off;
+      if (secOn && secPlane.distanceToPoint(v) < -0.02) { L.el.hidden = true; return; }   // on the cut-away side (#10)
+      v.project(cam);
       if (v.z > 1 || v.x < -1.05 || v.x > 1.05 || v.y < -1.05 || v.y > 1.05) { L.el.hidden = true; return; }
       const x = (v.x + 1) / 2 * w, y = (1 - v.y) / 2 * h;
+      if (secOn && y > h - stripH) { L.el.hidden = true; return; }   // under the section strip
       L.el.hidden = false;
       const tw = L.el.offsetWidth, th = L.el.offsetHeight;
       const box = L.center ? { l: x - tw / 2, r: x + tw / 2, t: y - th / 2, b: y + th / 2 } : { l: x - tw / 2, r: x + tw / 2, t: y - th - 10, b: y - 10 };
@@ -4404,7 +4858,9 @@ html.print #sheet { background: #fff; }
     clearSel(); state.mark = null;
     teardown(); buildScene(model); lastGood = cfg;
     sheet = null; sheetKey = "";   // the sheet is rebuilt from the new model by apply()
+    if (sec.on) secBuild();   // the section cut (#10) is re-read from the new model at the same position (clamped to it)
     renderSteps(); renderLegend(); renderSchedule(); showDefault(); slabline(model); renderLaps(model); apply(); resize();
+    if (sec.on) { secUI(); secFit(sec.fitAll); secDraw(); }
     $("camStair").hidden = !model.STAIR;
     $("siteFloor").textContent = model.cfg.name + " · " + model.T + " THK · laps " + model.laps.text;
     if (opts.camera) goCam("iso", true); else if (planMode) goCam("plan");
@@ -4582,6 +5038,9 @@ html.print #sheet { background: #fff; }
     highlightMark: highlightMark, printPrep: printPrep, printing: () => printing, setMode: setMode, mode: () => mode, selectPiece: id => { const pc = (M.meshPieces || []).find(x => x.id === id); if (pc) selectPiece(pc); return !!pc; },
     selectInsert: id => { const q = (M.inserts || []).find(x => x.id === id); if (q) selectInsert(q); return !!q; },
     setPose: setPose, standing: standing, camKind: () => planMode ? (cam === orthoE ? "elevation" : "plan") : "persp", camPos: () => cam.position.toArray(), barWorld: id => { const b = M.bars.find(x => x.id === id); return b ? midPoint(b).toArray() : null; },
-    pickAt: (cx, cy) => { const b = pick(cx, cy); return b ? b.id : null; }, layerOffset: id => built.layerObj[id].group.position.toArray() };
+    pickAt: (cx, cy) => { const b = pick(cx, cy); return b ? b.id : null; }, layerOffset: id => built.layerObj[id].group.position.toArray(),
+    setSection: setSection, section: () => sec.data, secState: () => ({ on: sec.on, dir: sec.dir, at: sec.at, look: sec.look, fitAll: sec.fitAll, clips: renderer.clippingPlanes.length, plane: sec.on ? [secPlane.normal.x, secPlane.normal.y, secPlane.normal.z, secPlane.constant] : null, view: Object.assign({}, sec.view) }),
+    secSet: o => { if (o.dir) { sec.dir = o.dir; sec.at = null; sec.look = SECTION_LOOK[sec.dir][0]; } if (o.at != null) sec.at = o.at; if (o.look) sec.look = o.look; secRefresh(true); },
+    secPickAt: (px, py) => { const b = sec.data ? secPick(px, py) : null; return b ? b.id : null; }, secXY: (s, z) => [sec.view.tx + (sec.data && sec.data.mirror ? -s : s) * sec.view.s, sec.view.ty - z * sec.view.s] };
 })();
 </script>

@@ -917,6 +917,96 @@ function checkStair() {
   console.log("  stair (#8): the example's flight (" + S.n + " risers × " + S.R + ", " + (S.n - 1) + " × " + S.G + " goings, waist " + S.waist + ", headroom " + S.headroom + " flagged), " + sr.length + " flight bars + " + top.bars.length + " top bars in the slab + " + start.bars.length + " starters below, SR sheet, a 17-riser job, 13 bad inputs, a column clash");
 }
 
+// section cut (#10): a true section at a vertical plane, headless. Concrete pieces, bars cut as dots, bars beyond as
+// lines, the layer stack with cover, the cover strings, the grids, the title; through the step, a set-down, a beam, the
+// stair and a panel; and the dots agree with the bars themselves.
+checkSection();
+function checkSection() {
+  const { buildSection, SECTION_LOOK } = lib, problems = [], p = m => problems.push(m);
+  if (!buildSection || !SECTION_LOOK || SECTION_LOOK.NS.join() !== "E,W" || SECTION_LOOK.EW.join() !== "N,S") { fail("section: buildSection / SECTION_LOOK not exported"); }
+  const near = (a, b, tol) => Math.abs(a - b) <= (tol || 0.5);
+  // every section: dots are where the bars really cross, lines really run parallel within the depth, pieces are sane
+  const audit = (S, name) => {
+    if (!S.title || !S.sub || !S.bounds || S.bounds.s1 <= S.bounds.s0 || S.bounds.z1 <= S.bounds.z0) p(name + ": no title / bad bounds");
+    const ax = S.dir === "NS" ? 0 : 1, sa = 1 - ax;
+    S.pieces.forEach(pc => { if (!(pc.s1 > pc.s0) || !(pc.z1 > pc.z0) || !pc.kind) p(name + ": bad piece " + JSON.stringify([pc.kind, pc.s0, pc.s1, pc.z0, pc.z1])); });
+    S.dots.forEach(dt => {
+      const b = dt.bar, hit = b.pts.some((q, i) => i && ((b.pts[i - 1][ax] < S.at && q[ax] >= S.at) || (q[ax] < S.at && b.pts[i - 1][ax] >= S.at)));
+      if (!hit) p(name + ": dot for bar " + b.id + " that does not cross the plane");
+      if (b.pts.every(q => Math.abs(q[sa] - dt.s) > 1e-6) && !b.pts.some((q, i) => i && Math.min(q[sa], b.pts[i - 1][sa]) - 1e-6 <= dt.s && dt.s <= Math.max(q[sa], b.pts[i - 1][sa]) + 1e-6)) p(name + ": dot off its bar " + b.id);
+      if (dt.cover && (dt.cover.below < -1 || dt.cover.above < -1)) p(name + ": negative cover on bar " + b.id + " " + JSON.stringify(dt.cover));
+    });
+    S.lines.forEach(L => {
+      const b = L.bar, par = b.pts.some((q, i) => i && Math.abs(q[ax] - b.pts[i - 1][ax]) < 1 && near((q[ax] - S.at) * S.keep, L.dist, 1));
+      if (!(L.dist >= 0 && L.dist <= S.depth) || !par) p(name + ": line for bar " + b.id + " at " + L.dist + " is not a piece running parallel within the depth behind the plane");
+      if (L.pts.length < 2) p(name + ": short line");
+    });
+    S.stack.forEach(st => { if (!st.layer || !st.sizes.length || !isFinite(st.z)) p(name + ": bad stack row " + JSON.stringify(st)); });
+    return S;
+  };
+  // E–W through the middle of the example looking north: slab, the step and its nibs, beams, columns; the mats at their levels
+  const SE = audit(buildSection(M, { dir: "EW", at: 4500, look: "N" }), "EW 4500");
+  const kinds = k => SE.pieces.filter(pc => pc.kind === k);
+  if (!kinds("slab").length || kinds("step").length !== 1 || kinds("nib").length !== 2 || kinds("beam").length < 1 || kinds("column").length < 2) p("EW 4500 pieces: " + SE.pieces.map(pc => pc.kind).join(","));
+  const slab = kinds("slab")[0]; if (!near(slab.z0, 0) || !near(slab.z1, M.T)) p("EW 4500 slab piece z " + slab.z0 + ".." + slab.z1);
+  const stp = kinds("step")[0]; if (!near(stp.z0, M.STEP.rise) || !near(stp.z1, M.STEP.rise + M.T) || !near(stp.s0, M.STEP.x0) || !near(stp.s1, M.STEP.x1)) p("EW 4500 step piece " + JSON.stringify(stp));
+  if (!kinds("column").every(pc => pc.existing && near(pc.z0, M.COLB))) p("EW 4500 columns should be existing context down to " + M.COLB);
+  const row = (S, l) => S.stack.find(st => st.layer === l);
+  // layer B runs N–S: dots at Z.B with 46 bottom cover (N12 under the N16 A mat); C runs N–S: dots at Z.C with 40 top cover
+  if (!row(SE, "B") || row(SE, "B").n < 50 || !near(row(SE, "B").z, M.Z.B) || row(SE, "B").coverBelow !== Math.round(M.Z.B - 6 - 0)) p("EW 4500 layer B row " + JSON.stringify(row(SE, "B")));
+  if (!row(SE, "C") || row(SE, "C").n < 50 || !near(row(SE, "C").z, M.Z.C) || row(SE, "C").coverAbove !== Math.round(M.T - M.Z.C - 8)) p("EW 4500 layer C row (the N16 extras at the N12 level govern the layer's least cover) " + JSON.stringify(row(SE, "C")));
+  // A and D run E–W: they appear as lines beyond the plane at the mat level, and the outer covers are the specified 30 (A) and the D extras' 28
+  if (!row(SE, "A") || row(SE, "A").nLines < 1 || !near(row(SE, "A").z, M.Z.A) || row(SE, "A").coverBelow !== M.C) p("EW 4500 layer A row " + JSON.stringify(row(SE, "A")));
+  if (!row(SE, "D") || row(SE, "D").nLines < 1 || !near(row(SE, "D").z, M.Z.D)) p("EW 4500 layer D row " + JSON.stringify(row(SE, "D")));
+  if (SE.covers.length !== 2 || SE.covers[0].side !== "below" || SE.covers[0].v !== M.C || SE.covers[1].side !== "above" || !/TOP COVER/.test(SE.covers[1].text)) p("EW 4500 covers " + JSON.stringify(SE.covers.map(c => c.text)));
+  if (!/^E–W SECTION · ON GRID B · LOOKING NORTH$/.test(SE.title) || !/200 THK · COVER 30 · \d+ BARS CUT/.test(SE.sub) || SE.grids.map(g => g.name).join("") !== "1234" || SE.mirror) p("EW 4500 title / grids / mirror: " + SE.title + " | " + SE.sub + " | " + SE.grids.map(g => g.name).join("") + " | " + SE.mirror);
+  if (SE.keep !== 1 || SE.lines.some(L => L.dist < 0)) p("looking north keeps the north half: keep " + SE.keep);
+  // the beam cage at the cut: IB1 is cut square (bottom and top bars as dots, a lig as a line)
+  const bm = row(SE, "BM"); if (!bm || bm.n < 5 || bm.nLines < 1) p("EW 4500 beam cage row " + JSON.stringify(bm));
+  // looking south from the same line: the same dots, the other half kept, the drawing mirrored
+  const SS = audit(buildSection(M, { dir: "EW", at: 4500, look: "S" }), "EW 4500 S");
+  if (SS.dots.length !== SE.dots.length || SS.keep !== -1 || !SS.mirror || !/LOOKING SOUTH$/.test(SS.title)) p("looking south: " + SS.dots.length + " vs " + SE.dots.length + " dots, keep " + SS.keep + ", mirror " + SS.mirror);
+  if (!SS.lines.length || !SS.lines.every(L => L.bar.pts.some((q, i) => i && Math.abs(q[1] - L.bar.pts[i - 1][1]) < 1 && q[1] <= 4500 + 0.5))) p("looking south: the lines beyond must lie south of the plane");
+  // N–S through the set-down (wet area at 70 down): a drop piece, bars in it with their own cover; mirrored when looking east
+  const dd = M.DROPS[0], SD = audit(buildSection(M, { dir: "NS", at: (dd.x0 + dd.x1) / 2, look: "E" }), "NS drop");
+  const drop = SD.pieces.find(pc => pc.kind === "drop"); if (!drop || !near(drop.z0, -dd.d) || !near(drop.z1, M.T - dd.d) || !near(drop.s0, dd.y0) || !near(drop.s1, dd.y1)) p("NS drop piece " + JSON.stringify(drop));
+  if (SD.pieces.filter(pc => pc.kind === "slab").some(pc => pc.s0 < dd.y1 && pc.s1 > dd.y0)) p("NS drop: the slab piece should stop at the set-down");
+  const inDrop = SD.dots.filter(dt => dt.host === "drop" && dt.layer === "A"); if (!inDrop.length || inDrop.some(dt => dt.cover.below !== M.C)) p("NS drop: A bars in the set-down should sit at 30 cover to its soffit: " + JSON.stringify(inDrop.slice(0, 3).map(dt => dt.cover)));
+  if (!SD.mirror || SD.keep !== 1 || !/LOOKING EAST$/.test(SD.title) || SD.grids.map(g => g.name).join("") !== "ABC") p("NS drop title / mirror: " + SD.title + " " + SD.mirror + " " + SD.grids.map(g => g.name).join(""));
+  // along the stair flight (an E–W cut through the void centre): the flight is its own polygon; across it (N–S through the flight): depth rectangles
+  const ST = M.STAIR, SA = audit(buildSection(M, { dir: ST.alongX ? "EW" : "NS", at: ST.cc, look: ST.alongX ? "N" : "E" }), "stair along");
+  const poly = SA.pieces.find(pc => pc.kind === "stair"); if (!poly || !poly.poly || poly.poly.length !== ST.poly.length || !near(poly.z0, ST.zLo - 0, 1) && !near(poly.z0, Math.min(...ST.poly.map(q => q[1])), 1)) p("stair along: no polygon piece " + JSON.stringify(poly && [poly.kind, poly.z0, poly.z1, poly.poly && poly.poly.length]));
+  const floor = SA.pieces.find(pc => pc.kind === "floor"); if (!floor || !floor.existing || !near(floor.z1, ST.zLo)) p("stair along: floor below missing " + JSON.stringify(floor));
+  const sr = row(SA, "SR"); if (!sr || sr.n < 5 || sr.host !== "stair" || !(sr.coverBelow >= M.C - 1 && sr.coverBelow <= M.C + 12)) p("stair along: the flight's bars at the cut (dist bars as dots, cover to the soffit) " + JSON.stringify(sr));
+  const mainLine = SA.lines.find(L => L.layer === "SR" && L.bar.run.kind === "stairMain"); if (!mainLine || mainLine.pts.length < 2 || mainLine.pts[0][1] === mainLine.pts[1][1]) p("stair along: a main bar should run as a sloping line beyond the plane");
+  const SX = audit(buildSection(M, { dir: ST.alongX ? "NS" : "EW", at: ST.P(ST.run / 2, ST.cc, 0)[ST.alongX ? 0 : 1], look: ST.alongX ? "E" : "N" }), "stair across");
+  const across = SX.pieces.filter(pc => pc.kind === "stair"); if (across.length !== 1 || across[0].poly || !near(across[0].s0, ST.c0) || !near(across[0].s1, ST.c1) || !(across[0].z1 - across[0].z0 > ST.waist)) p("stair across: " + JSON.stringify(across));
+  const srx = row(SX, "SR"); if (!srx || srx.n < 5) p("stair across: main bars should be dots " + JSON.stringify(srx));
+  // a cut outside everything but the extents: clamped to the extents; a plane along a slab edge still builds; bad inputs fall back
+  const SO = buildSection(M, { dir: "EW", at: 99999, look: "N" }); if (SO.at !== M.EXT.y1 || SO.errors) p("clamped at " + SO.at + " vs " + M.EXT.y1);
+  const SB = buildSection(M, { dir: "xx", at: "abc", look: "Q", depth: -5 }); if (SB.dir !== "NS" || SB.look !== "E" || SB.depth !== 300 || !near(SB.at, (M.EXT.x0 + M.EXT.x1) / 2)) p("bad inputs: " + JSON.stringify([SB.dir, SB.look, SB.depth, SB.at]));
+  // the depth: a wider band takes in more lines, never fewer
+  const S0 = buildSection(M, { dir: "EW", at: 4500, look: "N", depth: 0 }), S9 = buildSection(M, { dir: "EW", at: 4500, look: "N", depth: 900 });
+  if (!(S0.lines.length <= SE.lines.length && SE.lines.length < S9.lines.length) || S0.dots.length !== SE.dots.length) p("depth band: " + [S0.lines.length, SE.lines.length, S9.lines.length].join(" / "));
+  // a panel (#33): vertical and horizontal cuts, the net outline with a door; faces at their cover
+  const PM = buildModel(lib.PANEL_CFG), doorCfg = Object.assign({}, lib.PANEL_CFG, { openings: (lib.PANEL_CFG.openings || []).concat([{ name: "DOOR", x0: 1800, y0: 0, x1: 2800, y1: 2100 }]) }), PD = buildModel(doorCfg);
+  const SP = audit(buildSection(PM, { dir: "NS", at: 3000, look: "E" }), "panel NS");
+  if (SP.pieces.length !== 1 || SP.pieces[0].kind !== "panel" || !near(SP.pieces[0].s0, 0) || !near(SP.pieces[0].s1, PM.W) || !/^VERTICAL SECTION · 3,000 FROM THE LEFT EDGE · LOOKING TOWARDS THE RIGHT EDGE$/.test(SP.title)) p("panel NS: " + JSON.stringify(SP.pieces) + " " + SP.title);
+  const nf1 = row(SP, "NF1"), ff1 = row(SP, "FF1"); if (!nf1 || !ff1 || ff1.coverBelow !== PM.C || nf1.coverAbove !== PM.C) p("panel faces at the cut: " + JSON.stringify([nf1, ff1]));
+  if (SP.covers.length !== 2 || SP.covers.some(c => c.v !== PM.C)) p("panel covers " + JSON.stringify(SP.covers.map(c => c.text)));
+  if (PD.errors.length) p("door panel did not build: " + PD.errors.join(" | "));
+  else {
+    const SDr = audit(buildSection(PD, { dir: "EW", at: 1000, look: "N" }), "panel door");   // a horizontal cut through the door: the panel is in two pieces
+    const pcs = SDr.pieces.filter(pc => pc.kind === "panel"); if (pcs.length !== 2 || !near(pcs[0].s1, 1800) || !near(pcs[1].s0, 2800) || !/^HORIZONTAL SECTION · 1,000 UP FROM THE BOTTOM EDGE/.test(SDr.title)) p("panel door pieces " + JSON.stringify(pcs) + " " + SDr.title);
+    if (SDr.dots.some(dt => dt.s > 1800 && dt.s < 2800 && !dt.existing)) p("panel door: bars cut inside the door opening");
+  }
+  // a mesh floor: wires cut as wire dots in the mesh layer
+  const MM = buildModel({ callouts: "N16-200 A E-W\nN12-200 B N-S\nSL82 T E-W" }), SM = audit(buildSection(MM, { dir: "NS", at: 7000, look: "E" }), "mesh");
+  if (!SM.dots.some(dt => dt.wire) || !/WIRES CUT/.test(SM.sub) || !row(SM, "C")) p("mesh: wires should be cut as wire dots in the mesh layer: " + SM.sub);
+  if (problems.length) fail("section:\n" + problems.slice(0, 25).join("\n"));
+  console.log("  section (#10): E–W on grid B (" + SE.pieces.length + " pieces, " + SE.dots.length + " bars cut, " + SE.lines.length + " lines beyond, layers " + SE.stack.map(st => st.layer).join("") + ", covers " + SE.covers.map(c => c.v).join("/") + "), looking south mirrored, N–S through the set-down, along and across the stair flight, clamped / bad inputs, depth band, panel vertical / horizontal through a door, mesh wires");
+}
+
 // error paths must report, not throw
 const bad = buildModel({ callouts: "N13-200 A\nSL82 T\nN12-200 A E-W\nN16-200 A E-W" });
 if (!bad.errors.some(e => /N13/.test(e)) || !bad.errors.some(e => /mesh/.test(e)) || !bad.errors.some(e => /already defined/.test(e))) fail("expected errors for bad callouts, got: " + bad.errors.join(" | "));

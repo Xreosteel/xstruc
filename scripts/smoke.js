@@ -221,6 +221,81 @@ const { chromium } = require("playwright");
   await page.click("#feats input[data-feat=stair]"); await page.waitForTimeout(700);
   await page.click("#all");
 
+  // section cut (#10): the toggle clips the 3D scene on the plane and draws the true section on the strip; the Section
+  // camera stands on the cut-away side; direction, position and the other way round follow the inputs; a bar is picked on
+  // the strip; the strip gives way to the sheet and to site mode; a panel has vertical / horizontal cuts
+  const secInfo = () => page.evaluate(() => { const S = window.xstruc.secState(), D = window.xstruc.section(); return { S, title: D ? D.title : null, pieces: D ? D.pieces.map(pc => pc.kind) : null, dots: D ? D.dots.length : null, lines: D ? D.lines.length : null, stack: D ? D.stack.map(st => st.layer + ":" + st.z + ":" + (st.coverBelow != null ? st.coverBelow : "-") + "/" + (st.coverAbove != null ? st.coverAbove : "-")).join(" ") : null, covers: D ? D.covers.map(c => c.text) : null,
+    canvas: !document.getElementById("seccv").hidden, ch: document.getElementById("seccv").clientHeight, box: !document.getElementById("secbox").hidden, pressed: document.getElementById("tgSection").getAttribute("aria-pressed"), cls: document.querySelector(".stage").classList.contains("section"), hud: document.getElementById("hud").textContent,
+    cap: document.getElementById("secCap").textContent.slice(0, 120), dirs: [...document.querySelectorAll("[data-secdir]")].map(b => b.textContent + ":" + b.getAttribute("aria-pressed")), axis: document.getElementById("secAxis").textContent, slider: [document.getElementById("secAt").min, document.getElementById("secAt").max, document.getElementById("secAt").value].join("/"), num: document.getElementById("secAtN").value, cam: window.xstruc.camPos() }; });
+  const sc0 = await secInfo();
+  if (sc0.S.on || sc0.canvas || sc0.box || sc0.S.clips !== 0) throw new Error("section should start off: " + JSON.stringify(sc0.S));
+  await page.click("#tgSection"); await page.waitForTimeout(600);
+  const sc1 = await secInfo();
+  console.log("section on:", JSON.stringify({ S: sc1.S, title: sc1.title, pieces: sc1.pieces, dots: sc1.dots, lines: sc1.lines, stack: sc1.stack, covers: sc1.covers, canvas: sc1.canvas, ch: sc1.ch, slider: sc1.slider, axis: sc1.axis }));
+  if (!sc1.S.on || sc1.S.clips !== 1 || !sc1.canvas || sc1.ch < 150 || !sc1.box || sc1.pressed !== "true" || !sc1.cls || sc1.S.dir !== "EW" || sc1.S.look !== "N" || !/^E–W SECTION · .* LOOKING NORTH$/.test(sc1.title) || !/Section cut/.test(sc1.hud) || !/LOOKING NORTH/.test(sc1.cap)) throw new Error("section on: " + JSON.stringify(sc1));
+  if (!(sc1.dots > 100) || !(sc1.lines > 5) || !/A:38:30\//.test(sc1.stack) || !/D:164:/.test(sc1.stack) || sc1.covers.length !== 2 || !/^30 BTM COVER/.test(sc1.covers[0]) || sc1.dirs.join() !== "E–W line:true,N–S line:false" || sc1.axis !== "y from grid A" || sc1.slider !== "-250/11050/" + sc1.S.at || sc1.num !== String(sc1.S.at))   // the extents take in the north balcony throw new Error("section content / inputs: " + JSON.stringify([sc1.dots, sc1.lines, sc1.stack, sc1.covers, sc1.dirs, sc1.axis, sc1.slider, sc1.num]));
+  if (sc1.S.view.s <= 0.05 || sc1.S.view.tx === 0) throw new Error("the strip was not fitted: " + JSON.stringify(sc1.S.view));
+  // the strip is drawn: paper and ink, a hatch, dots in layer colours (sample the pixels at a cut bar and at the paper)
+  const px = await page.evaluate(() => { const D = window.xstruc.section(), cv = document.getElementById("seccv"), c = cv.getContext("2d"), dpr = cv.width / cv.clientWidth, dt = D.dots.find(q => { const q2 = window.xstruc.secXY(q.s, q.z); return q.layer === "B" && q2[0] > 40 && q2[0] < cv.clientWidth * 0.6; }), xy = window.xstruc.secXY(dt.s, dt.z); const at = (x, y) => [...c.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data]; return { dot: at(xy[0], xy[1]), paper: at(cv.clientWidth / 2, 70), xy: xy, w: cv.clientWidth, h: cv.clientHeight, id: dt.bar.id }; });
+  console.log("strip pixels:", JSON.stringify(px));
+  if (!(px.xy[0] > 0 && px.xy[0] < px.w && px.xy[1] > 30 && px.xy[1] < px.h) || px.dot.join() === px.paper.join() || px.paper[0] < 220) throw new Error("strip not drawn / dot not in view: " + JSON.stringify(px));
+  // the Section camera: south of the plane (the cut-away side), level with the slab, looking north at the cut face
+  await page.click(".side [data-cam=section]"); await page.waitForTimeout(900);
+  const sc2 = await secInfo();
+  const planeZ = await page.evaluate(() => { const M = window.xstruc.model(), S = window.xstruc.secState(); return -(S.at - (M.SL.y0 + M.SL.y1) / 2) / 1000; });
+  if (!(sc2.cam[2] > planeZ + 1) || !(sc2.cam[1] > 0 && sc2.cam[1] < 3) || !/Section cut/.test(sc2.hud)) throw new Error("section camera " + JSON.stringify([sc2.cam, planeZ, sc2.hud]));
+  await page.screenshot({ path: path.join(outDir, "smoke-26-section-ew.png") });
+  // a bar picked on the strip selects it (inspector, 3D and schedule follow)
+  const pk = await page.evaluate(id => { const D = window.xstruc.section(), dt = D.dots.find(q => q.bar.id === id), xy = window.xstruc.secXY(dt.s, dt.z); return { hit: window.xstruc.secPickAt(xy[0], xy[1]), xy: xy, id: id, mark: dt.bar.mark }; }, px.id);
+  const cvBox = await page.$eval("#seccv", el => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  await page.mouse.click(cvBox.x + pk.xy[0], cvBox.y + pk.xy[1]); await page.waitForTimeout(300);
+  pk.sel = await page.evaluate(() => window.xstruc.state.sel && window.xstruc.state.sel.id); pk.insp = await page.evaluate(() => document.getElementById("inspector").textContent.replace(/\s+/g, " ").slice(0, 120));
+  console.log("strip pick:", JSON.stringify(pk));
+  if (pk.hit !== pk.id || pk.sel !== pk.id || !pk.insp.includes(pk.mark)) throw new Error("picking on the strip: " + JSON.stringify(pk));
+  // N–S line, then the other way round: the title, the slider axis, the mirror; the strip keeps its content in view
+  await page.click("[data-secdir=NS]"); await page.waitForTimeout(500);
+  const sc3 = await secInfo();
+  if (sc3.S.dir !== "NS" || sc3.S.look !== "E" || !/^N–S SECTION · .* LOOKING EAST$/.test(sc3.title) || sc3.axis !== "x from grid 1" || sc3.dirs.join() !== "E–W line:false,N–S line:true" || sc3.slider !== "-250/14250/" + sc3.S.at) throw new Error("N–S line: " + JSON.stringify([sc3.S, sc3.title, sc3.axis, sc3.dirs, sc3.slider]));
+  await page.click("#secFlip"); await page.waitForTimeout(400);
+  const sc4 = await secInfo();
+  const inView = await page.evaluate(() => { const D = window.xstruc.section(), cv = document.getElementById("seccv"), pcs = D.pieces.filter(pc => pc.kind === "slab"); const xs = pcs.map(pc => [window.xstruc.secXY(pc.s0, 0)[0], window.xstruc.secXY(pc.s1, 0)[0]]).flat(); return { lo: Math.min(...xs), hi: Math.max(...xs), w: cv.clientWidth, mirror: D.mirror }; });
+  console.log("flip:", JSON.stringify({ look: sc4.S.look, title: sc4.title, inView }));
+  if (sc4.S.look !== "W" || !/LOOKING WEST$/.test(sc4.title) || inView.mirror || !(inView.lo < inView.w * 0.5 && inView.hi > inView.w * 0.3)) throw new Error("flip: " + JSON.stringify([sc4.S, sc4.title, inView]));
+  // the slider moves the cut; through the stair void along the flight the section shows the flight's own polygon
+  const stairCut = await page.evaluate(() => { const S = window.xstruc.model().STAIR; return { dir: S.alongX ? "EW" : "NS", at: S.cc, look: S.alongX ? "S" : "W" }; });
+  await page.click("[data-secdir=" + stairCut.dir + "]"); await page.waitForTimeout(300);
+  await page.fill("#secAtN", String(stairCut.at)); await page.waitForTimeout(400);
+  if (stairCut.look !== (await secInfo()).S.look) { await page.click("#secFlip"); await page.waitForTimeout(300); }
+  await page.evaluate(() => { window.xstruc.secSet({}); }); await page.waitForTimeout(200);   // refit the strip to the new cut
+  await page.click(".side [data-cam=section]"); await page.waitForTimeout(900);
+  const sc5 = await secInfo();
+  console.log("stair section:", JSON.stringify({ S: sc5.S, title: sc5.title, pieces: sc5.pieces, stack: sc5.stack }));
+  if (sc5.S.at !== stairCut.at || !sc5.pieces.includes("stair") || !sc5.pieces.includes("floor") || !/SR:-\d+:\d+\//.test(sc5.stack) || sc5.S.view.tx === sc4.S.view.tx) throw new Error("stair section: " + JSON.stringify([sc5.S, sc5.pieces, sc5.stack]));
+  await page.evaluate(() => { const cv = document.getElementById("seccv"); cv.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); }); await page.waitForTimeout(300);   // fit everything
+  const sc5b = await secInfo(); if (!sc5b.S.fitAll || !(sc5b.S.view.s < sc5.S.view.s)) throw new Error("double-click should fit everything: " + JSON.stringify([sc5.S.view, sc5b.S.view]));
+  await page.screenshot({ path: path.join(outDir, "smoke-26-section-stair.png") });
+  // the sheet hides the strip and brings it back; site mode turns the cut off; the toggle turns it off (no clip, HUD back)
+  await page.click("#tgSheet"); await page.waitForTimeout(400);
+  const sc6 = await secInfo(); if (!sc6.S.on || sc6.canvas || sc6.cls) throw new Error("sheet should hide the strip and keep the cut: " + JSON.stringify([sc6.S.on, sc6.canvas, sc6.cls]));
+  await page.click("#tgSheet"); await page.waitForTimeout(400);
+  const sc7 = await secInfo(); if (!sc7.S.on || !sc7.canvas || !sc7.cls || sc7.S.clips !== 1) throw new Error("3D back: the strip should return: " + JSON.stringify([sc7.S, sc7.canvas, sc7.cls]));
+  await page.evaluate(() => window.xstruc.setSite(true)); await page.waitForTimeout(500);
+  const sc8 = await secInfo(); if (sc8.S.on || sc8.canvas || sc8.S.clips !== 0) throw new Error("site mode should turn the cut off: " + JSON.stringify(sc8.S));
+  await page.evaluate(() => window.xstruc.setSite(false)); await page.waitForTimeout(400); await page.click("#all");
+  // a panel: vertical / horizontal cuts worded for a panel, the faces at their cover
+  await page.evaluate(() => window.xstruc.setMode("panel")); await page.waitForTimeout(900);
+  await page.click("#tgSection"); await page.waitForTimeout(600);
+  await page.click("[data-secdir=NS]"); await page.waitForTimeout(400);
+  const sc9 = await secInfo();
+  console.log("panel section:", JSON.stringify({ title: sc9.title, dirs: sc9.dirs, axis: sc9.axis, stack: sc9.stack, covers: sc9.covers, slider: sc9.slider }));
+  if (!/^VERTICAL SECTION · [\d,]+ FROM THE LEFT EDGE · LOOKING TOWARDS THE RIGHT EDGE$/.test(sc9.title) || sc9.dirs.join() !== "Horizontal line:false,Vertical line:true" || sc9.axis !== "x from the left edge" || !/NF1:164:158\/30/.test(sc9.stack) || !/FF1:34:30\//.test(sc9.stack) || sc9.slider !== "0/6000/" + sc9.S.at) throw new Error("panel section: " + JSON.stringify([sc9.title, sc9.dirs, sc9.axis, sc9.stack, sc9.slider]));
+  await page.click(".side [data-cam=section]"); await page.waitForTimeout(800);
+  await page.screenshot({ path: path.join(outDir, "smoke-26-section-panel.png") });
+  await page.click("#tgSection"); await page.waitForTimeout(300);
+  const sc10 = await secInfo(); if (sc10.S.on || sc10.canvas || sc10.box || sc10.S.clips !== 0 || sc10.cls || /Section cut/.test(sc10.hud)) throw new Error("section off: " + JSON.stringify([sc10.S, sc10.canvas, sc10.hud]));
+  await page.evaluate(() => window.xstruc.setMode("floor")); await page.waitForTimeout(900);
+  await page.click("#btnReset"); await page.waitForTimeout(800);
+
   // laps (#5): the flat lap is the default and the report shows the AS 3600 value beside every lap in use (the short ones
   // flagged); typing the drawing's lap table changes the laps per size and case, the inspector / report / header say so; a
   // bad table line is an error on the textarea that keeps the scene; clearing it goes back to the flat lap
