@@ -12,6 +12,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read   # to see GitHub's own branch build (below)
 
 concurrency:
   group: pages
@@ -34,6 +35,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Pages is also set to build from the branch: GitHub's own "pages build and deployment" run deploys the raw repo
+      # on every push too, and the last deploy wins. Wait for it so the app (manifest, worker, icons) is what stays live.
+      # Settings > Pages > Source "GitHub Actions" stops that run; this step then finds none and goes straight on.
+      - name: Wait for the branch build to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 36); do
+            s=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA" --jq '[.workflow_runs[] | select(.path | startswith("dynamic/pages/"))][0].status // ""' 2>/dev/null || true)
+            if [ "$s" = "completed" ]; then echo "branch build finished"; sleep 5; break; fi
+            if [ -z "$s" ] && [ "$i" -ge 4 ]; then echo "no branch build for this commit"; break; fi
+            echo "branch build: ${s:-not started}"; sleep 10
+          done
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
         with:

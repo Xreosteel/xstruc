@@ -13,7 +13,9 @@ Newest entry first. Each scheduled run appends one entry at the top.
 
 **Check (on the rebased page):** `check: OK` · `grammar: OK (90 cases)` · `shapes: OK (126 assertions)` · `panel: OK (85 bars + 1 mesh sheet on the example; 14 stock pieces checked; elevation sheet: 4 symbols, 4 table rows)` · `app: OK (11 files kept offline, 5 icons, 2 screenshots, 3 shortcuts)` · `smoke: OK` · `smoke-app: OK (installable, inputs kept, offline floor + panel, update)`
 
-**Parked:** Google Play / App Store listings (same code wrapped; needs developer accounts and store review): asked Baji.
+**Pages:** every push also starts GitHub's own branch build ("pages build and deployment", Jekyll over the raw repo), which deploys too; the last deploy wins, and on 8a52ff6 the app deploy finished one second after it. The workflow's deploy job now waits for that run on the same commit before deploying, so the app is what stays live. The clean fix is one setting for Baji: Settings › Pages › Source: GitHub Actions (the API call for it is blocked from the session); the wait step then finds no branch build and goes straight on.
+
+**Parked:** Google Play / App Store listings (same code wrapped; needs developer accounts and store review): asked Baji. Pages source to "GitHub Actions" (above).
 
 **Next run:** unchanged from run 22: #8b still waits on Baji; take #11 (tag declutter), then #12 (performance). Runs 15–22 (#6, #33c–#33f, #8a, #10) landed on `main` while this was built; this commit was rebased onto them and the app checks re-run on the merged page.
 
