@@ -10,7 +10,7 @@ const { chromium } = require("playwright");
 (async () => {
   const threeDir = path.resolve(process.argv[2] || ".");
   const outDir = path.resolve(process.argv[3] || threeDir);
-  const src = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const src = require("./build").page();
   const local = src
     .replace("https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js", "file://" + path.join(threeDir, "node_modules/three/build/three.min.js"))
     .replace("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js", "file://" + path.join(threeDir, "node_modules/three/examples/js/controls/OrbitControls.js"))

@@ -1,5 +1,6 @@
-# Deploys the installable app to GitHub Pages on every push to main, after the checks pass (backlog #34):
-# scripts/build-app.js wraps index.html as a full page with its manifest, offline worker and icons.
+# Deploys the prototype's installable app to GitHub Pages on every push to main, after the checks pass (backlog #34):
+# apps/prototype/scripts/build-app.js inlines the engine from packages/engine and wraps the page with its manifest,
+# offline worker and icons. The new application (apps/web) deploys to Vercel instead (architecture v2).
 # Public URL: https://xreosteel.github.io/xstruc/
 name: Deploy viewer to GitHub Pages
 
@@ -25,8 +26,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: npm test
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Tests and type checks (every package, through Turborepo)
+        run: pnpm test
+      - name: Builds (the prototype page and the web app, with no keys set)
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
 
   deploy:
     needs: test
@@ -52,8 +60,11 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-      - name: Build the app
-        run: node scripts/build-app.js _site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the prototype app (engine inlined from packages/engine)
+        run: node apps/prototype/scripts/build-app.js _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

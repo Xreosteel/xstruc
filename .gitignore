@@ -1,3 +1,10 @@
 node_modules/
 .DS_Store
 _site/
+dist/
+.turbo/
+.next/
+*.tsbuildinfo
+.env*.local
+.env
+next-env.d.ts

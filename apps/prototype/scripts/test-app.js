@@ -30,7 +30,7 @@ function imageSize(file) {
 const out = fs.mkdtempSync(path.join(os.tmpdir(), "xstruc-app-"));
 let r;
 try { r = build(out); } catch (e) { console.error("app: FAIL\n  build threw: " + e.message); process.exit(1); }
-const fragment = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+const fragment = require("./build").page();   // the artifact copy: the prototype page with the engine inlined
 const page = fs.readFileSync(path.join(out, "index.html"), "utf8");
 
 // the artifact copy: no manifest, so it never registers a worker it has not got
@@ -94,8 +94,8 @@ ok(build(out2, { html: fragment + "\n<!-- changed -->" }).version !== r.version,
 fs.rmSync(out2, { recursive: true, force: true });
 
 // the Pages workflow publishes the build, not the bare fragment
-const wf = fs.readFileSync(path.join(ROOT, ".github", "workflows", "pages.yml"), "utf8");
-ok(/node scripts\/build-app\.js _site/.test(wf), "pages.yml should publish with scripts/build-app.js");
+const wf = fs.readFileSync(path.join(ROOT, "..", "..", ".github", "workflows", "pages.yml"), "utf8");
+ok(/node apps\/prototype\/scripts\/build-app\.js _site/.test(wf), "pages.yml should publish with apps/prototype/scripts/build-app.js");
 
 fs.rmSync(out, { recursive: true, force: true });
 if (problems.length) { console.error("app: FAIL\n  " + problems.join("\n  ")); process.exit(1); }

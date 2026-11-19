@@ -139,7 +139,7 @@ const fail = msg => { console.error("smoke-app: FAIL\n  " + msg); process.exit(1
 
   // 5. a new deploy: same files, new version; back online the bar offers it and Reload brings it in
   const dirB = fs.mkdtempSync(path.join(os.tmpdir(), "xstruc-siteB-"));
-  const B = build(dirB, { html: fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8") + "\n<!-- next deploy -->\n" });
+  const B = build(dirB, { html: require("./build").page() + "\n<!-- next deploy -->\n" });
   srv = await serve(dirB, port); await routeCdn(); await ctx.setOffline(false);
   await page.evaluate(() => window.xstruc.app.registration.update());
   await page.waitForFunction(() => !document.querySelector("#appUpdate").hidden, null, { timeout: 20000 }).catch(() => fail("the new-version bar did not appear"));

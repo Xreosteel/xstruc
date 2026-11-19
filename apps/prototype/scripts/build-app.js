@@ -47,7 +47,7 @@ const listDir = d => fs.existsSync(d) ? fs.readdirSync(d).filter(f => !f.startsW
 // opts.html: build from this page text instead of index.html (the tests use it to check the version follows the page)
 function build(outDir, opts) {
   opts = opts || {};
-  const html = opts.html != null ? opts.html : fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const html = opts.html != null ? opts.html : require("./build").page();   // the prototype page, engine inlined
   if (/^\s*<!doctype/i.test(html) || /<head[\s>]/i.test(html)) throw new Error("index.html now has its own doctype/head: update scripts/build-app.js to merge the app tags into it");
   if (!/^\s*<title>/.test(html)) throw new Error("index.html should start with its <title> (the artifact fragment)");
   const manifest = fs.readFileSync(path.join(APP, "manifest.webmanifest"), "utf8");

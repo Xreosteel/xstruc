@@ -1,9 +1,19 @@
 {
   "name": "xstruc",
-  "version": "0.1.0",
   "private": true,
-  "description": "3D slab and reinforcement viewer (prototype)",
+  "description": "X Struc monorepo: the application (apps/web), the prototype viewer (apps/prototype), the engine (packages/engine) and the database (supabase/). See docs/architecture.md.",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "node scripts/check.js && node scripts/test-grammar.js && node scripts/test-shapes.js && node scripts/test-panel.js && node scripts/test-app.js"
+    "test": "turbo run test typecheck",
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "smoke": "pnpm --filter @xstruc/prototype smoke"
+  },
+  "devDependencies": {
+    "turbo": "2.11.13",
+    "typescript": "5.9.3"
   }
 }

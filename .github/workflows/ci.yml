@@ -1,0 +1,32 @@
+# Checks every pull request and every push to a branch other than main (main is checked by pages.yml before it
+# deploys): tests and type checks for every package through Turborepo (architecture v2 §9).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Tests and type checks
+        run: pnpm test
+      - name: Builds (the prototype page and the web app, with no keys set)
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"

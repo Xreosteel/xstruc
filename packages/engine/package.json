@@ -1,0 +1,21 @@
+{
+  "name": "@xstruc/engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "X Struc reinforcement engine: inputs to bars, mesh, marks, schedules, placing sheets and sections. Pure, headless, deterministic.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "files": ["src"],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
