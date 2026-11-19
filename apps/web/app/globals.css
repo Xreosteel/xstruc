@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* X Struc colours: the prototype's dark site-friendly palette */
+@theme {
+  --color-ink: #e8edf2;
+  --color-muted: #8b98a6;
+  --color-bg: #11151a;
+  --color-panel: #181e25;
+  --color-line: #2a333d;
+  --color-accent: #e5534b;
+  --color-ok: #3fb950;
+  --color-warn: #d6a243;
+  --font-sans: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+html, body { background: var(--color-bg); color: var(--color-ink); }
+a { color: inherit; }
+.card { background: var(--color-panel); border: 1px solid var(--color-line); border-radius: 8px; padding: 16px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 8px 14px; border: 1px solid var(--color-line); border-radius: 6px; background: transparent; color: var(--color-ink); cursor: pointer; }
+.btn:hover { border-color: var(--color-muted); }
+.btn-primary { background: var(--color-ink); color: var(--color-bg); border-color: var(--color-ink); }
+.input { width: 100%; min-height: 40px; padding: 8px 10px; background: var(--color-bg); color: var(--color-ink); border: 1px solid var(--color-line); border-radius: 6px; }
+.label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-muted); margin-bottom: 4px; }
+table.sched { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 13px; }
+table.sched th, table.sched td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--color-line); }
+table.sched th { color: var(--color-muted); font-weight: 500; }
