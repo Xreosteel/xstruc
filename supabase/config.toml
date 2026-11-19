@@ -1,0 +1,21 @@
+# Supabase CLI settings for local development (`supabase start`, needs Docker) and `supabase db push` to the linked
+# project. Production settings (sign-in providers, redirect URLs, SMTP) are set in the Supabase dashboard for the
+# Sydney project (architecture v2 §9). Everything not listed here takes the CLI's defaults.
+project_id = "xstruc"
+
+[api]
+schemas = ["public"]
+
+[db]
+major_version = 17
+
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+
+# XREO staff sign in with Microsoft 365 (Azure AD). Fill these from the app registration an XREO admin approves.
+[auth.external.azure]
+enabled = false
+client_id = "env(SUPABASE_AUTH_AZURE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_AZURE_SECRET)"
+url = "https://login.microsoftonline.com/common/v2.0"

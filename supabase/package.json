@@ -1,0 +1,13 @@
+{
+  "name": "@xstruc/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "X Struc database: Supabase migrations (schema, row-level security, storage rules) and their tests, run in PGlite (no Docker).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.17"
+  }
+}
