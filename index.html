@@ -35,7 +35,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
   gap: 12px;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 12px;
+  padding-top: max(12px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
 }
 
 .top { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; }
@@ -248,8 +249,8 @@ td.dims { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .sitectl .posesw .btn:first-child { border-radius: 6px 0 0 6px; }
 .sitectl .posesw .btn:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 html.site, html.site body { height: 100%; overflow: hidden; }
-html.site .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; min-height: 0; padding-block: 8px; }
-html.site .side, html.site .inspect, html.site .slabline, html.site .stats, html.site .sitebtn, html.site .hud, html.site #tip { display: none !important; }
+html.site .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; height: 100%; min-height: 0; padding-top: max(8px, env(safe-area-inset-top, 0px)); padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+html.site .side, html.site .inspect, html.site .slabline, html.site .stats, html.site .sitebtn, html.site .appbtn, html.site .hud, html.site #tip { display: none !important; }
 html.site .stage { height: auto; order: 0; grid-column: 1; }
 html.site .btn { min-height: 44px; min-width: 44px; padding: 10px 16px; font-size: 17px; }
 .sitebar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: stretch; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
@@ -303,6 +304,16 @@ html.site .legend { right: auto; left: 12px; top: auto; bottom: 10px; justify-co
 .markchip { min-height: 44px; min-width: 44px; padding: 6px 14px; font-family: var(--mono); font-size: 17px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
 .markchip[aria-pressed="true"] { background: var(--c, var(--fg)); color: #fff; border-color: var(--c, var(--fg)); }
 
+/* Installed app (backlog #34): Install button, the iPhone / Safari how-to, the new-version bar and the offline chip.
+   Only the GitHub Pages build has a manifest, so in the claude.ai artifact these stay hidden. */
+.appbtn { margin-left: 6px; }
+.offchip { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); padding: 1px 7px; border-radius: 3px; }
+.appnote { position: fixed; z-index: 50; left: 50%; transform: translateX(-50%); top: max(12px, env(safe-area-inset-top, 0px)); width: min(440px, calc(100% - 24px)); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--muted); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.appnote p { margin: 0; flex: 1 1 220px; }
+.appnote .btn { min-height: 36px; padding: 6px 14px; }
+.appnote .btn.go { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+html.print .appnote, html.print .offchip { display: none !important; }
+
 /* Print (backlog #9c): the placing sheet alone, on A3 landscape with 10 mm margins. html.print is set by beforeprint
    (or the Print sheet button) so the canvas can be redrawn at a standard drawing scale before the page is captured. */
 @page { size: A3 landscape; margin: 10mm; }
@@ -324,6 +335,8 @@ html.print #sheet { background: #fff; }
       <div><b id="stMass">0</b><small>Steel kg</small></div>
     </div>
     <button class="btn small sitebtn" type="button" id="btnSite" aria-pressed="false" title="Tablet view for fixing: one layer at a time, big type, no inputs">Site mode</button>
+    <button class="btn small appbtn" type="button" id="btnInstall" hidden title="Put X Struc on this device as an app: its own icon and window, works with no signal">Install app</button>
+    <span class="offchip" id="offChip" role="status" hidden title="No connection: X Struc is running from the copy kept on this device">Offline</span>
     <div class="sitectl" id="sitectl" hidden>
       <span class="lv" id="siteFloor"></span>
       <button class="btn" type="button" data-cam="iso">3D</button>
@@ -576,6 +589,8 @@ html.print #sheet { background: #fff; }
     </div>
   </section>
 </div>
+<div class="appnote" id="appTip" role="dialog" aria-labelledby="appTipText" hidden><p id="appTipText"></p><button class="btn go" type="button" id="btnAppTipOk">OK</button></div>
+<div class="appnote" id="appUpdate" role="status" hidden><p>A new version of X Struc is ready.</p><button class="btn go" type="button" id="btnAppReload">Reload</button><button class="btn" type="button" id="btnAppLater">Later</button></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -4797,14 +4812,14 @@ html.print #sheet { background: #fff; }
     return { openings: readRows(GEO.rows), balconies: readRows(GEO.balcRows), setdowns: readRows(GEO.dropRows), step: step, stair: stair };
   }
   function fillInputs(cfg) {
-    IN.gridX.value = cfg.gridX.join(", "); IN.gridY.value = cfg.gridY.join(", ");
+    IN.gridX.value = [].concat(cfg.gridX).join(", "); IN.gridY.value = [].concat(cfg.gridY).join(", ");   // arrays in the example, text when kept (#34)
     IN.thk.value = cfg.thickness; IN.cover.value = cfg.cover; IN.fc.value = cfg.fc; IN.lap.value = cfg.lap; IN.lapTable.value = cfg.lapTable || "";
     IN.callouts.value = cfg.callouts;
     featBoxes.forEach(b => { b.checked = !!cfg.features[b.dataset.feat]; });
     fillGeom(cfg);
   }
-  function readInputs() {
-    if (mode === "panel") return readPanel();
+  function readInputs() { return mode === "panel" ? readPanel() : readFloor(); }
+  function readFloor() {
     const features = {}; featBoxes.forEach(b => { features[b.dataset.feat] = b.checked; });
     return Object.assign({ name: "Level 1", gridX: IN.gridX.value, gridY: IN.gridY.value, thickness: +IN.thk.value, cover: +IN.cover.value, fc: +IN.fc.value, lap: +IN.lap.value, lapTable: IN.lapTable.value, callouts: IN.callouts.value, features: features, scheme: "ABCD" }, readGeom());
   }
@@ -4848,10 +4863,33 @@ html.print #sheet { background: #fff; }
       (model.COLS.length ? "<span><em>" + model.COLS.length + "</em> cols 400 × 400</span>" : "");
   }
   let rebuildTimer = null, lastGood = null;
+  // Inputs kept on this device (#34): an installed app reopens on what was typed, in the mode it was left in. Both
+  // modes' inputs are kept on every build (errors and all: it is work in progress). Off until startup has filled the
+  // inputs, so building the example does not overwrite what was kept. Private to this browser; nothing is sent anywhere.
+  const KEEP = "xstruc.inputs.v1";
+  let keepOn = false, keptEx = true;
+  function remember(example) {
+    if (example !== undefined) keptEx = example;
+    if (!keepOn) return;
+    const ex = Object.assign({}, modeExample); ex[mode] = keptEx;
+    try { localStorage.setItem(KEEP, JSON.stringify({ v: 1, mode: mode, floor: readFloor(), panel: readPanel(), faceMem: faceMem, example: ex })); } catch (e) { /* storage off or full: the app still works, it just forgets */ }
+  }
+  function recall() {
+    let k = null;
+    try { k = JSON.parse(localStorage.getItem(KEEP) || "null"); } catch (e) { k = null; }
+    if (!k || k.v !== 1 || !k.floor || !k.panel) return null;
+    try {
+      fillInputs(k.floor); fillPanel(k.panel);
+      ["NF", "FF"].forEach(f => { if (k.faceMem && k.faceMem[f]) faceMem[f] = Object.assign({}, k.faceMem[f]); });
+    } catch (e) { fillInputs(DEFAULT_CFG); fillPanel(PANEL_CFG); return null; }   // kept by an older version and no longer fits: start from the examples
+    if (k.example) { modeExample.floor = !!k.example.floor; modeExample.panel = !!k.example.panel; }
+    return k;
+  }
   function rebuild(cfg, opts) {
     opts = opts || {};
     let model;
     try { model = buildModel(cfg); } catch (err) { model = { errors: ["Could not build the model: " + err.message], warnings: [], cfg: cfg }; console.error(err); }
+    remember(!model.errors.length && !!opts.example);
     if (model.errors.length) { showErrors(model); $("inputs").open = true; return false; }
     showErrors(model);
     model.cfg.example = !!opts.example;
@@ -5027,15 +5065,66 @@ html.print #sheet { background: #fff; }
   };
 
   fillInputs(DEFAULT_CFG); fillPanel(PANEL_CFG);
+  const kept = recall();
   setPlan(false);
-  rebuild(DEFAULT_CFG, { example: true, camera: true });
-  if (/[?&]panel\b/.test(location.search) || /panel/.test(location.hash)) setMode("panel");
+  // a kept floor with an error in it: the scene shows the example and the inputs keep the work with its errors listed
+  if (!rebuild(kept ? readFloor() : DEFAULT_CFG, { example: kept ? modeExample.floor : true, camera: true })) { rebuild(DEFAULT_CFG, { example: true, camera: true }); rebuild(readFloor(), {}); }
+  if (/[?&]panel\b/.test(location.search) || /panel/.test(location.hash) || (kept && kept.mode === "panel" && !/[?&]floor\b/.test(location.search))) setMode("panel");
+  keepOn = true; remember();
+  addEventListener("pagehide", () => remember());
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") remember(); });
   requestAnimationFrame(frame);
   if (location.hash === "#site" || /[?&]site\b/.test(location.search)) setSite(true);
+  // ---- installed app (#34) ----
+  // Runs only where the page came with its app files: the GitHub Pages build adds the manifest link and sw.js. Install
+  // button (Chrome / Edge / Android prompt; how-to for iPhone, iPad and Mac Safari), the offline worker, the new-version
+  // bar and the offline chip. In the claude.ai artifact there is no manifest and none of this runs.
+  const app = { on: false, version: "", registration: null };
+  (function appShell() {
+    const man = document.querySelector('link[rel="manifest"]');
+    if (!man) return;
+    app.on = true;
+    const vm = document.querySelector('meta[name="xstruc-version"]'); app.version = vm ? vm.content : "";
+    const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    const btn = $("btnInstall"), tip = $("appTip"), upd = $("appUpdate"), off = $("offChip"), ua = navigator.userAgent;
+    const iOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    const macSafari = !iOS && /Macintosh/.test(ua) && /Version\/[\d.]+.*Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS/.test(ua);
+    let deferred = null;
+    const showTip = html => { $("appTipText").innerHTML = html; tip.hidden = false; $("btnAppTipOk").focus(); };
+    $("btnAppTipOk").onclick = () => { tip.hidden = true; };
+    addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferred = e; btn.hidden = standalone(); });
+    addEventListener("appinstalled", () => { deferred = null; btn.hidden = true; });
+    if (!standalone() && (iOS || macSafari)) btn.hidden = false;
+    btn.onclick = () => {
+      if (deferred) { const d = deferred; deferred = null; d.prompt(); d.userChoice.then(c => { if (c.outcome === "accepted") btn.hidden = true; }).catch(() => {}); return; }
+      if (iOS) showTip("To install on this iPhone or iPad: in Safari tap <b>Share</b> (the square with the arrow), then <b>Add to Home Screen</b>.");
+      else if (macSafari) showTip("To install on this Mac: in Safari choose <b>File › Add to Dock</b>.");
+      else showTip("Use your browser's menu: <b>Install X Struc</b> or <b>Add to Home screen</b>.");
+    };
+    const net = () => { off.hidden = navigator.onLine !== false; };
+    addEventListener("online", net); addEventListener("offline", net); net();
+    if (!("serviceWorker" in navigator)) return;
+    let waiting = null, wantReload = false;
+    const offer = w => { waiting = w; upd.hidden = false; };
+    $("btnAppReload").onclick = () => { wantReload = true; remember(); if (waiting) waiting.postMessage({ type: "skip-waiting" }); else location.reload(); };
+    $("btnAppLater").onclick = () => { upd.hidden = true; };
+    // reload only when asked: the first install also changes the controller and must not reload the page
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (wantReload) { wantReload = false; location.reload(); } });
+    navigator.serviceWorker.register("sw.js").then(reg => {
+      app.registration = reg;
+      if (reg.waiting && navigator.serviceWorker.controller) offer(reg.waiting);
+      reg.addEventListener("updatefound", () => { const w = reg.installing; if (w) w.addEventListener("statechange", () => { if (w.state === "installed" && navigator.serviceWorker.controller) offer(w); }); });
+      // an installed app can stay open for days: look for a new version when it comes back to the front, and hourly
+      const check = () => reg.update().catch(() => {});
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+      setInterval(check, 3600e3);
+    }).catch(err => console.warn("X Struc: offline copy not set up (" + err.message + ")"));
+  })();
+
   // test handle for scripts/smoke.js (headless Chromium cannot aim a tap at a 12 mm bar reliably)
   window.xstruc = { model: () => M, state: state, selectBar: id => { const b = M.bars.find(x => x.id === id); if (b) selectBar(b); return !!b; }, selectRun: id => { const r = M.runs.find(x => x.id === id); if (r) selectRun(r); return !!r; }, setSite: setSite,
     sheet: () => sheet, setSheet: setSheet, sheetXY: (x, y) => [sx(x), sy(y)], sheetScale: () => sv.s, drawnMarks: () => drawnMarks,
-    highlightMark: highlightMark, printPrep: printPrep, printing: () => printing, setMode: setMode, mode: () => mode, selectPiece: id => { const pc = (M.meshPieces || []).find(x => x.id === id); if (pc) selectPiece(pc); return !!pc; },
+    highlightMark: highlightMark, printPrep: printPrep, printing: () => printing, setMode: setMode, mode: () => mode, app: app, selectPiece: id => { const pc = (M.meshPieces || []).find(x => x.id === id); if (pc) selectPiece(pc); return !!pc; },
     selectInsert: id => { const q = (M.inserts || []).find(x => x.id === id); if (q) selectInsert(q); return !!q; },
     setPose: setPose, standing: standing, camKind: () => planMode ? (cam === orthoE ? "elevation" : "plan") : "persp", camPos: () => cam.position.toArray(), barWorld: id => { const b = M.bars.find(x => x.id === id); return b ? midPoint(b).toArray() : null; },
     pickAt: (cx, cy) => { const b = pick(cx, cy); return b ? b.id : null; }, layerOffset: id => built.layerObj[id].group.position.toArray(),

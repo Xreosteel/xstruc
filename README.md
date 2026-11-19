@@ -4,13 +4,18 @@
 
 **Live viewer:** https://xreosteel.github.io/xstruc/ (public, deployed from `main` by GitHub Actions) · claude.ai artifact: https://claude.ai/artifact/AyxtiYDBagzRjSgJ3sQgM8 (private; share from the page's Share menu)
 
+## Install it as an app
+
+Open https://xreosteel.github.io/xstruc/ and press **Install app** at the top (Chrome, Edge, Android), or in Safari on an iPhone / iPad tap **Share › Add to Home Screen** (on a Mac: **File › Add to Dock**). It gets its own icon and window, opens with no signal once it has been opened online, keeps what you typed on that device, and offers **Reload** when a new version is out.
+
 ## Run it
 
 Open `index.html` in a browser. Everything is in that one file; three.js loads from a CDN.
 
 ```
-npm test        # headless model check (scripts/check.js)
+npm test        # model, grammar, shapes, panel and app-build checks
 node scripts/check.js --marks   # also print the bar schedule
+node scripts/build-app.js _site # the installable app as GitHub Pages serves it
 ```
 
 ## How development works

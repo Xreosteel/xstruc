@@ -1,4 +1,5 @@
-# Deploys the viewer (index.html only) to GitHub Pages on every push to main, after the model checks pass.
+# Deploys the installable app to GitHub Pages on every push to main, after the checks pass (backlog #34):
+# scripts/build-app.js wraps index.html as a full page with its manifest, offline worker and icons.
 # Public URL: https://xreosteel.github.io/xstruc/
 name: Deploy viewer to GitHub Pages
 
@@ -37,8 +38,8 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-      - name: Stage the viewer
-        run: mkdir -p _site && cp index.html _site/index.html
+      - name: Build the app
+        run: node scripts/build-app.js _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
