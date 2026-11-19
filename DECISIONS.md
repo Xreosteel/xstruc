@@ -2,6 +2,14 @@
 
 Decisions Baji has made. Build to these; don't re-ask them. Newest first. A build run that needs a decision not listed here adds a question to the planning doc instead of guessing.
 
+## 2026-11-20
+
+- **Build the real application now** ("proper application development … start from the beginning … proper applications architecture"). Architecture v2 in the architecture doc's **v2 · Lean build** tab.
+- **Stack:** lean TypeScript: Next.js web app, the engine as a TypeScript package ported from the prototype, Supabase in Sydney (database, sign-in, files), Vercel hosting. The engine may move to Rust later only if speed demands it.
+- **Repository:** the same repo (Xreosteel/xstruc), restructured as a monorepo; the prototype stays live in `apps/prototype` until the app replaces it.
+- **First step:** the architecture doc and the foundation code.
+- **First users:** XREO's own office and site crews first, built for many companies from day one; billing when outside firms join.
+
 ## 2026-11-16
 
 - **Precast panels:** the viewer shows precast panels as well as floors, with a switch between them.

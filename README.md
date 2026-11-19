@@ -8,14 +8,26 @@
 
 Open https://xreosteel.github.io/xstruc/ and press **Install app** at the top (Chrome, Edge, Android), or in Safari on an iPhone / iPad tap **Share › Add to Home Screen** (on a Mac: **File › Add to Dock**). It gets its own icon and window, opens with no signal once it has been opened online, keeps what you typed on that device, and offers **Reload** when a new version is out.
 
+## The repo
+
+A pnpm + Turborepo monorepo (architecture v2: `docs/architecture.md`, `docs/adr/`):
+
+| Folder | What |
+|---|---|
+| `apps/web` | The application: Next.js on Vercel, Supabase in Sydney (sign-in, projects, floors and panels, versions, approval) |
+| `apps/prototype` | The single-page viewer and installable app above, live until the application replaces it |
+| `packages/engine` | The reinforcement engine (bars, mesh, marks, schedules, placing sheets, sections): one copy, used by both |
+| `supabase` | Database migrations (row-level security, approvals, audit log) and their tests |
+
 ## Run it
 
-Open `index.html` in a browser. Everything is in that one file; three.js loads from a CDN.
-
 ```
-npm test        # model, grammar, shapes, panel and app-build checks
-node scripts/check.js --marks   # also print the bar schedule
-node scripts/build-app.js _site # the installable app as GitHub Pages serves it
+corepack enable                  # once, for pnpm
+pnpm install
+pnpm test                        # every package: engine, prototype checks, web, database (PGlite)
+pnpm build                       # apps/prototype/dist/index.html and the web app
+pnpm --filter @xstruc/web dev    # the application on http://localhost:3000 (copy apps/web/.env.example to .env.local)
+node apps/prototype/scripts/check.js --marks   # print the example's bar schedule
 ```
 
 ## How development works
