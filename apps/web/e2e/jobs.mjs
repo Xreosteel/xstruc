@@ -1,0 +1,84 @@
+// Browser test of the no-sign-in app (projects kept on the device): run `pnpm --filter @xstruc/web build` first, then
+// `node e2e/jobs.mjs [outDir]`. Starts `next start` (accounts off), creates a project and a floor, builds it, edits an
+// input, reloads to check it was kept, checks the account screens send you home, and backs up / restores.
+import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync } from "node:fs";
+import { chromium } from "playwright";
+
+const out = process.argv[2] || "e2e-out";
+mkdirSync(out, { recursive: true });
+const port = 3500 + Math.floor(Math.random() * 300), base = "http://127.0.0.1:" + port;
+const env = { ...process.env, NEXT_TELEMETRY_DISABLED: "1" };
+delete env.NEXT_PUBLIC_ACCOUNTS;
+const server = spawn("npx", ["next", "start", "-p", String(port)], { cwd: new URL("..", import.meta.url).pathname, env, stdio: "ignore" });
+const fail = async msg => { console.error("e2e jobs: FAIL\n  " + msg); server.kill(); process.exit(1); };
+for (let i = 0; ; i++) { try { if ((await fetch(base + "/")).ok) break; } catch {} if (i > 60) await fail("next start did not come up"); await new Promise(r => setTimeout(r, 500)); }
+
+const browser = await chromium.launch({ args: ["--use-gl=swiftshader", "--enable-webgl", "--ignore-gpu-blocklist"] });
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 }, acceptDownloads: true });
+const page = await ctx.newPage();
+const errors = [];
+page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
+page.on("pageerror", e => errors.push(e.message));
+
+// straight in: no sign-in page
+await page.goto(base + "/");
+await page.waitForSelector("text=No projects on this device yet", { timeout: 15000 }).catch(() => fail("the home page should open on an empty project list, no sign-in"));
+if (!/Saved on this device/.test(await page.textContent("header"))) await fail("the header should say jobs are saved on this device");
+await page.fill("input[name=name]", "Lot 12 Salisbury");
+await page.fill("input[name=job]", "J-1042");
+await page.click("text=Create project");
+await page.click("text=Lot 12 Salisbury");
+await page.waitForURL(/\/job\/[^/]+$/);
+await page.fill("input[name=name]", "Level 1 floor");
+await page.click("button:has-text('Create')");
+await page.waitForURL(/\/job\/[^/]+\/[^/]+$/);
+const elUrl = page.url();
+await page.waitForFunction(() => window.xstrucViewer && window.xstrucViewer.data() && window.xstrucViewer.data().kind === "floor", null, { timeout: 20000 }).catch(() => fail("the new floor should build and draw on opening"));
+const stats1 = await page.textContent("[data-testid=run-stats]");
+console.log("built:", stats1.replace(/\s+/g, " ").slice(0, 80));
+if (!/1,498/.test(stats1)) await fail("the example floor should have 1,498 bars: " + stats1);
+await page.screenshot({ path: out + "/jobs-floor.png" });
+
+// change the thickness, build, reload: kept
+const t = await page.inputValue("[data-testid=inputs]");
+await page.fill("[data-testid=inputs]", t.replace('"thickness": 200', '"thickness": 250'));
+await page.click("button:has-text('Build')");
+await page.waitForFunction(() => document.querySelector("[data-testid=saved]").textContent === "Saved on this device");
+await page.waitForTimeout(700);
+await page.reload();
+await page.waitForFunction(() => window.xstrucViewer && window.xstrucViewer.data(), null, { timeout: 20000 });
+const kept = await page.inputValue("[data-testid=inputs]");
+if (!/"thickness": 250/.test(kept)) await fail("the edited thickness should be kept through a reload");
+await page.goto(base + "/");
+await page.waitForSelector("text=Lot 12 Salisbury");
+const list = await page.textContent("main");
+if (!/J-1042/.test(list) || !/1 floor/.test(list)) await fail("the project list should show the project with its floor: " + list.slice(0, 200));
+
+// account screens go home
+for (const p of ["/sign-in", "/projects", "/team"]) {
+  const r = await page.goto(base + p);
+  if (new URL(page.url()).pathname !== "/" || !r.ok()) await fail(p + " should send you to the projects, not " + page.url());
+}
+const api = await fetch(base + "/api/versions/x/approve", { method: "POST" });
+if (api.status !== 404) await fail("the approval route should be off with accounts off (" + api.status + ")");
+
+// backup, wipe, restore
+await page.waitForSelector("text=Lot 12 Salisbury");
+const [dl] = await Promise.all([page.waitForEvent("download"), page.click("button:has-text('Backup')")]);
+const file = out + "/jobs-backup.json";
+await dl.saveAs(file);
+const back = JSON.parse(readFileSync(file, "utf8"));
+if (back.app !== "X Struc" || back.projects.length !== 1 || back.projects[0].elements[0].inputs.thickness !== 250) await fail("the backup should hold the project and its edited floor");
+await page.evaluate(() => localStorage.clear());
+await page.reload();
+await page.waitForSelector("text=No projects on this device yet");
+await page.setInputFiles("[data-testid=restore-file]", file);
+await page.waitForSelector("text=Restored: 1 project(s) added");
+await page.goto(elUrl);
+await page.waitForFunction(() => window.xstrucViewer && window.xstrucViewer.data(), null, { timeout: 20000 }).catch(() => fail("the restored floor should open"));
+await page.screenshot({ path: out + "/jobs-restored.png" });
+
+if (errors.length) await fail("console errors: " + errors.join(" | "));
+await browser.close(); server.kill();
+console.log("e2e jobs: OK (no sign-in, project and floor kept on the device, account screens off, backup and restore)");

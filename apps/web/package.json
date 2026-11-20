@@ -10,7 +10,7 @@
     "start": "next start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "node e2e/demo.mjs"
+    "e2e": "node e2e/demo.mjs && node e2e/jobs.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

@@ -1,10 +1,13 @@
 import { redirect } from "next/navigation";
 import { configured } from "@/lib/env";
+import { ACCOUNTS } from "@/lib/mode";
+import { LocalHome } from "@/components/local/LocalHome";
 import { supabaseServer } from "@/lib/supabase/server";
 import { memberships } from "@/lib/org";
 import { createOrganisation } from "@/app/actions";
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  if (!ACCOUNTS) return <LocalHome />;   // no sign-in: the projects kept on this device
   if (!configured()) {
     return (
       <div className="card max-w-2xl">

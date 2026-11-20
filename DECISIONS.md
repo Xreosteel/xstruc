@@ -9,6 +9,7 @@ Decisions Baji has made. Build to these; don't re-ask them. Newest first. A buil
 - **Repository:** the same repo (Xreosteel/xstruc), restructured as a monorepo; the prototype stays live in `apps/prototype` until the app replaces it.
 - **First step:** the architecture doc and the foundation code.
 - **First users:** XREO's own office and site crews first, built for many companies from day one; billing when outside firms join.
+- **No sign-in for now** ("no need for sign in and such"): the web app opens straight to the projects, with no accounts, email links or organisations. **Jobs are saved on each device** (in the browser), with backup / restore files to keep a copy or move them; nothing is sent to the database. The accounts code (sign-in, organisations, roles, approvals, the Supabase project in Sydney) stays in the repo, switched off (`NEXT_PUBLIC_ACCOUNTS=1` turns it back on) until Baji wants shared jobs.
 
 ## 2026-11-16
 

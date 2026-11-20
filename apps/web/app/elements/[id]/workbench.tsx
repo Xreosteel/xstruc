@@ -4,8 +4,7 @@ import { useRouter } from "next/navigation";
 import { DEFAULT_CFG, PANEL_CFG, type ElementInput } from "@xstruc/engine";
 import { runEngine, type Run } from "@/lib/engine-run";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-import { ModelViewer } from "@/components/ModelViewer";
-import { Schedule } from "@/components/Schedule";
+import { RunResult } from "@/components/RunResult";
 
 export interface VersionRow {
   id: string; number: number; status: string; engine_version: string; output_hash: string;
@@ -57,7 +56,6 @@ export function Workbench({ element, versions, canWrite, canApprove }: {
     });
   }
 
-  const s = run?.summary;
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,420px)_1fr]">
       <section className="card grid content-start gap-3">
@@ -86,21 +84,7 @@ export function Workbench({ element, versions, canWrite, canApprove }: {
       </section>
       <section className="card grid content-start gap-3">
         {!run && <p className="text-muted">Press Build to run the engine on these inputs.</p>}
-        {run && s && (
-          <>
-            <div className="flex flex-wrap gap-6 font-mono">
-              <div><div className="label">Bars</div>{s.bars.toLocaleString("en-AU")}</div>
-              <div><div className="label">Marks</div>{s.marks}</div>
-              <div><div className="label">Steel kg</div>{s.kg.toLocaleString("en-AU")}</div>
-              {s.meshSheets > 0 && <div><div className="label">Mesh sheets</div>{s.meshSheets}</div>}
-              <div><div className="label">Engine</div>{run.engineVersion}</div>
-            </div>
-            {run.model.errors.length > 0 && <ul className="list-disc pl-5 text-sm text-accent">{run.model.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
-            {run.model.warnings.length > 0 && <details className="text-sm text-warn"><summary>{run.model.warnings.length} warning(s)</summary><ul className="list-disc pl-5">{run.model.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
-            {run.model.errors.length === 0 && <ModelViewer model={run.model} height={460} />}
-            <Schedule model={run.model} />
-          </>
-        )}
+        {run && <RunResult run={run} />}
       </section>
     </div>
   );

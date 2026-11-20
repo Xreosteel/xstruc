@@ -2,6 +2,20 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-20 · interactive session (5) · backlog #38b: no sign-in, jobs kept on each device
+
+**Done:** Baji: "no need for sign in and such please"; asked where jobs are saved without accounts, chose "on each device". The web app now opens straight to the projects, with no accounts.
+
+- **Device mode (default):** `lib/mode.ts` (`ACCOUNTS` = `NEXT_PUBLIC_ACCOUNTS=1` and Supabase keys; off otherwise), `lib/local-jobs.ts` (projects with floors / panels and their inputs in localStorage `xstruc.web.jobs.v1`; add / update / remove; backup text, a checked restore that adds projects and replaces one with the same id; damaged storage reads as empty), `components/useLocalJobs.ts` (reads after mount, writes on every change, follows other tabs, warns when the browser keeps nothing). Screens: `/` projects (new project with job number and site, Backup downloads a `.json`, Restore reads one), `/job/[id]` (floors and panels with their bars / kg, new one from the example, delete with a second press, no browser dialogs), `/job/[id]/[el]` (inputs as text kept half a second after typing, built on opening, Build, Back to the example, delete; `RunResult`: totals, errors, warnings, 3D, schedule, shared with the accounts workbench). Header: Projects, Demo, "Saved on this device". `proxy.ts` sends the account screens (`/sign-in`, `/auth`, `/projects`, `/elements`, `/team`) home and answers 404 on `/api/versions`. The accounts code is unchanged behind the switch.
+- **Fix:** `.card` / `.btn` / `.input` / `.label` / `table.sched` moved into `@layer components`; as unlayered CSS they overrode Tailwind's utilities, so the inputs box ignored `min-h-[…]` and showed two lines (the accounts workbench too).
+- **Launch:** `docs/launch.md` now starts with the Vercel import and **no settings**; the sign-in steps moved under "Later: accounts". `DECISIONS.md` records the decision; #38 restructured (38c is the import only; accounts items listed for later); `.env.example` gains `NEXT_PUBLIC_ACCOUNTS=0`.
+
+**Check:** `@xstruc/web: Tests 10 passed` (+4 device jobs) · `Tasks: 8 successful, 8 total` · `e2e demo: OK (floor and panel drawn, steps, bar card)` · `e2e jobs: OK (no sign-in, project and floor kept on the device, account screens off, backup and restore)` (new, in CI). Looked at the floor screen and the restored floor (250 thick, 5,473 kg).
+
+**Parked:** nothing for an engineer. Inputs are still text until #41 (input screens).
+
+**Next run:** if Baji has the Vercel address, check the live site (38c); then #41 (input screens), which matters more now that the app is the place to enter jobs, or #40b / #39c.
+
 ## 2026-11-20 · interactive session (4) · backlog #38a + #38b: the database is live, the app is ready for Vercel
 
 **Done:** Baji: "okay lets try to launch it and make it work into something"; chose a new Supabase project in Sydney and a Vercel import he does once.

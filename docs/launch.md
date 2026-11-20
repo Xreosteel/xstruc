@@ -1,5 +1,29 @@
 # Launching X Struc (backlog #38)
 
+Baji, 2026-11-20: **no sign-in for now; each device keeps its own jobs.** The web app opens straight to the projects
+on that device (kept in the browser, with Backup / Restore files to keep a copy or move them). It needs no database and
+no settings, so putting it online is one import on Vercel.
+
+## Put it online (Baji, once)
+
+1. vercel.com › Add New › Project › Import Git Repository › `Xreosteel/xstruc` (allow Vercel's GitHub app on the
+   Xreosteel org if asked).
+2. Root Directory: `apps/web`. Leave everything else as Vercel detects it (Next.js, pnpm). **No environment variables.**
+   (If any were added during an earlier import, they do nothing unless `NEXT_PUBLIC_ACCOUNTS=1` is also set.)
+3. Deploy. `apps/web/vercel.json` puts the server in Sydney (`syd1`). Every push to `main` deploys again.
+4. Open the address Vercel gives (e.g. `https://xstruc.vercel.app`): Projects, New project, New floor or panel.
+
+Jobs live in the browser that made them: another computer, another browser or a cleared browser starts empty. Use
+**Backup** (a `.json` file) to keep a copy, and **Restore** on the other device to carry the jobs over.
+
+---
+
+# Later: accounts (sign-in, organisations, shared jobs)
+
+Everything below is built and switched off. Turn it on with `NEXT_PUBLIC_ACCOUNTS=1` plus the Supabase settings in
+Vercel, then the Supabase sign-in addresses. Note: a free Supabase project pauses after a week without use; restore it
+from the dashboard before switching accounts on.
+
 ## Database: done (2026-11-20)
 
 Supabase project **xstruc** in Xreosteel's Org, region **ap-southeast-2 (Sydney)**:
@@ -19,12 +43,12 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_s7EB40id3h86P_KsxTcOhA_vCcIQ
 The server-only `SUPABASE_SERVICE_ROLE_KEY` is the project's **secret** key (Supabase dashboard › Project Settings ›
 API Keys). It goes only into Vercel's environment variables, never into the repo or a chat.
 
-## Web app on Vercel (Baji, once)
+## Web app on Vercel with accounts
 
 1. vercel.com › Add New › Project › Import Git Repository › `Xreosteel/xstruc` (allow Vercel's GitHub app on the
    Xreosteel org if asked).
 2. Root Directory: `apps/web` (Vercel finds Next.js and pnpm; leave the build settings as detected).
-3. Environment Variables: the two public settings above, plus `SUPABASE_SERVICE_ROLE_KEY` = the secret key.
+3. Environment Variables: `NEXT_PUBLIC_ACCOUNTS=1`, the two public settings above, plus `SUPABASE_SERVICE_ROLE_KEY` = the secret key.
 4. Deploy. `apps/web/vercel.json` puts the server functions in Sydney (`syd1`).
 5. Copy the production address (e.g. `https://xstruc.vercel.app`).
 

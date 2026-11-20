@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
-import { configured } from "@/lib/env";
+import { ACCOUNTS } from "@/lib/mode";
 import { supabaseServer } from "@/lib/supabase/server";
 import { signOut } from "@/app/actions";
 
@@ -13,7 +13,7 @@ export const viewport: Viewport = { themeColor: "#11151a", width: "device-width"
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   let email: string | null = null;
-  if (configured()) {
+  if (ACCOUNTS) {
     const { data } = await (await supabaseServer()).auth.getUser();
     email = data.user?.email ?? null;
   }
@@ -23,11 +23,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <header className="flex items-center gap-4 border-b border-line px-5 py-3">
           <Link href="/" className="text-lg font-semibold tracking-wide">X STRUC</Link>
           <nav className="flex gap-4 text-sm text-muted">
+            {!ACCOUNTS && <Link href="/">Projects</Link>}
             {email && <Link href="/projects">Projects</Link>}
             {email && <Link href="/team">Team</Link>}
             <Link href="/demo">Demo</Link>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-muted">
+            {!ACCOUNTS && <span>Saved on this device</span>}
             {email && <span>{email}</span>}
             {email && <form action={signOut}><button className="btn" type="submit">Sign out</button></form>}
           </div>
