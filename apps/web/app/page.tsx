@@ -10,6 +10,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
       <div className="card max-w-2xl">
         <h1 className="text-xl font-semibold">X Struc is not connected to its database yet</h1>
         <p className="mt-3 text-muted">Set <code>NEXT_PUBLIC_SUPABASE_URL</code> and <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> (see <code>apps/web/.env.example</code>) for the Supabase project in Sydney, apply the migrations in <code>supabase/migrations</code>, and reload.</p>
+        <p className="mt-3">Meanwhile the examples are in the <a className="underline" href="/demo">3D demo</a>.</p>
       </div>
     );
   }

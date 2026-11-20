@@ -1,0 +1,26 @@
+{
+  "name": "@xstruc/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "X Struc 3D viewer: a three.js scene for an engine model (bars by layer in fixing order, concrete, picking). Framework-free; apps/web wraps it in React.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@xstruc/engine": "workspace:*",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.187.0",
+    "typescript": "5.9.3",
+    "@types/node": "22.20.5"
+  }
+}

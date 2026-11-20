@@ -4,7 +4,7 @@ import { SUPABASE_KEY, SUPABASE_URL, configured } from "@/lib/env";
 
 // Runs before every page (Next.js 16 "proxy", formerly middleware): refreshes the Supabase session cookie and sends
 // signed-out visitors to the sign-in page. Data access is still decided by row-level security, not here.
-const OPEN = ["/sign-in", "/auth"];
+const OPEN = ["/sign-in", "/auth", "/demo"];   // /demo: the examples in 3D, no account needed
 
 export async function proxy(request: NextRequest) {
   if (!configured()) return NextResponse.next();   // no Supabase yet: the home page explains the setup

@@ -35,6 +35,12 @@ jobs:
         run: pnpm build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+      - name: Browser test of the web app's 3D demo (headless Chromium, software WebGL)
+        run: |
+          pnpm --filter @xstruc/web exec playwright install --with-deps chromium
+          pnpm --filter @xstruc/web e2e
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
 
   deploy:
     needs: test

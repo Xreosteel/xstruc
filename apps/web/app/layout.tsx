@@ -24,6 +24,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <Link href="/" className="text-lg font-semibold tracking-wide">X STRUC</Link>
           <nav className="flex gap-4 text-sm text-muted">
             {email && <Link href="/projects">Projects</Link>}
+            <Link href="/demo">Demo</Link>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-muted">
             {email && <span>{email}</span>}

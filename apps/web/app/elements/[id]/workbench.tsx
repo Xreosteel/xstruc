@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { DEFAULT_CFG, PANEL_CFG, type ElementInput } from "@xstruc/engine";
 import { runEngine, type Run } from "@/lib/engine-run";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { ModelViewer } from "@/components/ModelViewer";
+import { Schedule } from "@/components/Schedule";
 
 export interface VersionRow {
   id: string; number: number; status: string; engine_version: string; output_hash: string;
@@ -83,7 +85,7 @@ export function Workbench({ element, versions, canWrite, canApprove }: {
         </div>
       </section>
       <section className="card grid content-start gap-3">
-        {!run && <p className="text-muted">Press Build to run the engine on these inputs. (The 3D viewer arrives in Phase 1.)</p>}
+        {!run && <p className="text-muted">Press Build to run the engine on these inputs.</p>}
         {run && s && (
           <>
             <div className="flex flex-wrap gap-6 font-mono">
@@ -95,16 +97,8 @@ export function Workbench({ element, versions, canWrite, canApprove }: {
             </div>
             {run.model.errors.length > 0 && <ul className="list-disc pl-5 text-sm text-accent">{run.model.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
             {run.model.warnings.length > 0 && <details className="text-sm text-warn"><summary>{run.model.warnings.length} warning(s)</summary><ul className="list-disc pl-5">{run.model.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
-            <div className="overflow-x-auto">
-              <table className="sched">
-                <thead><tr><th>Mark</th><th>Size</th><th>Shape</th><th>Dims</th><th>Cut length</th><th>Qty</th><th>Layer</th><th>kg</th></tr></thead>
-                <tbody>
-                  {run.model.marks.map(m => (
-                    <tr key={m.mark}><td>{m.mark}</td><td>{m.type === "N" || m.type === "R" ? m.type + m.size : String(m.type)}</td><td>{m.code}</td><td>{m.dimStr ?? ""}</td><td>{Math.round(m.len).toLocaleString("en-AU")}</td><td>{m.qty}</td><td>{m.layer}</td><td>{Math.round(m.kg).toLocaleString("en-AU")}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {run.model.errors.length === 0 && <ModelViewer model={run.model} height={460} />}
+            <Schedule model={run.model} />
           </>
         )}
       </section>
