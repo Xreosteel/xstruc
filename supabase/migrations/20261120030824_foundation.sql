@@ -269,6 +269,9 @@ create policy "owners and admins read the audit log" on public.audit_log for sel
 
 -- ---------------------------------------------------------------- grants (explicit; anon gets nothing)
 revoke all on all tables in schema public from anon;
+-- Supabase's default privileges give authenticated every right on new tables (TRUNCATE included, which row-level
+-- security does not cover): take them back and grant exactly what the app needs
+revoke all on all tables in schema public from authenticated;
 revoke all on all functions in schema public from anon, public;
 grant select, insert, update, delete on public.organisations, public.members, public.projects, public.elements,
   public.model_versions, public.drawings to authenticated;
