@@ -5,11 +5,14 @@
   "description": "The single-page X Struc viewer and installable app, kept live (GitHub Pages, the claude.ai artifact) until apps/web replaces it. Its engine is inlined from @xstruc/engine at build.",
   "scripts": {
     "build": "node scripts/build.js",
-    "test": "node scripts/check.js && node scripts/test-grammar.js && node scripts/test-shapes.js && node scripts/test-panel.js && node scripts/test-app.js",
+    "test": "node scripts/check.js && node scripts/test-grammar.js && node scripts/test-shapes.js && node scripts/test-panel.js && node scripts/test-app.js && node scripts/test-bundle.js",
     "smoke": "node scripts/smoke.js",
     "build-app": "node scripts/build-app.js"
   },
   "dependencies": {
     "@xstruc/engine": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

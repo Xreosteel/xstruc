@@ -6,14 +6,17 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
-      "default": "./src/index.js"
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
     }
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "golden:update": "UPDATE_GOLDEN=1 node --test test/golden.test.js"
   },
   "devDependencies": {
     "typescript": "5.9.3"

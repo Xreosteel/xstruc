@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "noEmit": true, "allowJs": false },
-  "include": ["src/index.d.ts", "test/types-check.ts"]
+  "compilerOptions": { "noEmit": true, "allowImportingTsExtensions": true, "erasableSyntaxOnly": true, "lib": ["ES2022"], "types": [] },
+  "include": ["src/**/*.ts", "test/types-check.ts"]
 }

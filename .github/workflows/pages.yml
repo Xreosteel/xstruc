@@ -63,7 +63,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build the prototype app (engine inlined from packages/engine)
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Build the prototype app (engine bundled from packages/engine with esbuild)
         run: node apps/prototype/scripts/build-app.js _site
       - uses: actions/upload-pages-artifact@v3
         with:
