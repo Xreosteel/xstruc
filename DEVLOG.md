@@ -2,6 +2,22 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-20 · interactive session (2) · backlog #39a + #39b engine in modules, golden set; #39c started
+
+**Done:** Baji: "okay do the next step" (the engine into proper TypeScript modules, from the architecture's porting plan). #39 split in place into 39a golden set, 39b modules and the prototype bundle, 39c strict types module by module, 39d input contracts; 39a and 39b done, 39c started.
+
+- **Golden set first** (`packages/engine/test/golden/fixtures.js`, `golden.json`, `test/golden.test.js`): floor example, floor with a top SL82 mesh, floor with no features, 250 thick; panel example, NF on the bed, bars on both faces (220 thick), too thin (pins the error), stock mesh, with a door. Each pins the canonical output, the full model (bars, runs, marks, chairs, errors, warnings), every layer's placing sheet plus the finished one, and two sections (E–W and N–S), by SHA-256 over a stable JSON. Changing the chair pitch by 1 mm fails 3 fixtures. `pnpm --filter @xstruc/engine golden:update` re-pins after a deliberate change (with an `ENGINE_VERSION` bump).
+- **Modules.** A one-off script (TypeScript compiler API) split `engine.js` into `constants`, `bending`, `laps`, `setout`, `defaults`, `grammar`, `geometry`, `floor`, `panel`, `mesh`, `cover`, `inserts`, `sheet`, `sheet-annotate`, `sheet-panel`, `print`, `section`: each top-level statement moved with its comments, dedented (multi-line template literals untouched), the imports computed from the names each module uses, an export list per module. `types.ts` holds the public interfaces; `index.ts` re-exports every module and declares the typed entry points (`buildModel`, `buildPanel`, `DEFAULT_CFG`, `PANEL_CFG`, cast once from the untyped modules), `ENGINE_VERSION`, `canonicalOutput`. The golden set passed unchanged on the first green run. The package exports `src/index.ts`; Node 22 runs it directly (type stripping; `.ts` import extensions, `erasableSyntaxOnly`); the engine tests now check purity across all modules and determinism in a worker thread.
+- **Strict TypeScript so far:** `constants` (`LayerDef`), `bending` (`BendGeom`, `Dim`, `ShapeClass`; `esc` without an untyped index), `setout` (`GridLine`, `GridRef`, `Axis`, `LapZone`, `GridSetout`), `grammar` (`Callout`, `CalloutOptions`), `print`. The other modules carry `// @ts-nocheck` until converted (39c lists the order).
+- **Prototype.** `scripts/build.js` bundles `packages/engine/src/index.ts` with esbuild (IIFE `XStrucEngine`, ES2020) and puts its 90 names in the page's scope, where the inline engine used to be; the page went from 477 KB to 444 KB. New `scripts/test-bundle.js` (in the prototype's tests) checks the bundled engine's example floor and panel against the golden hashes and that every name the viewer uses is there. The Pages deploy job installs dependencies now (esbuild).
+- **Web app** imports the TypeScript sources (`allowImportingTsExtensions`); its tests, type check and `next build` pass.
+
+**Check:** `@xstruc/engine: # pass 17` (6 engine + 11 golden) · `check: OK` · `grammar: OK (90 cases)` · `shapes: OK (126 assertions)` · `panel: OK (85 bars + 1 mesh sheet on the example; 14 stock pieces checked; elevation sheet: 4 symbols, 4 table rows)` · `app: OK` · `bundle: OK (90 engine names in the page; example floor and panel match the golden set, engine 1.0.0)` · `@xstruc/web: Tests 3 passed` · `@xstruc/db: # pass 10` · `Tasks: 6 successful, 6 total` · `smoke: OK` (full page run on the bundled engine) · `smoke-app: OK (installable, inputs kept, offline floor + panel, update)`
+
+**Parked:** nothing new; #38 (go live) still waits on Baji's accounts (architecture doc §13).
+
+**Next run:** #39c (strict types, next `defaults`, `cover`, `inserts`, `laps`) or, if Baji prefers to see the app grow first, #40 (the viewer into `packages/viewer` and onto the element screen).
+
 ## 2026-11-20 · interactive session · backlog #35–#37 application foundation (architecture v2)
 
 **Done:** Baji asked for "proper application development … start from the beginning, and develop proper applications architecture" and chose, from four questions: lean TypeScript (Next.js, the engine as a TypeScript package, Supabase in Sydney, Vercel), the same repo restructured, the architecture doc plus foundation code, and XREO first on a system built for many companies (DECISIONS.md 2026-11-20).
