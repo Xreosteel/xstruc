@@ -1,13 +1,14 @@
-// Package-level tests for @xstruc/engine: it loads as an ES module, builds the examples, is deterministic, keeps to
-// its no-clock / no-randomness rule and its typed API compiles. The engine's own invariants are checked by the
+// Package-level tests for @xstruc/engine: it loads as TypeScript modules, builds the examples, is deterministic,
+// keeps to its no-clock / no-randomness rule and its typed API compiles. test/golden.test.js pins the full output. The engine's own invariants are checked by the
 // prototype's suite (apps/prototype/scripts/check.js and the rest), which runs the same source.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import vm from "node:vm";
-import * as E from "../src/index.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { Worker } from "node:worker_threads";
+import * as E from "../src/index.ts";
 
-const src = readFileSync(new URL("../src/engine.js", import.meta.url), "utf8");
+const SRC = new URL("../src/", import.meta.url);
+const src = readdirSync(SRC).filter(f => f.endsWith(".ts")).map(f => readFileSync(new URL(f, SRC), "utf8")).join("\n");
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 test("builds the example floor and panel", () => {
@@ -35,18 +36,16 @@ test("deterministic: the same inputs give the same canonical output", () => {
   }
 });
 
-test("deterministic across separate realms (fresh globals, as in a Web Worker or on the server)", () => {
-  const block = src.slice(src.indexOf("  // === MODEL START ==="), src.indexOf("\nexport {"));
-  const ctx = { out: null };
-  vm.runInNewContext(block + "\n;out = buildModel(DEFAULT_CFG);", ctx);
-  const here = E.buildModel(E.DEFAULT_CFG);
-  assert.equal(ctx.out.marks.length, here.marks.length);
-  assert.equal(JSON.stringify(ctx.out.marks), JSON.stringify(here.marks));
+test("deterministic across separate realms (a worker thread: fresh globals, as in a Web Worker or on the server)", async () => {
+  const code = 'import { parentPort } from "node:worker_threads"; import * as E from ' + JSON.stringify(new URL("../src/index.ts", import.meta.url).href) +
+    '; parentPort.postMessage([E.canonicalOutput(E.buildModel(E.DEFAULT_CFG)), E.canonicalOutput(E.buildModel(E.PANEL_CFG))]);';
+  const there = await new Promise((ok, no) => { const w = new Worker(new URL("data:text/javascript," + encodeURIComponent(code))); w.once("message", ok); w.once("error", no); });
+  assert.deepEqual(there, [E.canonicalOutput(E.buildModel(E.DEFAULT_CFG)), E.canonicalOutput(E.buildModel(E.PANEL_CFG))]);
 });
 
 test("keeps its rules: no clock, no randomness, no DOM, no three.js, no network", () => {
   for (const bad of [/Math\.random/, /new Date\b/, /Date\.now/, /\bdocument\./, /\bwindow\./, /\bTHREE\./, /\bfetch\(/, /XMLHttpRequest/, /\brequire\(/]) {
-    assert.ok(!bad.test(src), "engine.js must not use " + bad);
+    assert.ok(!bad.test(src), "the engine must not use " + bad);
   }
   assert.ok(!/toLocale\w*\((?!"en-AU")/.test(src), "any locale formatting is pinned to en-AU");
 });

@@ -1,0 +1,118 @@
+{
+  "engine": "1.0.0",
+  "note": "Pinned engine output; see test/golden/fixtures.js",
+  "fixtures": {
+    "floor-example": {
+      "bars": 1498,
+      "marks": 81,
+      "kg": 5440,
+      "errors": [],
+      "warnings": 7,
+      "canonical": "6d54567d21c36355df275c024ab44ad66f876c162e60d6a3f4037d616c00bfbe",
+      "model": "ab87b57af917a0590d74ea1af1d987bb04a69756f60148e4c7f099123be37a29",
+      "sheets": "12a9d07333dea2567ed7f32b826c99721cae786fc9f40f50feb626d580ba94b2",
+      "sections": "f7ee90cab1dbef834a0af8ce9fd1b42dd59cc30fcdc2520c2c99d281cb3fcbc2"
+    },
+    "floor-top-mesh": {
+      "bars": 932,
+      "marks": 80,
+      "kg": 4201,
+      "errors": [],
+      "warnings": 9,
+      "canonical": "9133b86871c0b755c047d9ff70a0bdd2e6d8ce2db7dafae6324086123223f9eb",
+      "model": "1113fa597f4fe956d6abf2c001dd8157a4aae37b20577dcef2f94d20dca2f5db",
+      "sheets": "9dce12a4c8ec6257f28dfb95ffa759078acb89e4cfe115c2e69b19b441e0e8df",
+      "sections": "2b4ac3f481de9bf6d8ead89800e450b41989ff08464352237c0998f770aa34c1"
+    },
+    "floor-no-features": {
+      "bars": 392,
+      "marks": 5,
+      "kg": 3407,
+      "errors": [],
+      "warnings": 1,
+      "canonical": "6bf78f6d9c76443437a1f42e93f63488776675229d3bd1eccbf5751e80890ad5",
+      "model": "85e946649f8f59376ce328eb1f00c2ea0b6631eee4dfee9e672e63ecf8cd93ec",
+      "sheets": "9f518a89a6fbc64827350e521205c3b45ec2d7bca5828505dd513e2b41c818c9",
+      "sections": "575374d294997c358f09d1e6cbc44929d17c4a272e4bdd7a0a6d61c8718f76e7"
+    },
+    "floor-250-thick": {
+      "bars": 1497,
+      "marks": 81,
+      "kg": 5443,
+      "errors": [],
+      "warnings": 6,
+      "canonical": "c972d223ec47d67fc9cf902073beb473cf5aba233aad905ad0b5c56d8ebd852a",
+      "model": "136bfb1fbfdd2458374d37cf42ec0bac2a87d149e91ad9aa0003d1a5b2f2dbc8",
+      "sheets": "5e0f8f7657f16f2f9434f95e9bb4f67af71c6fa1f53bc6585ce39115e6341a97",
+      "sections": "b47d1938b0cc6655597f486da4dbc7773a7a06c71eff6ab63b6d8c0dd5bd9478"
+    },
+    "panel-example": {
+      "bars": 85,
+      "marks": 13,
+      "kg": 282,
+      "errors": [],
+      "warnings": 0,
+      "canonical": "a55a2669c87f7b4c8ed266f2d18bb4b96375b93330b2000f98559bb871d0f34c",
+      "model": "21cd724c2875174c06ae444c645de2f317bf86765813edb496de2a65deca207e",
+      "sheets": "b70ae52c81afd5464afe6e9cb71285d2cc40344378835dd360083d3b97a021b1",
+      "sections": "e34dad927a84c870dd93d43c5c029509ccd1b8758dd2889dcdb2140cde733870"
+    },
+    "panel-nf-on-bed": {
+      "bars": 85,
+      "marks": 13,
+      "kg": 282,
+      "errors": [],
+      "warnings": 0,
+      "canonical": "f4e8f58504f8fffda27bf62daa2ca9d88269db9e4e28c10e22829a0458bd3ac8",
+      "model": "618f332cc1c26ac5cf838be3c55b9891f593aac14319a11c1a447c8bc8123105",
+      "sheets": "7cf6267f715249e4c4d9adbc2cb61a5acaa288e8ded0b8214ac189190ae83862",
+      "sections": "748d97cff8c14560a910bb8e1b54aa762c02c3e18a4cdefbef168fb7198a9603"
+    },
+    "panel-bars-both-faces": {
+      "bars": 144,
+      "marks": 12,
+      "kg": 366,
+      "errors": [],
+      "warnings": 0,
+      "canonical": "f4d8b1f6eb665ba616ee1fb0f310418f859c56f1821da763d63ae033d495afc5",
+      "model": "302d83b9c8796aacd405cf5da77cb9024d15fc000865c5946e1cae86c852e797",
+      "sheets": "2c45391c62c55ada4b5987264eec47a3a3b578179606a946ed053229eb6beaef",
+      "sections": "0204023440f8bf7fb9791782bed067cf6488c7e718d2dc084c1252f6769cb440"
+    },
+    "panel-too-thin-error": {
+      "bars": 0,
+      "marks": 0,
+      "kg": 0,
+      "errors": [
+        "Panel too thin for this steel: cover, both faces and their edge bars take 196 of the 200 thickness, leaving under 10 between the faces. Thicken the panel or lighten a face."
+      ],
+      "warnings": 0,
+      "canonical": "e71d7bdcff205f0792571c4fe3e45163bf82960e2e829f62bedefc0b8f3bdb69",
+      "model": "1911a129abb0571a174a204d9d265fee20f14df6b76c02c65b7f81b71db00e02",
+      "sheets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sections": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "panel-stock-mesh": {
+      "bars": 85,
+      "marks": 16,
+      "kg": 294,
+      "errors": [],
+      "warnings": 1,
+      "canonical": "bf84ced0b827b8a65f7c8720bf30566cd067732ddf277b5ec20c6e4e27835b1f",
+      "model": "ae2fdba449e3e7f13310746e30c90cc5b1c7b8c45aa630df613dd92440257dea",
+      "sheets": "5e576349b884a6c79e88d28508c634a1d2fccf3db559ba75b62795c0133736aa",
+      "sections": "199ee971b66078b723cf2cc1e1b8079fc40c60b235f4ca3cab7838cae9715f0f"
+    },
+    "panel-with-door": {
+      "bars": 108,
+      "marks": 20,
+      "kg": 277,
+      "errors": [],
+      "warnings": 3,
+      "canonical": "5167ac6648c4d6c92a1a807a03767bfc6ef481e4b150c140be17f97a6fc9a57c",
+      "model": "32f4f439554a198c92291641d168dd385727544d01e660b9389b641b919b86c3",
+      "sheets": "8520db1cfef76b816a19ada7e261d916cf7f3ae849c6512d1ab35a7e3fb82132",
+      "sections": "3be829c06bfce82d078b01ce5cfaabc296428f0b67233a8669a5edb14f5d49c0"
+    }
+  }
+}

@@ -1,5 +1,5 @@
 // Compiled by `tsc --noEmit` in the package's typecheck script: the public API as a TypeScript caller sees it.
-import { buildModel, canonicalOutput, DEFAULT_CFG, PANEL_CFG, ENGINE_VERSION, type Model, type PanelInput } from "../src/index.js";
+import { buildModel, canonicalOutput, DEFAULT_CFG, PANEL_CFG, ENGINE_VERSION, type Model, type PanelInput } from "../src/index.ts";
 
 const floor: Model = buildModel(DEFAULT_CFG);
 const panelCfg: PanelInput = { ...PANEL_CFG, W: 5400 };
