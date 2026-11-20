@@ -2,6 +2,19 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-20 · interactive session (4) · backlog #38a + #38b: the database is live, the app is ready for Vercel
+
+**Done:** Baji: "okay lets try to launch it and make it work into something"; chose a new Supabase project in Sydney and a Vercel import he does once.
+
+- **Database (38a):** Supabase project `xstruc` (ap-southeast-2, `https://fpigjtyjmsfmxawytmfe.supabase.co`), created and migrated through the Supabase connector. The repo's migration files are renamed to the applied versions (`20261120030824_foundation`, `20261120030903_function_grants`). The advisor found two things, both fixed in the migrations: Supabase's default privileges give `authenticated` every table right (TRUNCATE included, which row-level security does not cover) → `revoke all` before the grants; the trigger and helper functions were callable by anyone → `function_grants` revokes execute and grants only the six the policies and the app call. Three notes remain, intended (`create_organisation`, `has_role`, `is_member`).
+- **Ready to deploy (38b):** `apps/web/vercel.json` (Next.js, functions in Sydney), `engines.node` 22.x, `docs/launch.md` (Vercel import, settings, Supabase URL configuration, the any-device email template, SMTP and Microsoft 365 later, first use). **Team page** (`/team`, in the header): members with their emails; owners and admins add a colleague by the email they signed in with (looked up with the service role, the membership row written as the signed-in user so row-level security decides: admins cannot make owners), change a role, remove; the home page tells someone without an organisation not to start a second XREO. **Sign-in:** `/auth/callback` accepts both the default `?code=` link and a `?token_hash=` link (works in any browser once the email template is changed); failures go back to the sign-in page with a plain reason (other browser, expired, rate limit); the Microsoft 365 button shows only with `NEXT_PUBLIC_MICROSOFT_SIGN_IN=1`.
+
+**Check:** `@xstruc/db: # pass 10` (against the renamed migrations) · `@xstruc/web: Tests 6 passed` (+ team helpers) · `Tasks: 8 successful, 8 total` · `next build` ✓ (`/team` dynamic).
+
+**Parked:** nothing for an engineer. Baji's steps (38c) are in `docs/launch.md`.
+
+**Next run:** if 38c is done, 38e (keep an owner) then 38d; otherwise #40b or #39c.
+
 ## 2026-11-20 · interactive session (3b) · backlog #40b started: grids and run tags in the app's 3D view
 
 **Done:** grid lines (dashed, on the slab top, 1,000 past the slab and balconies) with a bubble at each end, and on a fixing step the run tags (label in a box edged in the layer colour, the drawing callout as its tooltip) on each run's distribution line, which is drawn in the layer colour; Z-bar / L-bar / trimmer / extra runs tag at their anchors. `sceneData` gives `grids` and `tags`; the viewer draws labels with three's `CSS2DRenderer` and removes them on every redraw; `setTags(on)` and a "Tags on each step" switch in `ModelViewer`. No tags on the finished view (48 on the example would overprint; declutter is #11 / #40b).

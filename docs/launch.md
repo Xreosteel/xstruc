@@ -36,9 +36,21 @@ Supabase dashboard › Authentication › URL Configuration:
 - Redirect URLs: `https://<that address>/auth/callback` and `https://*-xreosteel.vercel.app/auth/callback` (previews;
   use the team slug Vercel shows), plus `http://localhost:3000/auth/callback` for local work.
 
-Email links then work. Supabase's built-in email sender is rate-limited (a few emails an hour), enough for a pilot; set
+Email links then work, opened in the browser that asked for them.
+
+Recommended, so a link asked for on the office PC also opens on a phone: Supabase › Authentication › Emails ›
+**Magic Link** template, set the link to
+
+```
+<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email">Sign in to X Struc</a>
+```
+
+(and the same with `type=signup` in the **Confirm signup** template). `/auth/callback` accepts both kinds of link.
+
+Supabase's built-in email sender is rate-limited (a few emails an hour), enough for a pilot; set
 up SMTP (e.g. Microsoft 365) before inviting many people. Microsoft 365 sign-in needs an Azure app registration that
-an XREO Microsoft 365 admin approves (Supabase › Authentication › Providers › Azure).
+an XREO Microsoft 365 admin approves (Supabase › Authentication › Providers › Azure); then set `NEXT_PUBLIC_MICROSOFT_SIGN_IN=1` in Vercel to show the
+button.
 
 ## First use
 

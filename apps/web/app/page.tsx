@@ -23,7 +23,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
   return (
     <div className="card max-w-xl">
       <h1 className="text-xl font-semibold">Start your organisation</h1>
-      <p className="mt-2 text-muted">You are not in an organisation yet. Start one (you become its owner) or ask an owner to add you.</p>
+      <p className="mt-2 text-muted">You are not in an organisation yet. If you work at a company already using X Struc (XREO, for example), do not start a new one: send the email you signed in with to its owner or admin, who adds you on their Team page, then reload this page. Otherwise start your organisation here; you become its owner.</p>
       {error && <p className="mt-3 text-accent">{error}</p>}
       <form action={createOrganisation} className="mt-4 grid gap-3">
         <label><span className="label">Name</span><input className="input" name="name" placeholder="XREO" required /></label>
