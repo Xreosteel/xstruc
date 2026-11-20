@@ -38,6 +38,10 @@ await page.screenshot({ path: out + "/demo-floor.png" });
 await page.click("[aria-label='Next step']"); await page.click("[aria-label='Next step']");
 const step2 = await page.textContent("[data-testid=step-label]");
 if (!/^Step 2 of \d+ · Layer A/.test(step2)) await fail("Next twice should show step 2, layer A: " + step2);
+await page.waitForTimeout(300);
+const marks = await page.evaluate(() => ({ grids: document.querySelectorAll(".xs-grid").length, tags: [...document.querySelectorAll(".xs-tag")].map(t => t.textContent) }));
+console.log("step 2 labels:", JSON.stringify({ grids: marks.grids, tags: marks.tags.slice(0, 4), n: marks.tags.length }));
+if (marks.grids !== 14 || !marks.tags.some(t => /N16-200/.test(t))) await fail("step 2 should show 14 grid bubbles and layer A's tags");
 await page.screenshot({ path: out + "/demo-floor-step2.png" });
 await page.click("text=All");
 

@@ -2,6 +2,14 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-20 · interactive session (3b) · backlog #40b started: grids and run tags in the app's 3D view
+
+**Done:** grid lines (dashed, on the slab top, 1,000 past the slab and balconies) with a bubble at each end, and on a fixing step the run tags (label in a box edged in the layer colour, the drawing callout as its tooltip) on each run's distribution line, which is drawn in the layer colour; Z-bar / L-bar / trimmer / extra runs tag at their anchors. `sceneData` gives `grids` and `tags`; the viewer draws labels with three's `CSS2DRenderer` and removes them on every redraw; `setTags(on)` and a "Tags on each step" switch in `ModelViewer`. No tags on the finished view (48 on the example would overprint; declutter is #11 / #40b).
+
+**Check:** `@xstruc/viewer: # pass 5` (+ grids and tags) · `Tasks: 8 successful, 8 total` · `e2e demo: OK` with step 2 showing 14 grid bubbles and layer A's 8 tags ("48 N16-200 · A", "Z-BARS N16-200 · A", …). Looked at the step 2 screenshot.
+
+**Next run:** the rest of #40b (dimension strings, the stair and nib concrete, section cut, placing sheet, site mode) or #39c.
+
 ## 2026-11-20 · interactive session (3) · backlog #40a the 3D view in the new app
 
 **Done:** Baji: "more do more do more do more". Took the visible next step: the 3D viewer as its own package and on the app's screens. #40 split into 40a (this) and 40b (parity with the prototype's viewer).

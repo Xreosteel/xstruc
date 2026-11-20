@@ -11,8 +11,14 @@ export interface Segment { a: V3; b: V3; r: number; bar: number }   // r: bar ra
 export interface LayerData { id: string; name: string; color: string; segments: Segment[] }
 /** A prism: a plan polygon (model mm, with holes) between two levels (model mm). */
 export interface Prism { kind: string; outline: number[][]; holes: number[][][]; z0: number; z1: number }
+/** A grid line with its name bubble at each end (floor only). */
+export interface GridData { name: string; a: V3; b: V3 }
+/** A run's tag: the label at its anchor, and its distribution line when it has one. */
+export interface TagData { layer: string; label: string; callout: string; at: V3; line: [V3, V3] | null }
 export interface SceneData {
   kind: "floor" | "panel";
+  grids: GridData[];
+  tags: TagData[];
   order: string[];               // fixing order of the layers drawn
   layers: Record<string, LayerData>;
   context: Segment[];            // existing bars (starters below and the like), drawn faint, never picked
@@ -74,7 +80,23 @@ export function sceneData(M: Model): SceneData {
   const concrete = concreteOf(M);
   for (const p of concrete) for (const q of p.outline) { grow(toScene([q[0], q[1], p.z0])); grow(toScene([q[0], q[1], p.z1])); }
   for (const id of Object.keys(layers)) if (!order.includes(id) && layers[id].segments.length) order.push(id);
-  return { kind: m.kind === "panel" ? "panel" : "floor", order: order.filter(id => layers[id]), layers, context, bars, concrete, bounds: { min, max } };
+  // grid lines on the slab's top, run 1,000 past the slab and balconies each way, a bubble at each end
+  const grids: GridData[] = [];
+  const E = m.EXT || m.SL, T = m.T || 0;
+  if (E) {
+    for (const [name, x] of (m.GX || []) as [string, number][]) grids.push({ name, a: toScene([x, E.y0 - 1000, T]), b: toScene([x, E.y1 + 1000, T]) });
+    for (const [name, y] of (m.GY || []) as [string, number][]) grids.push({ name, a: toScene([E.x0 - 1000, y, T]), b: toScene([E.x1 + 1000, y, T]) });
+  }
+  // run tags: on the distribution line at its fraction (a line across the bars), else at the run's tag anchor
+  const tags: TagData[] = [];
+  for (const r of (m.runs || []) as any[]) {
+    if (!r.label) continue;
+    if (r.dist) {
+      const d = r.dist, P = (p: number) => (d.dir === "X" ? [d.at, p, d.z] : [p, d.at, d.z]);
+      tags.push({ layer: r.layer, label: r.label, callout: r.callout || "", at: toScene(P(d.p0 + (d.frac ?? 0.5) * (d.p1 - d.p0))), line: [toScene(P(d.p0)), toScene(P(d.p1))] });
+    } else if (r.tagPos) tags.push({ layer: r.layer, label: r.label, callout: r.callout || "", at: toScene(r.tagPos), line: null });
+  }
+  return { kind: m.kind === "panel" ? "panel" : "floor", grids, tags, order: order.filter(id => layers[id]), layers, context, bars, concrete, bounds: { min, max } };
 }
 
 /** Which layers a fixing step shows: everything up to the step, the step's own layer solid and the rest ghosted. */

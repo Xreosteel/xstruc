@@ -38,3 +38,17 @@ test("fixing steps: the step's layer solid, the ones below faint, the rest hidde
 test("model mm to scene metres, y up", () => {
   assert.deepEqual(toScene([1000, 2000, 300]), [1, 0.3, -2]);
 });
+
+test("grids and run tags: four by three grid lines on the floor, one tag per labelled run", () => {
+  const M = buildModel(DEFAULT_CFG), D = sceneData(M);
+  assert.deepEqual(D.grids.map(g => g.name), ["1", "2", "3", "4", "A", "B", "C"]);
+  const labelled = (M as any).runs.filter((r: any) => r.label && (r.dist || r.tagPos));
+  assert.equal(D.tags.length, labelled.length);
+  const a = D.tags.find(t => t.layer === "A" && t.line)!;
+  assert.ok(a && /N16-200/.test(a.label), "layer A's main mat is tagged on its distribution line");
+  const [p, q] = a.line!;
+  assert.ok(a.at[2] <= Math.max(p[2], q[2]) && a.at[2] >= Math.min(p[2], q[2]), "the tag sits on its line");
+  const P = sceneData(buildModel(PANEL_CFG));
+  assert.equal(P.grids.length, 0, "a panel has no grids");
+  assert.ok(P.tags.some(t => t.layer === "NF1"));
+});

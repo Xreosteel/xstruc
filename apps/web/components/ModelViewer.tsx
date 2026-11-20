@@ -15,6 +15,7 @@ export function ModelViewer({ model, height = 520 }: { model: Model; height?: nu
   const [layers, setLayers] = useState<LayerInfo[]>([]);
   const [step, setStep] = useState<number | null>(null);
   const [ghost, setGhost] = useState(true);
+  const [tags, setTags] = useState(true);
   const [bar, setBar] = useState<Bar | null>(null);
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export function ModelViewer({ model, height = 520 }: { model: Model; height?: nu
   }, [model]);
   useEffect(() => { viewer.current?.setStep(step); }, [step]);
   useEffect(() => { viewer.current?.setGhost(ghost); }, [ghost]);
+  useEffect(() => { viewer.current?.setTags(tags); }, [tags]);
 
   const n = layers.length;
   const label = step == null ? "Finished " + (model.kind === "panel" ? "panel" : "floor") + " · all layers" : "Step " + (step + 1) + " of " + n + " · " + (layers[step]?.name ?? "");
@@ -48,6 +50,7 @@ export function ModelViewer({ model, height = 520 }: { model: Model; height?: nu
         <button className="btn" type="button" aria-label="Next step" onClick={() => setStep(s => (s == null ? 0 : s + 1 >= n ? null : s + 1))}>▶</button>
         <button className="btn" type="button" onClick={() => setStep(null)}>All</button>
         <label className="ml-2 flex items-center gap-2 text-muted"><input type="checkbox" checked={ghost} onChange={e => setGhost(e.target.checked)} /> Show layers below faint</label>
+        <label className="flex items-center gap-2 text-muted"><input type="checkbox" checked={tags} onChange={e => setTags(e.target.checked)} /> Tags on each step</label>
       </div>
       <div className="relative overflow-hidden rounded-lg border border-line" style={{ height }}>
         <div ref={box} className="absolute inset-0" data-testid="viewer" />

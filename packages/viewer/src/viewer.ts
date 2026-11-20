@@ -3,6 +3,7 @@
 // views, and picking a bar under the pointer. Framework-free; apps/web wraps it in a React component.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Bar, Model } from "@xstruc/engine";
 import { sceneData, stepLayers, toScene, type SceneData, type Segment, type Prism } from "./scene-data.ts";
 
@@ -16,6 +17,8 @@ export interface Viewer {
   /** Fixing step: the index into the model's layer order, or null for the finished element. */
   setStep(step: number | null): void;
   setGhost(on: boolean): void;
+  /** Run tags and distribution lines for the layers being fixed (shown on a fixing step, not on the finished view). */
+  setTags(on: boolean): void;
   view(kind: ViewKind): void;
   select(bar: Bar | null): void;
   pickAt(clientX: number, clientY: number): Bar | null;
@@ -61,6 +64,9 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
   renderer.setClearColor(new THREE.Color(opts.background || "#11151a"));
   container.appendChild(renderer.domElement);
   renderer.domElement.style.display = "block";
+  const labels = new CSS2DRenderer();   // grid bubbles and run tags as HTML over the canvas
+  labels.domElement.style.position = "absolute"; labels.domElement.style.inset = "0"; labels.domElement.style.pointerEvents = "none";
+  container.appendChild(labels.domElement);
   const scene = new THREE.Scene();
   scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 2.2));
   const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(30, 50, 20); scene.add(sun);
@@ -68,7 +74,7 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   const root = new THREE.Group(); scene.add(root);
-  let data: SceneData | null = null, step: number | null = null, ghost = true, selected: Bar | null = null;
+  let data: SceneData | null = null, step: number | null = null, ghost = true, tagsOn = true, selected: Bar | null = null;
   let solidMeshes: { mesh: THREE.InstancedMesh; segs: Segment[] }[] = [];
   let selMesh: THREE.InstancedMesh | null = null;
   const disposables: { dispose(): void }[] = [];
@@ -77,11 +83,21 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
     const w = container.clientWidth || 800, h = container.clientHeight || 500;
     renderer.setSize(w, h, false); renderer.domElement.style.width = w + "px"; renderer.domElement.style.height = h + "px";
     camera.aspect = w / h; camera.updateProjectionMatrix();
+    labels.setSize(w, h);
   };
   const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
   ro?.observe(container); resize();
 
+  const label = (text: string, cls: string, color?: string, title?: string) => {
+    const el = document.createElement("div");
+    el.className = cls; el.textContent = text; if (title) el.title = title;
+    Object.assign(el.style, cls === "xs-grid"
+      ? { width: "22px", height: "22px", borderRadius: "50%", border: "1.5px solid #8b98a6", color: "#e8edf2", font: "600 11px system-ui, sans-serif", boxSizing: "border-box", textAlign: "center", lineHeight: "19px", background: "rgba(17,21,26,0.85)" }
+      : { padding: "1px 6px", borderRadius: "3px", border: "1px solid " + color, color: "#e8edf2", font: "500 11px ui-monospace, monospace", background: "rgba(17,21,26,0.85)", whiteSpace: "nowrap" });
+    return new CSS2DObject(el);
+  };
   function clear() {
+    root.traverse(o => { if (o instanceof CSS2DObject) o.element.remove(); });
     root.clear(); solidMeshes = []; selMesh = null;
     disposables.splice(0).forEach(d => d.dispose());
   }
@@ -102,6 +118,24 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
     };
     vis.solid.forEach(id => layerMesh(id, false));
     if (ghost) vis.ghost.forEach(id => layerMesh(id, true)); else vis.ghost.forEach(id => layerMesh(id, false));
+    // grid lines and bubbles (floor), run tags with their distribution lines (the layers of the current step)
+    const gridMat = new THREE.LineDashedMaterial({ color: 0x5b6672, dashSize: 0.4, gapSize: 0.25 }); disposables.push(gridMat);
+    for (const g of data.grids) {
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...g.a), new THREE.Vector3(...g.b)]); disposables.push(geo);
+      const line = new THREE.Line(geo, gridMat); line.computeLineDistances(); root.add(line);
+      for (const end of [g.a, g.b]) { const b = label(g.name, "xs-grid"); b.position.set(...end); root.add(b); }
+    }
+    if (tagsOn && step != null) {
+      for (const t of data.tags.filter(t => vis.solid.includes(t.layer))) {
+        const color = data.layers[t.layer]?.color || "#cccccc";
+        const tag = label(t.label, "xs-tag", color, t.callout); tag.position.set(...t.at); root.add(tag);
+        if (t.line) {
+          const geo = new THREE.BufferGeometry().setFromPoints(t.line.map(p => new THREE.Vector3(...p))); disposables.push(geo);
+          const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(color) }); disposables.push(mat);
+          root.add(new THREE.Line(geo, mat));
+        }
+      }
+    }
     if (data.context.length) {
       const mat = new THREE.MeshStandardMaterial({ color: 0x7d8fa3, transparent: true, opacity: 0.25, depthWrite: false });
       disposables.push(mat); root.add(segmentsMesh(data.context, mat));
@@ -151,7 +185,7 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
   renderer.domElement.addEventListener("pointerup", onUp);
 
   let raf = 0, alive = true;
-  const loop = () => { if (!alive) return; controls.update(); renderer.render(scene, camera); raf = requestAnimationFrame(loop); };
+  const loop = () => { if (!alive) return; controls.update(); renderer.render(scene, camera); labels.render(scene, camera); raf = requestAnimationFrame(loop); };
   loop();
 
   const api: Viewer = {
@@ -166,6 +200,7 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
     },
     setStep(s) { step = s; draw(); },
     setGhost(on) { ghost = on; draw(); },
+    setTags(on) { tagsOn = on; draw(); },
     view,
     select(bar) { selected = bar; draw(); },
     pickAt,
@@ -183,7 +218,7 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
     dispose() {
       alive = false; cancelAnimationFrame(raf); ro?.disconnect(); clear(); controls.dispose();
       renderer.domElement.removeEventListener("pointerdown", onDown); renderer.domElement.removeEventListener("pointerup", onUp);
-      renderer.dispose(); renderer.domElement.remove();
+      renderer.dispose(); renderer.domElement.remove(); labels.domElement.remove();
     }
   };
   return api;
