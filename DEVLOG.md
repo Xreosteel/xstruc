@@ -2,6 +2,20 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-20 · interactive session (3) · backlog #40a the 3D view in the new app
+
+**Done:** Baji: "more do more do more do more". Took the visible next step: the 3D viewer as its own package and on the app's screens. #40 split into 40a (this) and 40b (parity with the prototype's viewer).
+
+- **`packages/viewer`** (new): `scene-data.ts` turns an engine model into what is drawn, with no WebGL: bar and wire segments by layer (metres, y up, as the prototype's `W()`), existing bars as faint context, concrete prisms (floor: slab less openings / set-downs / step, set-downs lowered by their depth, the step raised by its rise, balconies between their levels, beams under the slab, columns down to `COLB`; panel: the outline less interior openings, T thick), the fixing order and bounds, and `stepLayers` (the step's layer solid, the ones below faint, the rest hidden). `viewer.ts`: three.js 0.187, one instanced cylinder mesh per layer, translucent concrete, hemisphere + sun light, OrbitControls, iso / plan / side views fitted to the bounds, refit when the element changes, picking by raycast on the instanced meshes (a click without a drag), the selected bar drawn over the rest, `screenOf(bar)` for tests, `dispose()`. Unit tests (node:test): every bar drawn in its layer, segment count = sum of bar legs, the order, the concrete kinds, the floor's size in metres, the panel's faces and window, the steps, the axes.
+- **Web app:** `components/ModelViewer.tsx` (the viewer with 3D / Plan / Side, ◀ step ▶ with "Step 2 of 8 · Layer A · bottom 1st", All, "Show layers below faint", the layer legend, a bar card: mark, size, shape and dims, cut length, layer, setout, note), `components/Schedule.tsx` (shared), the element screen shows the 3D view after Build, and a public **`/demo`** page (no account: the Level 1 floor and panel P1, stats, 3D, schedule; linked from the header and the not-connected home page).
+- **Browser test** `apps/web/e2e/demo.mjs` (`pnpm --filter @xstruc/web e2e`, Playwright 1.63, software WebGL): starts `next start`, the floor paints 18 % of the canvas with its 8 layers, Next twice reads "Step 2 of 8 · Layer A", a click on a layer D bar opens its card (A58 N12 L, cut length 11,985), Plan, the panel draws (85 bars, FF1 first, refitted), no console errors. Looked at the floor-with-card and panel screenshots. CI (`pages.yml`) now installs Chromium and runs it after the builds.
+
+**Check:** `@xstruc/engine: # pass 17` · `check: OK` · `grammar: OK (90 cases)` · `shapes: OK (126 assertions)` · `panel: OK (…)` · `app: OK` · `bundle: OK (90 engine names …)` · `@xstruc/viewer: # pass 4` · `@xstruc/web: Tests 3 passed` · `@xstruc/db: # pass 10` · `Tasks: 8 successful, 8 total` · `e2e demo: OK (floor and panel drawn, steps, bar card)` · `next build` ✓ (`/demo` static). The prototype is untouched (no smoke needed).
+
+**Parked:** nothing new; #38 (go live) waits on Baji's accounts, so the app (and `/demo`) is not online yet.
+
+**Next run:** #40b (viewer parity: tags, grids, stair concrete, section cut, placing sheet, site mode) or #39c (strict types). #41 (input screens) after #40b.
+
 ## 2026-11-20 · interactive session (2) · backlog #39a + #39b engine in modules, golden set; #39c started
 
 **Done:** Baji: "okay do the next step" (the engine into proper TypeScript modules, from the architecture's porting plan). #39 split in place into 39a golden set, 39b modules and the prototype bundle, 39c strict types module by module, 39d input contracts; 39a and 39b done, 39c started.
