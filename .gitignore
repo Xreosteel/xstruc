@@ -9,3 +9,4 @@ dist/
 .env
 next-env.d.ts
 apps/web/e2e-out/
+apps/web/public/samples/

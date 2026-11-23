@@ -52,12 +52,14 @@ export function LocalWorkbench({ pid, eid }: { pid: string; eid: string }) {
   if (!data) return <p className="text-muted">Opening…</p>;
   if (!el || !project) return <div className="card">That floor or panel is not on this device. <Link className="underline" href="/">Back to projects</Link></div>;
   const example = el.kind === "panel" ? PANEL_CFG : DEFAULT_CFG;
+  const source = (el.inputs as { source?: { file: string } }).source;
 
   return (
     <div className="grid gap-4">
       <div>
         <Link href={"/job/" + pid} className="text-sm text-muted">← {project.name}</Link>
         <h1 className="text-2xl font-semibold">{el.name} <span className="text-base font-normal text-muted">{el.kind === "panel" ? "precast panel" : "floor slab"}</span></h1>
+        {source && <p className="text-sm text-muted" data-testid="source">Read from the drawing {source.file}</p>}
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,420px)_1fr]">
         <section className="card grid content-start gap-3">

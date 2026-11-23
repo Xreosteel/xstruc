@@ -2,6 +2,11 @@
 
 Decisions Baji has made. Build to these; don't re-ask them. Newest first. A build run that needs a decision not listed here adds a question to the planning doc instead of guessing.
 
+## 2026-11-23
+
+- **Drawings to 3D by rules, not AI** ("dont use a claude api, make a proper engine that recognizes patterns and builds"): the drawing reader (`packages/reader`) recognises grids, slab edge, openings, notes and callouts by geometry and text rules and the engine's callout grammar; no AI service is called (research/17's suggestion service is dropped).
+- **Same process as a person** ("use the same process when you receive a markup plan"): the reader goes through a plan in a scheduler's order (drawing, grids, slab edge, openings, notes, callouts, check, build) and reports each step.
+
 ## 2026-11-20
 
 - **Build the real application now** ("proper application development … start from the beginning … proper applications architecture"). Architecture v2 in the architecture doc's **v2 · Lean build** tab.

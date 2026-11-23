@@ -1,0 +1,24 @@
+{
+  "name": "@xstruc/reader",
+  "version": "0.1.0",
+  "private": true,
+  "description": "X Struc drawing reader: reads an engineer's slab plan (DXF now, PDF next) into the engine's inputs by rules a scheduler would follow (grids, slab edge, openings, notes, callouts), with a report of what it found and what it could not. No AI, no network.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@xstruc/engine": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "22.20.5"
+  }
+}

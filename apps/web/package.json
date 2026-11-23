@@ -5,8 +5,8 @@
   "description": "The X Struc application (architecture v2): Next.js on Vercel, Supabase in Sydney, the engine from @xstruc/engine.",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/copy-samples.mjs && next dev",
+    "build": "node scripts/copy-samples.mjs && next build",
     "start": "next start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -19,7 +19,8 @@
     "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "@xstruc/viewer": "workspace:*"
+    "@xstruc/viewer": "workspace:*",
+    "@xstruc/reader": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.5",

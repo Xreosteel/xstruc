@@ -42,6 +42,10 @@ export function LocalProject({ id }: { id: string }) {
           </Link>
         ))}
       </div>
+      <div className="card flex max-w-xl flex-wrap items-center gap-3">
+        <div className="grow"><h2 className="font-semibold">Floor from a drawing</h2><p className="text-sm text-muted">Read the engineer&apos;s slab plan (DXF) into a floor.</p></div>
+        <Link className="btn btn-primary" href={"/job/" + id + "/import"}>Import a drawing</Link>
+      </div>
       <form onSubmit={create} className="card grid max-w-xl gap-3">
         <h2 className="font-semibold">New floor or panel</h2>
         <label><span className="label">Name</span><input className="input" name="name" required placeholder="Level 1 floor, or P1" /></label>

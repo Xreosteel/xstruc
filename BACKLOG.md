@@ -91,9 +91,15 @@ The application is built to the **v2 · Lean build** architecture (architecture 
 
 ## Phase 3 · drawing input
 
-- [ ] **16. DXF reader.** Parse LINE, LWPOLYLINE, TEXT, MTEXT, INSERT (exploded) from a DXF uploaded through a file input; map layers by name patterns to slab outline / openings / callouts; show the result on the 2D sheet before building.
-- [ ] **17. Scale calibration.** Two-point click plus a typed distance; dimension-entity check.
-- [ ] **18. Callout-to-zone association.** Leader tracing, distribution-line extent, then point-in-polygon, with a confidence score shown on each tag.
+Baji, 2026-11-23: "start creating the engine that makes the 3d rendering from the engineering drawings, dont use a claude api, make a proper engine that recognizes patterns and builds" and "use the same process when you receive a markup plan". `packages/reader` reads a plan in a scheduler's order (README there); rules only, no AI service (research/17's suggestion service is dropped).
+
+- **43. Drawing reader.** Split 2026-11-23:
+  - [x] **43a. DXF slab plans → floor.** `packages/reader`: `readDxf` (in-house, research/04: LINE, LWPOLYLINE with bulges, POLYLINE, CIRCLE, ARC, TEXT, MTEXT codes, INSERT / MINSERT / ATTRIB exploded, mirrored blocks, DIMENSION, LEADER, HATCH boundaries, units) and `readPlan` (8 steps: drawing, grids, slab edge and balconies, openings / set-downs / step / columns, notes, callouts with layer, direction and distribution line, checks, build with the engine as verifier). Test drawings written with ezdxf. Web app: project › Import a drawing (DXF read on the device, the steps, the drawing with what was found, values to type in, errors), Create floor → 3D. Absorbs #16, the dimension check of #17 and the distribution-line part of #18.
+  - [ ] **43b. Vector PDF → the same Sheet.** pdf.js text runs and paths (research/05 P-A, P-B), page units to drawing mm by the stated scale and a grid dimension, the same `readPlan`; real-text PDFs first, SHX stroke text later (research/05 P-D).
+  - [ ] **43c. Markups on PDFs.** Unflattened Bluebeam / Acrobat annotations (FreeText callouts with `/CL`, extent lines, zone polygons; research/17 S1–S4) into callouts with extents; the upload health report (research/17 §5).
+  - [ ] **43d. Mats over part of a slab.** Engine: a callout's extent (distribution line or zone) instead of the whole slab, several mats per layer; the reader passes extents instead of refusing them.
+  - [ ] **43e. More of the plan.** Beams (dashed pairs with their marks) and columns as engine inputs; trimmer / extra / edge-bar callouts as bars; non-rectangular slab edges; a step anywhere; lap tables by bar size from the notes; two-point scale calibration on a drawing not to scale (#17).
+  - [ ] **43f. Real drawings.** Run the reader on Baji's real slab plans (DXF and PDF from XREO jobs), fix what they show, keep them as private test drawings.
 
 ## Done notes
 
