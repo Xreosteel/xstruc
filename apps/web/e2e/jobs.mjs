@@ -56,6 +56,15 @@ await page.waitForSelector("text=Lot 12 Salisbury");
 const list = await page.textContent("main");
 if (!/J-1042/.test(list) || !/\d floor/.test(list)) await fail("the project list should show the project with its floor: " + list.slice(0, 200));
 
+// a pit (the mud trap) in the project, from its example
+await page.goto(projectUrl);
+await page.fill("input[name=name]", "Mud trap");
+await page.selectOption("select[name=kind]", "pit");
+await page.click("button:has-text('Create')");
+await page.waitForURL(/\/job\/[^/]+\/[^/]+$/);
+await page.waitForFunction(() => window.xstrucViewer && window.xstrucViewer.data() && window.xstrucViewer.data().kind === "pit", null, { timeout: 20000 }).catch(() => fail("the mud trap should build"));
+if (!/716/.test(await page.textContent("[data-testid=run-stats]"))) await fail("the mud trap should have 716 bars");
+
 // a floor from a drawing: the sample plan is read step by step and built
 await page.goto(projectUrl);
 await page.click("text=Import a drawing");
@@ -126,7 +135,7 @@ const [dl] = await Promise.all([page.waitForEvent("download"), page.click("butto
 const file = out + "/jobs-backup.json";
 await dl.saveAs(file);
 const back = JSON.parse(readFileSync(file, "utf8"));
-if (back.app !== "X Struc" || back.projects.length !== 1 || back.projects[0].elements[0].inputs.thickness !== 250 || back.projects[0].elements.length !== 3) await fail("the backup should hold the project, its edited floor and the two floors from drawings");
+if (back.app !== "X Struc" || back.projects.length !== 1 || back.projects[0].elements[0].inputs.thickness !== 250 || back.projects[0].elements.length !== 4) await fail("the backup should hold the project, its edited floor, the mud trap and the two floors from drawings");
 await page.evaluate(() => localStorage.clear());
 await page.reload();
 await page.waitForSelector("text=No projects on this device yet");

@@ -1,5 +1,5 @@
 {
-  "engine": "1.0.0",
+  "engine": "1.1.0",
   "note": "Pinned engine output; see test/golden/fixtures.js",
   "fixtures": {
     "floor-example": {
@@ -8,7 +8,7 @@
       "kg": 5440,
       "errors": [],
       "warnings": 7,
-      "canonical": "6d54567d21c36355df275c024ab44ad66f876c162e60d6a3f4037d616c00bfbe",
+      "canonical": "58eb34b3206204797356bf2bec57e46a464003110cc2a57a3b56e8b53fa3d32b",
       "model": "ab87b57af917a0590d74ea1af1d987bb04a69756f60148e4c7f099123be37a29",
       "sheets": "12a9d07333dea2567ed7f32b826c99721cae786fc9f40f50feb626d580ba94b2",
       "sections": "f7ee90cab1dbef834a0af8ce9fd1b42dd59cc30fcdc2520c2c99d281cb3fcbc2"
@@ -19,7 +19,7 @@
       "kg": 4201,
       "errors": [],
       "warnings": 9,
-      "canonical": "9133b86871c0b755c047d9ff70a0bdd2e6d8ce2db7dafae6324086123223f9eb",
+      "canonical": "7337e77c9bd1382ebbb9bad04a37ef264b1a58a13f7396321f30aada77c75601",
       "model": "1113fa597f4fe956d6abf2c001dd8157a4aae37b20577dcef2f94d20dca2f5db",
       "sheets": "9dce12a4c8ec6257f28dfb95ffa759078acb89e4cfe115c2e69b19b441e0e8df",
       "sections": "2b4ac3f481de9bf6d8ead89800e450b41989ff08464352237c0998f770aa34c1"
@@ -30,7 +30,7 @@
       "kg": 3407,
       "errors": [],
       "warnings": 1,
-      "canonical": "6bf78f6d9c76443437a1f42e93f63488776675229d3bd1eccbf5751e80890ad5",
+      "canonical": "f0b2b9e0a6c9bc68087e4fe76ba644562dd45d6f7ae3cead9f0113e2bd49cc9f",
       "model": "85e946649f8f59376ce328eb1f00c2ea0b6631eee4dfee9e672e63ecf8cd93ec",
       "sheets": "9f518a89a6fbc64827350e521205c3b45ec2d7bca5828505dd513e2b41c818c9",
       "sections": "575374d294997c358f09d1e6cbc44929d17c4a272e4bdd7a0a6d61c8718f76e7"
@@ -41,7 +41,7 @@
       "kg": 5443,
       "errors": [],
       "warnings": 6,
-      "canonical": "c972d223ec47d67fc9cf902073beb473cf5aba233aad905ad0b5c56d8ebd852a",
+      "canonical": "b5c6e307f3ab97b34d8e0f5bc631aaa8426e166d93d328068e2d8ff4e031a37c",
       "model": "136bfb1fbfdd2458374d37cf42ec0bac2a87d149e91ad9aa0003d1a5b2f2dbc8",
       "sheets": "5e0f8f7657f16f2f9434f95e9bb4f67af71c6fa1f53bc6585ce39115e6341a97",
       "sections": "b47d1938b0cc6655597f486da4dbc7773a7a06c71eff6ab63b6d8c0dd5bd9478"
@@ -52,7 +52,7 @@
       "kg": 282,
       "errors": [],
       "warnings": 0,
-      "canonical": "a55a2669c87f7b4c8ed266f2d18bb4b96375b93330b2000f98559bb871d0f34c",
+      "canonical": "41af8af91bc605517dbe8c7090d8397242e0fa785c8726fa2399ee9c8f23e1d2",
       "model": "21cd724c2875174c06ae444c645de2f317bf86765813edb496de2a65deca207e",
       "sheets": "b70ae52c81afd5464afe6e9cb71285d2cc40344378835dd360083d3b97a021b1",
       "sections": "e34dad927a84c870dd93d43c5c029509ccd1b8758dd2889dcdb2140cde733870"
@@ -63,7 +63,7 @@
       "kg": 282,
       "errors": [],
       "warnings": 0,
-      "canonical": "f4e8f58504f8fffda27bf62daa2ca9d88269db9e4e28c10e22829a0458bd3ac8",
+      "canonical": "0928d713283e85c973ca031c628b5c0b5320bcf01e6af3c5add32360623fd010",
       "model": "618f332cc1c26ac5cf838be3c55b9891f593aac14319a11c1a447c8bc8123105",
       "sheets": "7cf6267f715249e4c4d9adbc2cb61a5acaa288e8ded0b8214ac189190ae83862",
       "sections": "748d97cff8c14560a910bb8e1b54aa762c02c3e18a4cdefbef168fb7198a9603"
@@ -74,7 +74,7 @@
       "kg": 366,
       "errors": [],
       "warnings": 0,
-      "canonical": "f4d8b1f6eb665ba616ee1fb0f310418f859c56f1821da763d63ae033d495afc5",
+      "canonical": "fa9919750c339d44651ec96f0e4d14ded1467ed9b438d500b2ebf6147c34ba4c",
       "model": "302d83b9c8796aacd405cf5da77cb9024d15fc000865c5946e1cae86c852e797",
       "sheets": "2c45391c62c55ada4b5987264eec47a3a3b578179606a946ed053229eb6beaef",
       "sections": "0204023440f8bf7fb9791782bed067cf6488c7e718d2dc084c1252f6769cb440"
@@ -87,7 +87,7 @@
         "Panel too thin for this steel: cover, both faces and their edge bars take 196 of the 200 thickness, leaving under 10 between the faces. Thicken the panel or lighten a face."
       ],
       "warnings": 0,
-      "canonical": "e71d7bdcff205f0792571c4fe3e45163bf82960e2e829f62bedefc0b8f3bdb69",
+      "canonical": "ab35fd0cbf924480796f9f97f090e9aaf6cf1858795bcbb8bc3e4392bbbdf66e",
       "model": "1911a129abb0571a174a204d9d265fee20f14df6b76c02c65b7f81b71db00e02",
       "sheets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "sections": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -98,7 +98,7 @@
       "kg": 294,
       "errors": [],
       "warnings": 1,
-      "canonical": "bf84ced0b827b8a65f7c8720bf30566cd067732ddf277b5ec20c6e4e27835b1f",
+      "canonical": "0e8fb211a369567b8ccb385f12842126c0f9c95de1f3fe0668bc7d132f8e7e90",
       "model": "ae2fdba449e3e7f13310746e30c90cc5b1c7b8c45aa630df613dd92440257dea",
       "sheets": "5e576349b884a6c79e88d28508c634a1d2fccf3db559ba75b62795c0133736aa",
       "sections": "199ee971b66078b723cf2cc1e1b8079fc40c60b235f4ca3cab7838cae9715f0f"
@@ -109,10 +109,43 @@
       "kg": 277,
       "errors": [],
       "warnings": 3,
-      "canonical": "5167ac6648c4d6c92a1a807a03767bfc6ef481e4b150c140be17f97a6fc9a57c",
+      "canonical": "1bfd99445637152ede7d0203032d8af680fbc3a1547eb843084c264c87d5e9db",
       "model": "32f4f439554a198c92291641d168dd385727544d01e660b9389b641b919b86c3",
       "sheets": "8520db1cfef76b816a19ada7e261d916cf7f3ae849c6512d1ab35a7e3fb82132",
       "sections": "3be829c06bfce82d078b01ce5cfaabc296428f0b67233a8669a5edb14f5d49c0"
+    },
+    "pit-example": {
+      "bars": 716,
+      "marks": 38,
+      "kg": 4078,
+      "errors": [],
+      "warnings": 2,
+      "canonical": "56ec9c555893a2cb7f2914421c5d4a4139158613201c2f0e65cbac50ed81fee6",
+      "model": "0006d8b5785ec3b7f66d51489672dbe44b01fc2db449e76823c06b8a74d2bd88",
+      "sheets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sections": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "pit-as-drawn-8m": {
+      "bars": 976,
+      "marks": 38,
+      "kg": 5750,
+      "errors": [],
+      "warnings": 30,
+      "canonical": "44611c122335641fa11b82e150f2d1562e1e66d358e627f2d1f1cd68dfb9d7bc",
+      "model": "f7c682ff1b4acca98c87f93aa633ccccf5d4088dc680eac9a4e48dcf5fe41111",
+      "sheets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sections": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "pit-no-ramp": {
+      "bars": 720,
+      "marks": 11,
+      "kg": 4193,
+      "errors": [],
+      "warnings": 2,
+      "canonical": "6d65f3ad72850a45712b8309d0378a3de94f955b03d31450af97fbf5bebff08c",
+      "model": "56a4e1bf4f3bc725d9ecc6dcd65e6124e88f51631e06637657a43361cdf4acfb",
+      "sheets": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sections": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   }
 }

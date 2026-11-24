@@ -10,13 +10,17 @@ export const toScene = (p: number[]): V3 => [p[0] / 1000, p[2] / 1000, -p[1] / 1
 export interface Segment { a: V3; b: V3; r: number; bar: number }   // r: bar radius in metres; bar: index into SceneData.bars
 export interface LayerData { id: string; name: string; color: string; segments: Segment[] }
 /** A prism: a plan polygon (model mm, with holes) between two levels (model mm). */
-export interface Prism { kind: string; outline: number[][]; holes: number[][][]; z0: number; z1: number }
+/** Concrete: an outline extruded along an axis. z (default): a plan outline (x, y) from z0 to z1. x: a section
+ *  outline (y, z) from x = z0 to x = z1 (a ramp, a wall stepping down beside it). */
+export interface Prism { kind: string; outline: number[][]; holes: number[][][]; z0: number; z1: number; axis?: "x" | "z" }
+/** A point of a prism's outline at its two ends, in model millimetres. */
+export const prismPoints = (p: Prism): number[][] => p.outline.flatMap(q => (p.axis === "x" ? [[p.z0, q[0], q[1]], [p.z1, q[0], q[1]]] : [[q[0], q[1], p.z0], [q[0], q[1], p.z1]]));
 /** A grid line with its name bubble at each end (floor only). */
 export interface GridData { name: string; a: V3; b: V3 }
 /** A run's tag: the label at its anchor, and its distribution line when it has one. */
 export interface TagData { layer: string; label: string; callout: string; at: V3; line: [V3, V3] | null }
 export interface SceneData {
-  kind: "floor" | "panel";
+  kind: "floor" | "panel" | "pit";
   grids: GridData[];
   tags: TagData[];
   order: string[];               // fixing order of the layers drawn
@@ -35,6 +39,7 @@ const inside = (a: Rect, b: Rect) => a.x0 >= b.x0 && a.x1 <= b.x1 && a.y0 >= b.y
 export function concreteOf(M: Model): Prism[] {
   const m = M as Model & Record<string, any>;
   const T: number = m.panel ? m.panel.T : m.T;
+  if (m.kind === "pit") return (m.solids || []).map((s: any) => ({ kind: s.kind, outline: s.outline, holes: s.holes || [], z0: s.z0, z1: s.z1, axis: s.axis }));
   if (m.kind === "panel") {
     const holes = (m.HOLES || []).filter((h: any) => !h.edge).map((h: Rect) => rect(h));
     return [{ kind: "panel", outline: m.outline || rect({ x0: 0, y0: 0, x1: m.panel.W, y1: m.panel.H }), holes, z0: 0, z1: T }];
@@ -78,7 +83,7 @@ export function sceneData(M: Model): SceneData {
   (m.bars || []).forEach(add);
   (m.wires || []).forEach(add);
   const concrete = concreteOf(M);
-  for (const p of concrete) for (const q of p.outline) { grow(toScene([q[0], q[1], p.z0])); grow(toScene([q[0], q[1], p.z1])); }
+  for (const p of concrete) for (const q of prismPoints(p)) grow(toScene(q));
   for (const id of Object.keys(layers)) if (!order.includes(id) && layers[id].segments.length) order.push(id);
   // grid lines on the slab's top, run 1,000 past the slab and balconies each way, a bubble at each end
   const grids: GridData[] = [];
@@ -98,7 +103,7 @@ export function sceneData(M: Model): SceneData {
   }
   // steps only for layers with something in them (a pad with no beams has no "beam cages" step); bar chairs stay
   const shown = order.filter(id => layers[id] && (layers[id].segments.length || (id === "CH" && ((m as any).chairs || []).length)));
-  return { kind: m.kind === "panel" ? "panel" : "floor", grids, tags, order: shown, layers, context, bars, concrete, bounds: { min, max } };
+  return { kind: m.kind === "panel" ? "panel" : m.kind === "pit" ? "pit" : "floor", grids, tags, order: shown, layers, context, bars, concrete, bounds: { min, max } };
 }
 
 /** Which layers a fixing step shows: everything up to the step, the step's own layer solid and the rest ghosted. */

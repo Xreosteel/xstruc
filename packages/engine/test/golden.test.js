@@ -24,7 +24,7 @@ function snapshot(cfg) {
   const M = E.buildModel(cfg);
   const order = M.ORDER || [];
   // a model with errors is not drawn (the viewer keeps the last good one), so only its errors are pinned
-  const ok = !M.errors.length;
+  const ok = !M.errors.length && M.kind !== "pit";   // a pit has no placing sheets or sections yet
   const sheets = ok ? order.map((l, i) => stable(E.buildSheet(M, [l], order.slice(0, i)))).concat(stable(E.buildSheet(M, order, []))) : [];
   const cuts = ok ? (M.kind === "panel" ? SECTIONS.panel : SECTIONS.floor).map(s => stable(E.buildSection(M, s))) : [];
   return {

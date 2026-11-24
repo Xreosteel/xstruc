@@ -2,9 +2,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_CFG, PANEL_CFG, type ElementInput } from "@xstruc/engine";
+import { DEFAULT_CFG, PANEL_CFG, PIT_CFG, type ElementInput } from "@xstruc/engine";
 import { runEngine, type Run } from "@/lib/engine-run";
-import { findElement, findProject, removeElement, updateElement } from "@/lib/local-jobs";
+import { findElement, findProject, KIND_NAME, removeElement, updateElement } from "@/lib/local-jobs";
 import { useLocalJobs } from "@/components/useLocalJobs";
 import { RunResult } from "@/components/RunResult";
 
@@ -51,14 +51,14 @@ export function LocalWorkbench({ pid, eid }: { pid: string; eid: string }) {
 
   if (!data) return <p className="text-muted">Opening…</p>;
   if (!el || !project) return <div className="card">That floor or panel is not on this device. <Link className="underline" href="/">Back to projects</Link></div>;
-  const example = el.kind === "panel" ? PANEL_CFG : DEFAULT_CFG;
+  const example = el.kind === "panel" ? PANEL_CFG : el.kind === "pit" ? PIT_CFG : DEFAULT_CFG;
   const source = (el.inputs as { source?: { file: string } }).source;
 
   return (
     <div className="grid gap-4">
       <div>
         <Link href={"/job/" + pid} className="text-sm text-muted">← {project.name}</Link>
-        <h1 className="text-2xl font-semibold">{el.name} <span className="text-base font-normal text-muted">{el.kind === "panel" ? "precast panel" : "floor slab"}</span></h1>
+        <h1 className="text-2xl font-semibold">{el.name} <span className="text-base font-normal text-muted">{(KIND_NAME[el.kind] ?? el.kind).toLowerCase()}</span></h1>
         {source && <p className="text-sm text-muted" data-testid="source">Read from the drawing {source.file}</p>}
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,420px)_1fr]">
@@ -74,7 +74,7 @@ export function LocalWorkbench({ pid, eid }: { pid: string; eid: string }) {
           </div>
           <div className="pt-2">
             {!sure
-              ? <button className="btn" type="button" onClick={() => setSure(true)}>Delete {el.kind === "panel" ? "panel" : "floor"}</button>
+              ? <button className="btn" type="button" onClick={() => setSure(true)}>Delete {el.kind === "panel" ? "panel" : el.kind === "pit" ? "pit" : "floor"}</button>
               : <span className="flex flex-wrap items-center gap-2"><span className="text-accent">Delete {el.name} from this device?</span>
                   <button className="btn" type="button" onClick={() => { change(d => removeElement(d, pid, eid)); router.push("/job/" + pid); }}>Yes, delete</button>
                   <button className="btn" type="button" onClick={() => setSure(false)}>Keep it</button></span>}

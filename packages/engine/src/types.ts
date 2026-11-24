@@ -59,7 +59,7 @@ export interface MeshPiece {
 }
 
 export interface Model {
-  kind?: "panel";         // absent for a floor
+  kind?: "panel" | "pit"; // absent for a floor
   cfg: ElementInput;
   errors: string[];       // the model is not usable while any are present
   warnings: string[];     // flags for the engineer / detailer; the model still builds
@@ -98,4 +98,4 @@ export interface PanelInput {
   [extra: string]: unknown;
 }
 
-export type ElementInput = FloorInput | PanelInput;
+export type ElementInput = FloorInput | PanelInput | import("./pit.ts").PitInput;

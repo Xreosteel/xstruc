@@ -2,6 +2,22 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-24 · interactive session (2) · backlog #43h-i: the mud trap (a pit element)
+
+**Done:** Baji: "can you add the mud trap now and create it". The engine had floors and panels only; a pit is a new element.
+
+- **`pit.ts`** (strict TypeScript; `buildModel` sends `kind: "pit"` there): inputs are every size and detail (outside width and length toe to toe, toe, base thickness and depth under the walls, wall thickness and height, the ramp's plan length, slope and landing, internal walls by clear distance / thickness / height, cover, laps by bar size, stock length, the callouts, which base bars are outermost, leg lengths). Concrete as solids: the base and ramp as one section pushed across, the thickenings, the side walls as a section whose foot follows the ramp, the end wall, the internal wall. Bars, in fixing order K (thickening 2-N12), A / B (bottom mats), W (wall verticals: L-bars each face with a leg into the base, shorter beside the ramp), C / D (top mats), H (horizontals each face, stepping down to the ramp; end wall U-bars lapping into the side walls), I (internal wall), U (wall-head U-bars): the mats follow the base up the ramp and along the landing (across bars spaced along the developed base; along bars bent at the toe and the top); bars over the stock length are cut into equal pieces lapped by the size's lap, away from bends. Marks MT01… by size, shape, length and dims. Checks: positive sizes, room between the walls, the ramp leaving a floor, slab and wall thick enough for two layers each face, internal walls clear of the ramp, a lap for each size used. The assumptions the walls drawing would settle are a warning on the model and under Parked.
+- **The example (`PIT_CFG`)** is the job's mud trap with XREO's allowances (the walls drawing was not among the files): 5.0 m wide toe to toe (drawn 8.0 m; 5.0 by the client's email), 9,425 long, base 250 / 400 under the walls, walls 250 × 2,600, ramp 2,600 at 45° with a 450 landing, internal wall 200 × 2,000 at 1,500 clear, N16-200 base top and bottom and walls each face, N12-300 head U-bars, 2-N12 thickening, cover 50, laps 650 / 500, 6 m stock. **716 bars, 4,078 kg; XREO's estimate for the same scope 4,091 kg** (4,135 less the 44 kg of drain-opening bars not modelled). The base comes out as XREO scheduled it: straight 5.5 m bars lapped onto bars bent 1.5 m flat / 3.7 m up the ramp / 0.3 m on the landing.
+- **Viewer:** `Prism.axis` ("x": a section in y–z pushed across x) meshed by placing each vertex; `prismPoints` for bounds; scene kind "pit".
+- **App:** element kind "pit" ("Pit (mud trap)") with `PIT_CFG`; the demo's **Mud trap** button.
+- **Golden set:** three pit fixtures (example, as drawn 8.0 m, no ramp) added with no change to the floor and panel entries; then `ENGINE_VERSION` 1.1.0 and re-pinned. Engine tests: `pit.test.js` (bars inside the concrete, stock, the mats up the 45° ramp and the 650 lap, verticals shorter beside the ramp, horizontals reaching further up the higher they are, U-bars, within 5 % of XREO's estimate, the 8.0 m and no-ramp variants, five bad inputs, determinism).
+
+**Check:** `@xstruc/engine: # pass 23` (incl. 14 golden) · `@xstruc/viewer: # pass 7` · `Tasks: 10 successful, 10 total` · `e2e demo: OK (floor, panel and mud trap drawn, steps, bar card)` · `e2e jobs: OK (…)` (a mud trap made in a project, 716 bars). Looked at the mud trap finished and at step 4 (wall verticals).
+
+**Parked:** the pit details the walls drawing would settle (see BACKLOG Parked); ask Baji for it.
+
+**Next run:** 43h-ii when the walls drawing arrives (drain opening, channel, edge bars); otherwise 43g (the wash pad's thickened edges, kerbs and drain).
+
 ## 2026-11-24 · interactive session · backlog #43b (PDF) and #43f (first real job)
 
 **Done:** Baji sent a real XREO job: a slab-on-ground wash pad and a mud trap, as the consultant's AutoCAD PDFs (plan, sections, overall layout, setting out), XREO's coloured markup plan, the estimate, the bar schedule and a quote. The drawings belong to the client and this repository is public, so none of them is committed and no client or drawing number is named here; a private test runs on the plan with `XSTRUC_PRIVATE_PLAN=<pdf>`.

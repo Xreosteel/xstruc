@@ -2,7 +2,7 @@
 // the right layers, the concrete and bounds frame the element. Pure (no WebGL), so it runs in Node.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildModel, DEFAULT_CFG, PANEL_CFG } from "@xstruc/engine";
+import { buildModel, DEFAULT_CFG, PANEL_CFG, PIT_CFG } from "@xstruc/engine";
 import { sceneData, stepLayers, toScene } from "../src/scene-data.ts";
 
 test("floor: every bar is drawn, in its layer, in fixing order", () => {
@@ -59,4 +59,16 @@ test("grids and run tags: four by three grid lines on the floor, one tag per lab
   const P = sceneData(buildModel(PANEL_CFG));
   assert.equal(P.grids.length, 0, "a panel has no grids");
   assert.ok(P.tags.some(t => t.layer === "NF1"));
+});
+
+test("pit: base and ramp, thickenings and walls as concrete (sideways prisms for the ramp and the side walls)", () => {
+  const M = buildModel(PIT_CFG as never);
+  const D = sceneData(M as never);
+  assert.equal(D.kind, "pit");
+  assert.deepEqual(D.concrete.map(p => p.kind + ":" + (p.axis ?? "z")), ["base and ramp:x", "thickening:z", "thickening:z", "thickening:z", "wall:x", "wall:x", "wall:z", "internal wall:z"]);
+  assert.deepEqual(D.order, ["K", "A", "B", "W", "C", "D", "H", "I", "U"]);
+  // the ramp lifts the base: the scene spans the wall height plus the thickening below
+  assert.ok(Math.abs(D.bounds.max[1] - 2.85) < 0.01 && Math.abs(D.bounds.min[1] + 0.15) < 0.01, JSON.stringify(D.bounds));
+  // every bar inside the concrete's bounds
+  for (const b of D.bars) for (const p of b.pts) assert.ok(p[0] >= 0 && p[0] <= 5000 && p[1] >= 0 && p[1] <= 9425 && p[2] >= -150 && p[2] <= 2850);
 });

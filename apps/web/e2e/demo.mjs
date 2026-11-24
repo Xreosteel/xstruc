@@ -65,6 +65,20 @@ console.log("panel:", JSON.stringify({ ...panel, ink: +panelInk.toFixed(3) }));
 if (!/^85 bars/.test(panel.stats) || panel.order[0] !== "FF1" || !/Finished panel/.test(panel.label) || panelInk < 0.02) await fail("the panel should draw (85 bars, FF1 first)");
 await page.screenshot({ path: out + "/demo-panel.png" });
 
+// the mud trap: base and ramp, walls, internal wall, in its fixing order; step to the wall verticals
+await page.click("text=Mud trap");
+await page.waitForFunction(() => window.xstrucViewer.data().kind === "pit");
+await page.waitForTimeout(500);
+const pitData = await page.evaluate(() => ({ order: window.xstrucViewer.data().order, concrete: window.xstrucViewer.data().concrete.length, stats: document.querySelector("[data-testid=demo-stats]").textContent, label: document.querySelector("[data-testid=step-label]").textContent }));
+const pitInk = await painted();
+console.log("pit:", JSON.stringify({ ...pitData, ink: +pitInk.toFixed(3) }));
+if (!/^716 bars/.test(pitData.stats) || pitData.order.join(",") !== "K,A,B,W,C,D,H,I,U" || pitData.concrete !== 8 || !/Finished pit/.test(pitData.label) || pitInk < 0.02) await fail("the mud trap should draw (716 bars, 9 steps, 8 concrete pieces)");
+await page.screenshot({ path: out + "/demo-pit.png" });
+for (let i = 0; i < 4; i++) await page.click("[aria-label='Next step']");
+await page.waitForTimeout(300);
+if (!/Wall verticals/.test(await page.textContent("[data-testid=step-label]"))) await fail("step 4 of the mud trap should be the wall verticals: " + await page.textContent("[data-testid=step-label]"));
+await page.screenshot({ path: out + "/demo-pit-walls.png" });
+
 if (errors.length) await fail("console errors: " + errors.join(" | "));
 await browser.close(); server.kill();
-console.log("e2e demo: OK (floor and panel drawn, steps, bar card)");
+console.log("e2e demo: OK (floor, panel and mud trap drawn, steps, bar card)");

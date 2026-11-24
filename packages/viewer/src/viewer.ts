@@ -49,12 +49,19 @@ function segmentsMesh(segs: Segment[], material: THREE.Material): THREE.Instance
 }
 
 function prismMesh(p: Prism, material: THREE.Material): THREE.Mesh {
-  // plan (x, y) in mm → shape; extrude along z by the prism's height; then into the scene frame
+  // the outline (u, v) in mm → shape, extruded by the prism's length w; each vertex then placed in the model frame
+  // (axis z: x = u, y = v, z = z0 + w; axis x: x = z0 + w, y = u, z = v) and into the scene frame (x, z, −y)
   const shape = new THREE.Shape(p.outline.map(q => new THREE.Vector2(q[0] / 1000, q[1] / 1000)));
   shape.holes = p.holes.map(h => new THREE.Path(h.map(q => new THREE.Vector2(q[0] / 1000, q[1] / 1000))));
   const geo = new THREE.ExtrudeGeometry(shape, { depth: (p.z1 - p.z0) / 1000, bevelEnabled: false });
-  geo.translate(0, 0, p.z0 / 1000);
-  geo.rotateX(-Math.PI / 2);   // model z up → scene y up, model y north → scene −z
+  const pos = geo.getAttribute("position");
+  for (let i = 0; i < pos.count; i++) {
+    const u = pos.getX(i), v = pos.getY(i), w = pos.getZ(i) + p.z0 / 1000;
+    const [x, y, z] = p.axis === "x" ? [w, u, v] : [u, v, w];
+    pos.setXYZ(i, x, z, -y);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
   return new THREE.Mesh(geo, material);
 }
 

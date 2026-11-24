@@ -6,7 +6,9 @@ import type { Summary } from "@/lib/engine-run";
 
 export const STORE_KEY = "xstruc.web.jobs.v1";
 
-export type Kind = "floor" | "panel";
+export type Kind = "floor" | "panel" | "pit";
+export const KINDS: Kind[] = ["floor", "panel", "pit"];
+export const KIND_NAME: Record<Kind, string> = { floor: "Floor slab", panel: "Precast panel", pit: "Pit (mud trap)" };
 export interface LocalElement { id: string; kind: Kind; name: string; inputs: ElementInput; updated: string; summary?: Summary }
 export interface LocalProject { id: string; name: string; jobNumber: string; site: string; created: string; elements: LocalElement[] }
 export interface LocalData { version: 1; projects: LocalProject[] }
@@ -50,7 +52,7 @@ const withProject = (d: LocalData, pid: string, f: (p: LocalProject) => LocalPro
 export function addElement(d: LocalData, pid: string, e: { kind: Kind; name: string; inputs: ElementInput }, id: string, now: string): LocalData {
   const name = clean(e.name, 200);
   if (!name) throw new Error("Give the floor or panel a name.");
-  if (e.kind !== "floor" && e.kind !== "panel") throw new Error("Pick floor slab or precast panel.");
+  if (!KINDS.includes(e.kind)) throw new Error("Pick floor slab, precast panel or pit.");
   return withProject(d, pid, p => ({ ...p, elements: [...p.elements, { id, kind: e.kind, name, inputs: e.inputs, updated: now }] }));
 }
 
@@ -93,10 +95,10 @@ export function parseBackup(text: string): { ok: true; data: LocalData } | { ok:
     if (!raw || typeof raw.id !== "string" || typeof raw.name !== "string" || !Array.isArray(raw.elements)) return { ok: false, error: "A project in that backup is damaged." };
     const elements: LocalElement[] = [];
     for (const e of raw.elements as Record<string, unknown>[]) {
-      if (!e || typeof e.id !== "string" || typeof e.name !== "string" || (e.kind !== "floor" && e.kind !== "panel") || !e.inputs || typeof e.inputs !== "object") {
+      if (!e || typeof e.id !== "string" || typeof e.name !== "string" || !KINDS.includes(e.kind as Kind) || !e.inputs || typeof e.inputs !== "object") {
         return { ok: false, error: "A floor or panel in project " + raw.name + " is damaged." };
       }
-      elements.push({ id: e.id, kind: e.kind, name: e.name, inputs: e.inputs as ElementInput, updated: String(e.updated ?? ""), ...(e.summary ? { summary: e.summary as Summary } : {}) });
+      elements.push({ id: e.id, kind: e.kind as Kind, name: e.name, inputs: e.inputs as ElementInput, updated: String(e.updated ?? ""), ...(e.summary ? { summary: e.summary as Summary } : {}) });
     }
     projects.push({ id: raw.id, name: raw.name, jobNumber: String(raw.jobNumber ?? ""), site: String(raw.site ?? ""), created: String(raw.created ?? ""), elements });
   }
