@@ -5,7 +5,7 @@
 // Every rule is geometry or text matching (no AI, no network). Nothing an engineer decides is guessed: a value the
 // drawing does not give is asked for (`missing`), and anything the engine cannot build yet is said (`issues`).
 // The result is the engine's FloorInput plus the report a person reads before building.
-import { buildModel, matDirectionError, parseCallout, type Callout, type FloorInput } from "@xstruc/engine";
+import { buildModel, matDirectionError, MESH, parseCallout, type Callout, type FloorInput } from "@xstruc/engine";
 import type { Circle, Entity, Hatch, Leader, Line, Pline, Pt, Sheet, Text } from "./sheet.ts";
 import { isDashed } from "./sheet.ts";
 import { area, boxCentre, boxDist, boxH, boxOf, boxW, dist, inBox, inPoly, isHorizontal, isOrthogonal, isRect, isVertical, median, segDist, simplify, type Box } from "./geom.ts";
@@ -16,7 +16,7 @@ export interface Found { kind: FoundKind; label: string; ids: string[]; box?: Bo
 export interface Issue { level: "error" | "check"; step: number; text: string; ids: string[] }
 export interface StepReport { n: number; title: string; status: "ok" | "check" | "error"; lines: string[] }
 /** A value the drawing does not give (or gives more than one of) that a person must type before building. */
-export interface Missing { key: string; label: string; unit: string; options?: number[] }
+export interface Missing { key: string; label: string; unit: string; options?: (number | string)[]; note?: string }
 
 export interface PlanReading {
   input: FloorInput | null;
@@ -32,7 +32,7 @@ export interface PlanReading {
 
 export interface ReadOptions {
   /** Values typed by a person for the keys in `missing` (thickness, cover, fc, lap, balcony.0.thk …). */
-  values?: Record<string, number>;
+  values?: Record<string, number | string>;
   name?: string;
 }
 
@@ -52,11 +52,64 @@ const CONCRETE_WORDS = /\b(CONC|CONCRETE|MPA|GRADE|F'?C)\b/;
 const BALCONY_WORDS = /\b(BALCONY|BALC|TERRACE|DECK|CANTILEVER|VERANDAH)\b/;
 const NOTES_HEAD = /\b(U\.?N\.?O\.?|UNLESS NOTED|TYPICAL|GENERAL NOTES?|SLAB REINF|REINFORCEMENT)\b/;
 
+/** A closed outline: a closed polyline, or a rectangle made of separate lines (the ids are its pieces). */
+interface Ring { id: string; ids: string[]; pts: Pt[]; box: Box }
+type Seg = { id: string; a: Pt; b: Pt; e: Line | Pline };
+
+/**
+ * Rectangles drawn as separate lines (PDF plots and exploded CAD): solid horizontal and vertical lines, collinear
+ * pieces joined, and a rectangle wherever two of each cover its sides and meet at its corners (at each corner one of
+ * the two lines ends there: lines that cross straight through, like two distribution lines, make no corner).
+ */
+export function rectsFromLines(segs: Seg[], minSide = 300, tol = 3): Ring[] {
+  type Span = { v: number; lo: number; hi: number; ids: string[] };
+  const H: Span[] = [], V: Span[] = [];
+  for (const s of segs) {
+    if (isDashed(s.e.linetype) || dist(s.a, s.b) < minSide / 2) continue;
+    if (isHorizontal(s.a, s.b, 0.3)) H.push({ v: (s.a[1] + s.b[1]) / 2, lo: Math.min(s.a[0], s.b[0]), hi: Math.max(s.a[0], s.b[0]), ids: [s.id] });
+    else if (isVertical(s.a, s.b, 0.3)) V.push({ v: (s.a[0] + s.b[0]) / 2, lo: Math.min(s.a[1], s.b[1]), hi: Math.max(s.a[1], s.b[1]), ids: [s.id] });
+  }
+  const join = (list: Span[]) => {
+    list.sort((p, q) => p.v - q.v || p.lo - q.lo);
+    const out: Span[] = [];
+    for (const s of list) {
+      const prev = out.find(o => Math.abs(o.v - s.v) <= tol && s.lo <= o.hi + tol && s.hi >= o.lo - tol);
+      if (prev) { prev.lo = Math.min(prev.lo, s.lo); prev.hi = Math.max(prev.hi, s.hi); prev.ids.push(...s.ids); prev.v = (prev.v + s.v) / 2; }
+      else out.push({ ...s, ids: [...s.ids] });
+    }
+    return out.filter(s => s.hi - s.lo >= minSide);
+  };
+  const HJ = join(H), VJ = join(V);
+  const endsAt = (s: Span, at: number) => Math.abs(s.lo - at) <= tol || Math.abs(s.hi - at) <= tol;
+  const out: Ring[] = [], seen = new Set<string>();
+  for (let i = 0; i < VJ.length; i++) for (let j = 0; j < VJ.length; j++) {
+    const l = VJ[i], r = VJ[j];
+    if (r.v - l.v < minSide) continue;
+    const ylo = Math.max(l.lo, r.lo), yhi = Math.min(l.hi, r.hi);
+    if (yhi - ylo < minSide) continue;
+    const hs = HJ.filter(h => h.lo <= l.v + tol && h.hi >= r.v - tol && h.v >= ylo - tol && h.v <= yhi + tol).sort((p, q) => p.v - q.v);
+    for (let a = 0; a < hs.length; a++) for (let b = a + 1; b < hs.length; b++) {
+      const bot = hs[a], top = hs[b];
+      if (top.v - bot.v < minSide) continue;
+      const corner = (vs: Span, hz: Span, x: number, y: number) => endsAt(vs, y) || endsAt(hz, x);
+      if (!corner(l, bot, l.v, bot.v) || !corner(r, bot, r.v, bot.v) || !corner(l, top, l.v, top.v) || !corner(r, top, r.v, top.v)) continue;
+      const key = [l.v, r.v, bot.v, top.v].map(v => Math.round(v)).join(",");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const pts: Pt[] = [[l.v, bot.v], [r.v, bot.v], [r.v, top.v], [l.v, top.v]];
+      out.push({ id: "rect:" + key, ids: [...new Set([...l.ids, ...r.ids, ...bot.ids, ...top.ids])], pts, box: boxOf(pts) });
+    }
+  }
+  return out;
+}
+
 const up = (s: string) => s.toUpperCase().replace(/\s+/g, " ").trim();
 const fmt = (v: number) => Math.round(v).toLocaleString("en-AU");
 
 export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
-  const values = opts.values ?? {};
+  const given = opts.values ?? {};
+  const values: Record<string, number> = Object.fromEntries(Object.entries(given).filter(([, v]) => typeof v === "number")) as Record<string, number>;
+  const choice = (k: string): string | undefined => (typeof given[k] === "string" ? (given[k] as string) : undefined);
   const found: Found[] = [], issues: Issue[] = [], steps: StepReport[] = [], missing: Missing[] = [];
   const issue = (level: Issue["level"], step: number, text: string, ids: string[] = []) => issues.push({ level, step, text, ids });
   const used = new Set<string>();   // entities already explained by an earlier step
@@ -66,13 +119,18 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
   const leaders = E.filter((e): e is Leader => e.kind === "leader");
   const hatches = E.filter((e): e is Hatch => e.kind === "hatch");
   // straight pieces: LINEs and two-point polylines
-  const segs: { id: string; a: Pt; b: Pt; e: Line | Pline }[] = [];
+  const segs: Seg[] = [];
   for (const e of E) {
     if (e.kind === "line") segs.push({ id: e.id, a: e.a, b: e.b, e });
-    else if (e.kind === "pline" && !e.closed && simplify(e.pts, false).length === 2) { const p = simplify(e.pts, false); segs.push({ id: e.id, a: p[0], b: p[1], e }); }
+    else if (e.kind === "pline" && !e.closed) {   // an open polyline's straight pieces (an L of two edges, a bent line)
+      const p = simplify(e.pts, false, 0.5);
+      if (p.length <= 12 || p.length === e.pts.length) for (let i = 0; i + 1 < p.length; i++) segs.push({ id: e.id, a: p[i], b: p[i + 1], e });
+    }
   }
-  const rings = E.filter((e): e is Pline => e.kind === "pline" && (e.closed || (e.pts.length > 3 && dist(e.pts[0], e.pts[e.pts.length - 1]) < 1)))
-    .map(e => ({ id: e.id, e, pts: simplify(e.pts, true), box: boxOf(e.pts) }));
+  const rings: Ring[] = E.filter((e): e is Pline => e.kind === "pline" && (e.closed || (e.pts.length > 3 && dist(e.pts[0], e.pts[e.pts.length - 1]) < 1)))
+    .map(e => ({ id: e.id, ids: [e.id], pts: simplify(e.pts, true), box: boxOf(e.pts) }));
+  const useRing = (r: Ring) => r.ids.forEach(i => used.add(i));
+  const ringUsed = (r: Ring) => r.ids.some(i => used.has(i));
   const leaderText = new Map<string, Text>();
   for (const l of leaders) {
     const tail = l.pts[l.pts.length - 1];
@@ -90,6 +148,8 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
       "Units: " + sheet.units.name + (sheet.units.inferred ? " (not stated in the file; worked out from the drawing's size)" : "")
     ];
     sheet.warnings.forEach(w => lines.push(w));
+    const kind = sheetKind(texts);
+    if (kind) { lines.push("This sheet looks like " + kind + "."); issue("check", 1, "This sheet looks like " + kind + "; the reader reads reinforcement plans. Use the plan sheet for the 3D, and this one to check it.", []); }
     if (sheet.units.inferred) issue("check", 1, "The file does not say its units; read as " + sheet.units.name + ". Check one dimension.");
     if (!E.length) issue("error", 1, "Nothing was read from the file.");
     steps.push({ n: 1, title: "Open the drawing", status: status(1), lines });
@@ -98,6 +158,8 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
 
   // ---------- 2 grid lines: a long straight line with a bubble (circle with a short label) at an end
   const gridV: { x: number; label: string; ids: string[] }[] = [], gridH: { y: number; label: string; ids: string[] }[] = [];
+  let noGrid = false;
+  let slabFrame: Ring | null = null;
   {
     const ext = sheet.extents!, span = Math.max(ext.max[0] - ext.min[0], ext.max[1] - ext.min[1]);
     const bubbles: { c: Circle; label: string; tid: string }[] = [];
@@ -135,13 +197,34 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
     const lines: string[] = [];
     if (gridV.length) lines.push(gridV.length + " grid lines across (" + gridV.map(g => g.label).join(", ") + "), spacings " + gridV.slice(1).map((g, i) => fmt(g.x - gridV[i].x)).join(", "));
     if (gridH.length) lines.push(gridH.length + " grid lines up (" + gridH.map(g => g.label).join(", ") + "), spacings " + gridH.slice(1).map((g, i) => fmt(g.y - gridH[i].y)).join(", "));
-    if (gridV.length < 2 || gridH.length < 2) issue("error", 2, "Need at least two grid lines each way, each a straight line ending in a bubble with its label; found " + gridV.length + " across and " + gridH.length + " up.");
+    if (!gridV.length && !gridH.length) {
+      noGrid = true;
+      lines.push("No grid lines with bubbles on this drawing: the slab's own corners are used as the frame.");
+      issue("check", 2, "No grid lines on this drawing; the 3D measures from the slab's bottom-left corner and calls its edges grids 1, 2 and A, B.");
+    } else if (gridV.length < 2 || gridH.length < 2) issue("error", 2, "Need at least two grid lines each way, each a straight line ending in a bubble with its label; found " + gridV.length + " across and " + gridH.length + " up.");
     const order = (ls: string[]) => ls.every((l, i) => i === 0 || cmpLabel(ls[i - 1], l) < 0) ? "up" : ls.every((l, i) => i === 0 || cmpLabel(ls[i - 1], l) > 0) ? "down" : "mixed";
     const ax = gridV.map(g => g.label), ay = gridH.map(g => g.label);
     if (ax.length >= 2 && (!ax.every(l => /^\d+$/.test(l)) || order(ax) !== "up")) issue("check", 2, "The engine names the grids across 1, 2, 3 … from the left; the drawing has " + ax.join(", ") + ". The 3D uses the engine's names.");
     if (ay.length >= 2 && (!ay.every(l => /^[A-Z]+$/.test(l)) || order(ay) !== "up")) issue("check", 2, "The engine names the grids up A, B, C … from the bottom; the drawing has " + ay.join(", ") + ". The 3D uses the engine's names.");
     steps.push({ n: 2, title: "Find the grid lines", status: status(2), lines });
-    if (gridV.length < 2 || gridH.length < 2) return finish(null, null);
+    if (!noGrid && (gridV.length < 2 || gridH.length < 2)) return finish(null, null);
+  }
+  rings.push(...rectsFromLines(segs.filter(s => !used.has(s.id))));
+  // with no grid lines, the slab is the largest outline the dimensions confirm, and its corners are the frame
+  if (noGrid) {
+    const ext = sheet.extents!, W = ext.max[0] - ext.min[0], H = ext.max[1] - ext.min[1];
+    const figures = texts.map(t => t.text.trim()).filter(x => /^\d{3,6}$/.test(x)).map(Number);
+    const near = (v: number) => figures.some(f => Math.abs(f - v) <= Math.max(5, 0.004 * f));
+    const cands = rings.filter(r => boxW(r.box) >= 1000 && boxH(r.box) >= 1000 && r.box.x0 - ext.min[0] > 0.01 * W && ext.max[0] - r.box.x1 > 0.01 * W && r.box.y0 - ext.min[1] > 0.01 * H && ext.max[1] - r.box.y1 > 0.01 * H);
+    const confirmed = cands.filter(r => near(boxW(r.box)) && near(boxH(r.box)));
+    const pick = (confirmed.length ? confirmed : cands).sort((a, b) => boxW(b.box) * boxH(b.box) - boxW(a.box) * boxH(a.box))[0];
+    if (!pick) { issue("error", 3, "No slab edge found: no closed outline (or four lines meeting at corners) on the drawing."); steps.push({ n: 3, title: "Find the slab edge", status: "error", lines: [] }); return finish(null, null); }
+    if (!confirmed.length) issue("check", 3, "No dimension on the drawing matches the outline taken as the slab (" + fmt(boxW(pick.box)) + " × " + fmt(boxH(pick.box)) + "); check it is the slab.", pick.ids);
+    slabFrame = pick;
+    const snap = (v: number) => figures.filter(f => Math.abs(f - v) <= Math.max(5, 0.004 * f)).sort((a, b) => Math.abs(a - v) - Math.abs(b - v))[0] ?? v;
+    const sw = snap(boxW(pick.box)), sh = snap(boxH(pick.box));
+    gridV.push({ x: pick.box.x0, label: "1", ids: [] }, { x: pick.box.x0 + sw, label: "2", ids: [] });
+    gridH.push({ y: pick.box.y0, label: "A", ids: [] }, { y: pick.box.y0 + sh, label: "B", ids: [] });
   }
   const origin: Pt = [gridV[0].x, gridH[0].y];
   const G: Box = { x0: gridV[0].x, y0: gridH[0].y, x1: gridV[gridV.length - 1].x, y1: gridH[gridH.length - 1].y };
@@ -160,13 +243,13 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
   {
     const lines: string[] = [];
     const corners: Pt[] = [[G.x0, G.y0], [G.x1, G.y0], [G.x1, G.y1], [G.x0, G.y1]];
-    const cands = rings.filter(r => !used.has(r.id) && corners.every(c => inPoly(c, r.pts, 1))).sort((a, b) => Math.abs(area(a.pts)) - Math.abs(area(b.pts)));
-    const slab = cands[0];
+    const cands = rings.filter(r => !ringUsed(r) && corners.every(c => inPoly(c, r.pts, 1))).sort((a, b) => Math.abs(area(a.pts)) - Math.abs(area(b.pts)));
+    const slab = slabFrame ?? cands[0];
     if (!slab) issue("error", 3, "No slab edge found: draw the slab outline as one closed polyline around the grids.");
     else {
-      used.add(slab.id);
+      useRing(slab);
       const ring = slab.pts;
-      if (!isOrthogonal(ring)) issue("error", 3, "The slab edge has sloping or curved sides; the engine builds square-cornered slabs only for now.", [slab.id]);
+      if (!isOrthogonal(ring)) issue("error", 3, "The slab edge has sloping or curved sides; the engine builds square-cornered slabs only for now.", slab.ids);
       // the main edge on each side: the longest edge piece parallel to that side outside the grids
       const sideEdge = (side: "N" | "S" | "E" | "W"): number | null => {
         const byV = new Map<number, number>();
@@ -186,21 +269,22 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
         for (const [v, len] of byV) if (!best || len > best[1]) best = [v, len];
         return best ? best[0] : null;
       };
-      const n = sideEdge("N"), s = sideEdge("S"), e = sideEdge("E"), w = sideEdge("W");
-      if (n === null || s === null || e === null || w === null) issue("error", 3, "Could not find the slab edge on every side of the grids.", [slab.id]);
+      const n = slabFrame ? G.y1 : sideEdge("N"), s = slabFrame ? G.y0 : sideEdge("S"), e = slabFrame ? G.x1 : sideEdge("E"), w = slabFrame ? G.x0 : sideEdge("W");
+      if (slabFrame && !isRect(ring)) issue("error", 3, "The slab edge is not a rectangle; without grid lines the reader cannot yet tell the slab from a balcony or notch.", slab.ids);
+      if (n === null || s === null || e === null || w === null) issue("error", 3, "Could not find the slab edge on every side of the grids.", slab.ids);
       else {
         const ov = { N: Math.round(n - G.y1), S: Math.round(G.y0 - s), E: Math.round(e - G.x1), W: Math.round(G.x0 - w) };
         const vals = Object.values(ov);
         overhang = Math.round(median(vals));
         if (Math.max(...vals) - Math.min(...vals) > 5) {
-          issue("check", 3, "The slab edge is not the same distance outside the grids all round (north " + ov.N + ", south " + ov.S + ", east " + ov.E + ", west " + ov.W + "). The engine uses one distance for now: " + overhang + ".", [slab.id]);
+          issue("check", 3, "The slab edge is not the same distance outside the grids all round (north " + ov.N + ", south " + ov.S + ", east " + ov.E + ", west " + ov.W + "). The engine uses one distance for now: " + overhang + ".", slab.ids);
         }
         R = { x0: G.x0 - overhang, y0: G.y0 - overhang, x1: G.x1 + overhang, y1: G.y1 + overhang };
         lines.push("Slab " + fmt(boxW(R)) + " × " + fmt(boxH(R)) + ", edge " + overhang + " outside the outer grids");
-        found.push({ kind: "slab", label: "Slab edge", ids: [slab.id], box: R, sure: true });
+        found.push({ kind: "slab", label: "Slab edge", ids: slab.ids, box: R, sure: true });
         // balconies: the parts of the outline outside the main rectangle, one rectangle per side
         let extra = 0;
-        for (const side of ["N", "S", "E", "W"] as const) {
+        for (const side of (slabFrame ? [] : ["N", "S", "E", "W"]) as ("N" | "S" | "E" | "W")[]) {
           const out = ring.filter(p => side === "N" ? p[1] > R!.y1 + 1 : side === "S" ? p[1] < R!.y0 - 1 : side === "E" ? p[0] > R!.x1 + 1 : p[0] < R!.x0 - 1);
           if (!out.length) continue;
           const b = boxOf(out);
@@ -215,15 +299,15 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
           const along = side === "N" || side === "S" ? [bx.x0 - origin[0], bx.x1 - origin[0]] : [bx.y0 - origin[1], bx.y1 - origin[1]];
           const proj = side === "N" || side === "S" ? boxH(bx) : boxW(bx);
           const i = balconies.length;
-          balconies.push({ name, edge: side, from: Math.round(along[0]), to: Math.round(along[1]), proj: Math.round(proj), thk: values["balcony." + i + ".thk"] ?? thk, down: values["balcony." + i + ".down"] ?? down, ids: [slab.id, ...words.map(t => t.id)], box: bx });
+          balconies.push({ name, edge: side, from: Math.round(along[0]), to: Math.round(along[1]), proj: Math.round(proj), thk: values["balcony." + i + ".thk"] ?? thk, down: values["balcony." + i + ".down"] ?? down, ids: [...slab.ids, ...words.map(t => t.id)], box: bx });
           words.forEach(t => used.add(t.id));
-          found.push({ kind: "balcony", label: name + " off the " + ({ N: "north", S: "south", E: "east", W: "west" })[side] + " edge", ids: [slab.id, ...words.map(t => t.id)], box: bx, sure: true });
+          found.push({ kind: "balcony", label: name + " off the " + ({ N: "north", S: "south", E: "east", W: "west" })[side] + " edge", ids: [...slab.ids, ...words.map(t => t.id)], box: bx, sure: true });
           lines.push(name + " on the " + ({ N: "north", S: "south", E: "east", W: "west" })[side] + " edge, " + fmt(boxW(bx)) + " × " + fmt(boxH(bx)) + (thk ? ", " + thk + " thick" : "") + (down !== null ? ", set down " + down : ""));
           if (thk === null && values["balcony." + i + ".thk"] === undefined) missing.push({ key: "balcony." + i + ".thk", label: name + " (" + side + " edge) slab thickness", unit: "mm" });
           if (down === null && values["balcony." + i + ".down"] === undefined) missing.push({ key: "balcony." + i + ".down", label: name + " (" + side + " edge) set-down below the main slab top", unit: "mm" });
         }
         const a = Math.abs(area(ring)), want = boxW(R) * boxH(R) + extra;
-        if (Math.abs(a - want) > 0.005 * want) issue("error", 3, "The slab edge is not a rectangle with rectangular balconies (it has a notch or an L-shape); the engine builds that shape only for now.", [slab.id]);
+        if (!slabFrame && Math.abs(a - want) > 0.005 * want) issue("error", 3, "The slab edge is not a rectangle with rectangular balconies (it has a notch or an L-shape); the engine builds that shape only for now.", slab.ids);
       }
     }
     steps.push({ n: 3, title: "Find the slab edge", status: status(3), lines });
@@ -238,18 +322,25 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
   let columns = 0;
   {
     const lines: string[] = [];
-    const inside = rings.filter(r => !used.has(r.id) && r.pts.every(p => inBox(p, slabBox, 1)));
-    const gridPts = gridV.flatMap(v => gridH.map(h => [v.x, h.y] as Pt));
+    const slabArea = boxW(slabBox) * boxH(slabBox);
+    const inside = rings.filter(r => !ringUsed(r) && r.pts.every(p => inBox(p, slabBox, 1)));
+    const gridPts = noGrid ? [] : gridV.flatMap(v => gridH.map(h => [v.x, h.y] as Pt));
     let unnamed = 0;
+    // long narrow strips (a trench, channel or kerb) and large areas (the inside of a kerb, half a pad) are not
+    // openings; strips are reported once, the outermost of any nested in each other
+    const strips: Ring[] = [], unnamedShapes: Ring[] = [], labelled: { ids: string[]; label: string }[] = [];
     for (const r of inside) {
-      const w = boxW(r.box), h = boxH(r.box), c = boxCentre(r.box);
+      const w = boxW(r.box), h = boxH(r.box);
+      if (Math.min(w, h) < 300) continue;   // a bar drawn as a shape, a kerb line pair
+      if (w * h > 0.25 * slabArea) continue;
       // a column: a small square or circle on a grid intersection
-      if (w <= 1500 && h <= 1500 && gridPts.some(g => inBox(g, r.box, 1))) { columns++; used.add(r.id); found.push({ kind: "column", label: "Column", ids: [r.id], box: r.box, sure: true }); continue; }
+      if (w <= 1500 && h <= 1500 && gridPts.some(g => inBox(g, r.box, 1))) { columns++; useRing(r); found.push({ kind: "column", label: "Column", ids: r.ids, box: r.box, sure: true }); continue; }
+      if (Math.min(w, h) < 800 && Math.max(w, h) / Math.min(w, h) >= 8) { if (!strips.some(o => inBox([r.box.x0, r.box.y0], o.box, 1) && inBox([r.box.x1, r.box.y1], o.box, 1))) { for (let k = strips.length - 1; k >= 0; k--) if (inBox([strips[k].box.x0, strips[k].box.y0], r.box, 1) && inBox([strips[k].box.x1, strips[k].box.y1], r.box, 1)) strips.splice(k, 1); strips.push(r); } continue; }
       const words = [...textIn(r.pts, r.box).map(t => ({ t, via: "" })), ...textLeadered(r.pts, r.box)].filter(x => !used.has(x.t.id) && !(CALLOUT_HINT.test(up(x.t.text)) && /\d\s*[-@]\s*\d|\b(?:T|B)[12]?\b/.test(up(x.t.text))));
       // a box drawn round a text (a framed note) is not an opening
       if (words.length === 1 && !words[0].via && boxW(boxOf(words[0].t.box)) * boxH(boxOf(words[0].t.box)) > 0.35 * w * h) continue;
       const all = up(words.map(x => x.t.text).join(" "));
-      const ids = [r.id, ...words.flatMap(x => (x.via ? [x.t.id, x.via] : [x.t.id]))];
+      const ids = [...r.ids, ...words.flatMap(x => (x.via ? [x.t.id, x.via] : [x.t.id]))];
       const crossed = segs.filter(s => !used.has(s.id) && Math.min(dist(s.a, [r.box.x0, r.box.y0]), dist(s.a, [r.box.x1, r.box.y1]), dist(s.a, [r.box.x0, r.box.y1]), dist(s.a, [r.box.x1, r.box.y0])) < 5 && Math.min(dist(s.b, [r.box.x0, r.box.y0]), dist(s.b, [r.box.x1, r.box.y1]), dist(s.b, [r.box.x0, r.box.y1]), dist(s.b, [r.box.x1, r.box.y0])) < 5 && dist(s.a, s.b) > 0.9 * Math.hypot(w, h));
       const hatched = hatches.some(hh => hh.loops.some(l => { const b = boxOf(l); return Math.abs(b.x0 - r.box.x0) < 2 && Math.abs(b.y1 - r.box.y1) < 2 && Math.abs(b.x1 - r.box.x1) < 2 && Math.abs(b.y0 - r.box.y0) < 2; }));
       const rect = isRect(r.pts);
@@ -290,10 +381,20 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
         lines.push("Opening " + name + " " + fmt(w) + " × " + fmt(h) + " at " + fmt(a[0]) + ", " + fmt(a[1]));
         continue;
       }
-      if (w > 300 && h > 300 && words.length === 0 && !crossed.length) issue("check", 4, "A closed shape " + fmt(w) + " × " + fmt(h) + " at " + fmt(a[0]) + ", " + fmt(a[1]) + " has nothing saying what it is; left out.", [r.id]);
-      else if (w > 300 && h > 300 && all && !CALLOUT_HINT.test(all)) issue("check", 4, "A closed shape at " + fmt(a[0]) + ", " + fmt(a[1]) + " is labelled \"" + all.slice(0, 40) + "\", which is not an opening, set-down or step; left out.", ids);
+      if (w > 300 && h > 300 && words.length === 0 && !crossed.length) unnamedShapes.push(r);
+      else if (w > 300 && h > 300 && all && !CALLOUT_HINT.test(all)) labelled.push({ ids, label: all.slice(0, 30) });
+    }
+    if (unnamedShapes.length === 1) { const r = unnamedShapes[0], a = rel([r.box.x0, r.box.y0]); issue("check", 4, "A closed shape " + fmt(boxW(r.box)) + " × " + fmt(boxH(r.box)) + " at " + fmt(a[0]) + ", " + fmt(a[1]) + " has nothing saying what it is; left out.", r.ids); }
+    else if (unnamedShapes.length > 1) issue("check", 4, unnamedShapes.length + " closed shapes inside the slab have nothing saying what they are; left out (point here to see them).", unnamedShapes.flatMap(r => r.ids));
+    const labels = [...new Set(labelled.map(l => l.label))];
+    if (labels.length) issue("check", 4, labels.length === 1 ? "A closed shape labelled \"" + labels[0] + "\" is not an opening, set-down or step; left out." : labels.length + " closed shapes are labelled with words that are not openings, set-downs or steps (" + labels.slice(0, 4).map(l => "\"" + l + "\"").join(", ") + (labels.length > 4 ? " …" : "") + "); left out.", labelled.flatMap(l => l.ids));
+    for (const r of strips) {
+      const a = rel([r.box.x0, r.box.y0]);
+      issue("check", 4, "A long narrow strip " + fmt(boxW(r.box)) + " × " + fmt(boxH(r.box)) + " at " + fmt(a[0]) + ", " + fmt(a[1]) + " (a trench, channel or kerb?) is not built: the engine has no trenches or kerbs yet.", r.ids);
+      found.push({ kind: "opening", label: "Strip (not built)", ids: r.ids, box: r.box, sure: false });
     }
     if (!openings.length && !setdowns.length && !step) lines.push("No openings, set-downs or steps");
+    if (strips.length) lines.push(strips.length + " long narrow strip(s) seen (trench, channel or kerb?), not built");
     if (columns) lines.push(columns + " columns on grid intersections (seen; the engine does not draw them from a drawing yet)");
     steps.push({ n: 4, title: "Find openings, set-downs and steps", status: status(4), lines });
   }
@@ -342,7 +443,23 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
   }
 
   // ---------- 6 reinforcement callouts: parse every text in the callout grammar; layer, direction, extent
-  interface Call { t: Text; text: string; c: Callout; ids: string[]; extent: { ids: string[]; cover: number } | null; where: "plan" | "notes" }
+  interface Call { t: Text; text: string; c: Callout; ids: string[]; extent: { ids: string[]; cover: number; through?: boolean } | null; where: "plan" | "notes" }
+  // the solid straight line a text sits on: collinear with the text, ending at (or crossing) its box on both sides
+  const lineThrough = (t: Text): { ids: string[]; len: number; horizontal: boolean } | null => {
+    const r = ((t.rot % 180) + 180) % 180, horizontal = r < 5 || r > 175, vertical = Math.abs(r - 90) < 5;
+    if (!horizontal && !vertical) return null;
+    const tb = boxOf(t.box), c = boxCentre(tb), across = horizontal ? boxH(tb) : boxW(tb);
+    const pieces = segs.filter(s => !used.has(s.id) && !isDashed(s.e.linetype) && (horizontal ? isHorizontal(s.a, s.b, 0.5) : isVertical(s.a, s.b, 0.5)) && dist(s.a, s.b) >= 300
+      && Math.abs(horizontal ? (s.a[1] + s.b[1]) / 2 - c[1] : (s.a[0] + s.b[0]) / 2 - c[0]) <= across * 0.5
+      && Math.min(boxDist(s.a, tb), boxDist(s.b, tb)) <= Math.max(t.h, 60));
+    const lo = horizontal ? tb.x0 : tb.y0, hi = horizontal ? tb.x1 : tb.y1, along = (p: Pt) => (horizontal ? p[0] : p[1]);
+    const before = pieces.filter(s => Math.max(along(s.a), along(s.b)) <= lo + t.h), after = pieces.filter(s => Math.min(along(s.a), along(s.b)) >= hi - t.h);
+    if (!before.length || !after.length) return null;
+    const all = [...before, ...after], ends = all.flatMap(s => [along(s.a), along(s.b)]);
+    // arrowheads or ticks at the ends and where it crosses a drawn bar count as part of it
+    const marks = hatches.filter(h => h.loops[0].length <= 8 && boxW(boxOf(h.loops[0])) < 6 * t.h && boxH(boxOf(h.loops[0])) < 6 * t.h && all.some(s => segDist(boxCentre(boxOf(h.loops[0])), s.a, s.b) < t.h)).map(h => h.id);
+    return { ids: [...all.map(s => s.id), ...marks], len: Math.max(...ends) - Math.min(...ends), horizontal };
+  };
   const mats: Call[] = [];
   const calloutLines: string[] = [];
   {
@@ -359,8 +476,10 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
     }
     const pieceIds = new Set<string>();
     for (const { t, text } of callTexts) {
+      if (LEVEL_TEXT.test(text)) continue;   // a reduced level (RL 256.08), not reinforcement
       const c = parseCallout(text, { scheme: "TB" });
       if (c.error || !c.kind || c.kind === "thickness") continue;
+      if (c.kind === "mesh" && !(c.mesh && c.mesh in (MESH as Record<string, unknown>))) continue;
       if (c.kind === "bar" && c.spacing === null && !c.role && !c.count) continue;   // a bar size on its own (e.g. a mark) is not a callout
       const ids = [t.id];
       const tcentre = boxCentre(boxOf(t.box));
@@ -380,8 +499,19 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
         continue;
       }
       if (c.kind === "bar" && c.spacing === null) continue;
+      // a callout written ON its distribution line (the line runs through the text, broken where the text is):
+      // the bars run across that line, and the line's length is their extent
+      const onLine = inPlan ? lineThrough(t) : null;
+      if (onLine) {
+        const dir = onLine.horizontal ? "Y" : "X";
+        if (c.direction && c.direction !== dir) issue("check", 6, "\"" + text + "\" says " + (c.direction === "X" ? "E-W" : "N-S") + " but is written on a line that runs " + (onLine.horizontal ? "across" : "up") + " the sheet; the words are used.", [t.id, ...onLine.ids]);
+        else call.c = { ...c, direction: dir };
+        call.extent = { ids: onLine.ids, cover: onLine.len / (onLine.horizontal ? boxW(slabBox) : boxH(slabBox)), through: true };
+        call.ids.push(...onLine.ids);
+        onLine.ids.forEach(i => pieceIds.add(i));
+      }
       // the extent: a distribution line across the bars next to the callout (or leadered to it)
-      if (inPlan) {
+      else if (inPlan) {
         const dir = c.direction;
         const across = (s: (typeof segs)[number]) => dir === "X" ? isVertical(s.a, s.b, 2) : dir === "Y" ? isHorizontal(s.a, s.b, 2) : isVertical(s.a, s.b, 2) || isHorizontal(s.a, s.b, 2);
         const tb = boxOf(t.box), tc = boxCentre(tb);
@@ -407,14 +537,32 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
     pieceIds.forEach(i => used.add(i));
     mats.forEach(m => used.add(m.t.id));
 
-    // layers: T1 / T2 / B1 / B2 directly; a lone T or B is the outer layer of that face; two T (or B) without numbers cannot be placed
+    for (const m of mats) {
+      const c = m.c, way = c.direction === "X" ? "E-W (across the sheet)" : c.direction === "Y" ? "N-S (up the sheet)" : "no direction";
+      const face = c.position === "TB" ? "top and bottom" : c.position === "T" ? "top" : c.position === "B" ? "bottom" : c.layer ?? "no layer";
+      lines.push("\"" + m.text + "\": " + (c.kind === "mesh" ? c.mesh + " mesh" : c.type + "" + c.size + " at " + c.spacing) + ", " + face + ", bars " + way + (m.extent ? ", " + (m.extent.through ? "written on its distribution line" : "beside its distribution line") + " over " + Math.round(m.extent.cover * 100) + " % of the slab" : m.where === "notes" ? ", from the notes" : ""));
+    }
+    // "TOP & BOT" is the same bars in the top mat and in the bottom mat
+    for (const m of [...mats]) if (m.c.kind === "bar" && m.c.position === "TB" && !m.c.layer) {
+      mats.splice(mats.indexOf(m), 1, { ...m, c: { ...m.c, position: "T" } }, { ...m, c: { ...m.c, position: "B" } });
+    }
+    // layers: T1 / T2 / B1 / B2 directly; a lone T or B is the outer layer of that face; one each way on a face
+    // needs the outer direction said (the drawing does not show which bars sit outside)
     const byFace = (pos: string) => mats.filter(m => m.c.kind === "bar" && m.c.position === pos && !m.c.layer);
+    const outer = choice("outer");
+    let askOuter = false;
     for (const pos of ["T", "B"]) {
       const loose = byFace(pos), numbered = mats.filter(m => m.c.kind === "bar" && m.c.layer?.[0] === pos);
       const distinct = [...new Set(loose.map(m => norm(m.c)))];
+      const dirs = [...new Set(loose.map(m => m.c.direction))];
       if (distinct.length === 1 && !numbered.length) loose.forEach(m => { m.c = { ...m.c, layer: pos + "1" }; });
+      else if (!numbered.length && distinct.length === 2 && dirs.length === 2 && dirs.every(d => d === "X" || d === "Y")) {
+        if (outer === "E-W" || outer === "N-S") { const od = outer === "E-W" ? "X" : "Y"; loose.forEach(m => { m.c = { ...m.c, layer: pos + (m.c.direction === od ? "1" : "2") }; }); }
+        else askOuter = true;
+      }
       else if (loose.length) loose.forEach(m => issue("error", 6, "\"" + m.text + "\": say which " + (pos === "T" ? "top" : "bottom") + " layer, " + pos + "1 (outer) or " + pos + "2 (inner); the drawing has more than one " + (pos === "T" ? "top" : "bottom") + " mat.", m.ids));
     }
+    if (askOuter) missing.push({ key: "outer", label: "Outer layers (T1 on top, B1 underneath): which bars?", unit: "", options: ["E-W", "N-S"], note: "The drawing gives a mat each way in the top and in the bottom but not which sits outside." });
     const chosen = new Map<string, Call[]>();   // engine layer → callouts for it
     const meshes: Call[] = [];
     for (const m of mats) {
@@ -429,7 +577,7 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
       }
       if (c.kind === "mesh") { meshes.push(m); continue; }
       const L = c.layer && LAYER_OF[c.layer];
-      if (!L) { if (!issues.some(i => i.ids[0] === m.ids[0] && i.step === 6)) issue("error", 6, "\"" + m.text + "\": no layer (T1, T2, B1 or B2).", m.ids); continue; }
+      if (!L) { if (askOuter && (c.position === "T" || c.position === "B")) continue; if (!issues.some(i => i.ids[0] === m.ids[0] && i.step === 6)) issue("error", 6, "\"" + m.text + "\": no layer (T1, T2, B1 or B2).", m.ids); continue; }
       if (!chosen.has(L)) chosen.set(L, []);
       chosen.get(L)!.push(m);
     }
@@ -457,7 +605,7 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
       found.push({ kind: "callout", label: m.text + "  →  " + (pos === "T" ? "top" : "bottom") + " mesh", ids: m.ids, sure: true });
       lines.push((pos === "T" ? "Top" : "Bottom") + " mesh " + m.c.mesh + ", long wires " + (m.c.direction === "X" ? "E-W" : "N-S"));
     }
-    if (!calloutLines.length) issue("error", 6, "No slab mats read: each needs a callout like N12-200 T1 E-W (size, spacing, layer, direction).");
+    if (!calloutLines.length && !askOuter) issue("error", 6, "No slab mats read: each needs a callout like N12-200 T1 E-W (size, spacing, layer, direction).");
     for (const m of mats) if (m.extent) found.push({ kind: "extent", label: "Extent of " + m.text, ids: m.extent.ids, sure: true });
     steps.push({ n: 6, title: "Read the reinforcement callouts", status: status(6), lines });
   }
@@ -465,7 +613,7 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
   // ---------- 7 check: everything the engine needs is there; anything left unread is said
   {
     const lines: string[] = [];
-    const leftover = texts.filter(t => !used.has(t.id) && CALLOUT_HINT.test(up(t.text)) && !CONCRETE_WORDS.test(up(t.text)));
+    const leftover = texts.filter(t => !used.has(t.id) && CALLOUT_HINT.test(up(t.text)) && !CONCRETE_WORDS.test(up(t.text)) && !LEVEL_TEXT.test(up(t.text)));
     if (leftover.length) issue("check", 7, leftover.length + " text(s) look like reinforcement but could not be read: " + leftover.slice(0, 4).map(t => "\"" + t.text.replace(/\n/g, " ") + "\"").join(", ") + (leftover.length > 4 ? " …" : ""), leftover.map(t => t.id));
     // the grid spacings against any dimensions drawn between grid lines
     const dims = E.filter((e): e is Extract<Entity, { kind: "dim" }> => e.kind === "dim");
@@ -479,15 +627,16 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
     }
     if (agree) lines.push(agree + " grid dimension(s) agree with the drawn grid spacing");
     if (disagree) issue("check", 7, disagree + " dimension(s) show a different number from the distance drawn (the drawing may not be to scale there).");
-    if (missing.length) lines.push(missing.length + " value(s) to type in before building: " + missing.map(m => m.label.toLowerCase()).join(", "));
+    if (missing.length) lines.push(missing.length + " value(s) to type in before building: " + missing.map(m => m.key === "outer" ? "which layers are outermost" : m.label.toLowerCase()).join(", "));
     steps.push({ n: 7, title: "Check", status: status(7), lines });
   }
 
   // ---------- 8 build: the engine's input, and the engine's own check of it
   // the grids, the slab edge and at least one mat must be there; other errors are listed and the rest is built
-  const blocked = issues.some(i => i.level === "error" && i.step <= 3) || !calloutLines.length;
+  const notPlan = !!sheetKind(texts) && issues.some(i => i.step === 3 && /No dimension on the drawing matches/.test(i.text));
+  const blocked = issues.some(i => i.level === "error" && i.step <= 3) || !calloutLines.length || notPlan;
   if (blocked || missing.length || notes.thickness === null || notes.cover === null || notes.fc === null || notes.lap === null) {
-    steps.push({ n: 8, title: "Build", status: blocked ? "error" : "check", lines: [blocked ? "Not built: fix the errors above first." : "Waiting for the values above."] });
+    steps.push({ n: 8, title: "Build", status: blocked ? "error" : "check", lines: [notPlan ? "Not built: this sheet is not a reinforcement plan and its outline is not confirmed by a dimension." : blocked ? "Not built: fix the errors above first." : "Waiting for the values above."] });
     return finish(null, origin);
   }
   const input: FloorInput = {
@@ -514,6 +663,7 @@ export function readPlan(sheet: Sheet, opts: ReadOptions = {}): PlanReading {
   return finish(input, origin, engine);
 }
 
+const LEVEL_TEXT = /\b(?:RL|INV|OBV|FFL|SSL|TOC|T\.O\.C|B\.O\.C)\.?\s*[+-]?\d+\.\d/;
 const CALLOUT_HINT = /\b(?:\d+\s*[-X]?\s*)?[NR]\s?(10|12|16|20|24|28|32|36|40)\b|\b(?:SL|RL)\s?\d{2,4}\b/;
 const norm = (c: Callout) => (c.kind === "mesh" ? c.mesh : c.type + "" + c.size + "-" + c.spacing) + " " + (c.layer ?? c.position ?? "") + " " + (c.direction ?? "");
 function firstNum(m: RegExpExecArray): number | null { for (let i = 1; i < m.length; i++) if (m[i] !== undefined) return +m[i]; return null; }
@@ -525,7 +675,19 @@ function cmpLabel(a: string, b: string): number {
   if (na && nb) return +a - +b;
   return a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
 }
+/** Sections, details, layouts and setting-out sheets are not plans; said from the title words. */
+function sheetKind(texts: Text[]): string | null {
+  const big = [...texts].sort((a, b) => b.h - a.h).slice(0, 12).map(t => up(t.text).replace(/\n/g, " "));
+  const has = (re: RegExp) => big.some(s => re.test(s));
+  if (texts.some(t => /\bSETTING OUT\b|\bSET[- ]OUT (?:PLAN|TABLE|SECTIONS?)\b/.test(up(t.text)) && t.h >= 0.8 * Math.max(...texts.map(x => x.h)) * 0.4)) return "a setting-out sheet";
+  if (has(/\b(?:SECTIONS?|DETAILS?)\b/) && !has(/\b(?:REBAR|REO|REINF\w*|SLAB|PAD|FLOOR)\s+PLAN\b|\bPLAN\b(?!.*\bSECTION)/)) return "sections and details";
+  if (has(/\bOVERALL LAYOUT\b|\bGENERAL ARRANGEMENT\b|\bSITE PLAN\b/)) return "an overall layout";
+  return null;
+}
+
 function drawingTitle(texts: Text[]): string | null {
-  const t = texts.map(t => up(t.text)).find(s => /\b(LEVEL|LVL|GROUND|FIRST|SECOND|ROOF|PODIUM|SUSPENDED)\b.*\b(SLAB|FLOOR|PLAN)\b|\b(SLAB|FLOOR)\b.*\bPLAN\b/.test(s) && s.length < 60);
-  return t ? t.replace(/\s*(?:REINFORCEMENT|REO)?\s*PLAN\b.*$/, "").trim() || t : null;
+  const all = texts.map(t => ({ s: up(t.text).replace(/\n/g, " "), h: t.h })).filter(t => t.s.length < 60 && /\bPLAN\b/.test(t.s) && !/\bKEY PLAN\b|^PLAN$/.test(t.s));
+  const t = all.find(x => /\b(LEVEL|LVL|GROUND|FIRST|SECOND|ROOF|PODIUM|SUSPENDED)\b.*\b(SLAB|FLOOR|PLAN)\b|\b(SLAB|FLOOR)\b.*\bPLAN\b/.test(x.s))
+    ?? all.filter(x => /\b(REBAR|REO|REINF\w*)\b/.test(x.s)).sort((a, b) => b.h - a.h)[0];
+  return t ? t.s.replace(/\s*(?:REINFORCEMENT|REINF|REBAR|REO)?\s*PLAN\b.*$/, "").trim() || t.s : null;
 }

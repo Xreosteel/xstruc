@@ -34,6 +34,7 @@ const CASES = [
   ["N16-400 VERT EF", TB, { direction: "V", position: "EF" }],
   // counted bars, no spacing
   ["2-N16 TRIMMERS", TB, { kind: "bar", count: 2, size: 16, spacing: null, role: "trim" }],
+  ["6-N20 @ 75 TRIMER BAR", TB, { kind: "bar", count: 6, size: 20, spacing: 75, role: "trim" }],   // as misspelt on a real drawing
   ["2N16 TRIM EACH SIDE", TB, { count: 2, role: "trim", notes: ["EACH SIDE"] }],
   ["3N12 TOP", TB, { count: 3, size: 12, position: "T" }],
   ["3-N12'S WITH R6 LIGS @ 300CTS", TB, { count: 3, type: "N", size: 12, role: "lig" }],

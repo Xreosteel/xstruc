@@ -15,7 +15,8 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@xstruc/engine": "workspace:*"
+    "@xstruc/engine": "workspace:*",
+    "pdfjs-dist": "6.5.438"
   },
   "devDependencies": {
     "typescript": "5.9.3",

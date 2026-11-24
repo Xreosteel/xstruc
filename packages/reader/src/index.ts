@@ -3,3 +3,4 @@ export * from "./sheet.ts";
 export { readDxf, decodeDxf, plainMtext, plainText, entityPoints } from "./dxf.ts";
 export { readPlan, type PlanReading, type Found, type FoundKind, type Issue, type Missing, type StepReport, type ReadOptions } from "./plan.ts";
 export { boxOf, type Box } from "./geom.ts";
+export { readPdf, type PdfJs, type PdfOptions } from "./pdf.ts";

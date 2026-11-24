@@ -96,7 +96,9 @@ export function sceneData(M: Model): SceneData {
       tags.push({ layer: r.layer, label: r.label, callout: r.callout || "", at: toScene(P(d.p0 + (d.frac ?? 0.5) * (d.p1 - d.p0))), line: [toScene(P(d.p0)), toScene(P(d.p1))] });
     } else if (r.tagPos) tags.push({ layer: r.layer, label: r.label, callout: r.callout || "", at: toScene(r.tagPos), line: null });
   }
-  return { kind: m.kind === "panel" ? "panel" : "floor", grids, tags, order: order.filter(id => layers[id]), layers, context, bars, concrete, bounds: { min, max } };
+  // steps only for layers with something in them (a pad with no beams has no "beam cages" step); bar chairs stay
+  const shown = order.filter(id => layers[id] && (layers[id].segments.length || (id === "CH" && ((m as any).chairs || []).length)));
+  return { kind: m.kind === "panel" ? "panel" : "floor", grids, tags, order: shown, layers, context, bars, concrete, bounds: { min, max } };
 }
 
 /** Which layers a fixing step shows: everything up to the step, the step's own layer solid and the rest ghosted. */

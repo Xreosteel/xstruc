@@ -8,6 +8,10 @@ level1.dxf     the engine's Level 1 example drawn as a consultant's slab plan (m
 metres.dxf     a 5 x 4 bay plan in metres with the grids lettered across and numbered up, bubbles as circle + text,
                notes as separate TEXT, a top mesh and one bottom mat written with a lone B.
 nounits.dxf    metres.dxf without $INSUNITS (units worked out from the size).
+washpad.pdf    an invented slab-on-ground pad drawn the way a real consultant's PDF plot comes out (no grids; edges as
+               separate lines and an L-shaped polyline; dashed lines as separate dashes; a drain strip; callouts
+               "N12-200 / TOP & BOT" written on their distribution lines with arrowheads; scale 1:50 in the title
+               block; dimension figures), page 2 a sections sheet. Written with reportlab (pip install reportlab).
 problems.dxf   level1 with things a reader must not guess: a mat without a direction, an each-way mat, two top mats
                without T1/T2, a mat over part of the slab, two different covers, no thickness note.
 """
@@ -198,6 +202,69 @@ def metres(path, units=6):
     doc.saveas(path)
 
 
+def washpad_pdf(path):
+    """An invented 13.5 x 7.5 m pad at 1:50 on A3, drawn as an AutoCAD plot draws it (see the module docstring)."""
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A3, landscape
+    W, Hh = landscape(A3)
+    pt = 72 / 25.4
+    S = 50.0
+    ox, oy = 60 * pt, 80 * pt           # sheet position of the pad's bottom-left corner
+    def X(d): return ox + d / S * pt   # drawing mm -> sheet points
+    def Y(d): return oy + d / S * pt
+    c = canvas.Canvas(path, pagesize=(W, Hh))
+    c.setLineWidth(0.35)
+    def line(x0, y0, x1, y1): c.line(X(x0), Y(y0), X(x1), Y(y1))
+    def dashes(x0, y0, x1, y1, on=600, off=75):
+        import math
+        L = math.hypot(x1 - x0, y1 - y0); ux, uy = (x1 - x0) / L, (y1 - y0) / L; t = 0
+        while t < L:
+            e = min(L, t + on); line(x0 + ux * t, y0 + uy * t, x0 + ux * e, y0 + uy * e); t = e + off
+    def arrow(x, y, dx, dy):
+        p = c.beginPath(); s2 = 180
+        p.moveTo(X(x), Y(y)); p.lineTo(X(x - dx * s2 - dy * s2 / 4), Y(y - dy * s2 + dx * s2 / 4)); p.lineTo(X(x - dx * s2 + dy * s2 / 4), Y(y - dy * s2 - dx * s2 / 4)); p.close()
+        c.drawPath(p, stroke=1, fill=1)
+    def text(s, x, y, h=125, rot=0, size=None):
+        c.saveState(); c.translate(X(x), Y(y)); c.rotate(rot); c.setFont("Helvetica", (size or h / S) * pt); c.drawString(0, 0, s); c.restoreState()
+    # sheet border and title block
+    c.rect(10 * pt, 10 * pt, W - 20 * pt, Hh - 20 * pt)
+    c.line(10 * pt, 40 * pt, W - 10 * pt, 40 * pt)
+    for xx in [300, 340, 380]: c.line(xx * pt, 10 * pt, xx * pt, 40 * pt)
+    c.setFont("Helvetica", 2.5 * pt); c.drawString(302 * pt, 30 * pt, "SCALE"); c.drawString(342 * pt, 30 * pt, "PAPER SIZE")
+    c.setFont("Helvetica", 4 * pt); c.drawString(302 * pt, 18 * pt, "1:50"); c.drawString(342 * pt, 18 * pt, "A3")
+    c.setFont("Helvetica", 5 * pt); c.drawString(150 * pt, 22 * pt, "EXAMPLE PAD")
+    # pad edges: left and top as lines, bottom and right as one L-shaped polyline (as the real plot has them)
+    line(0, 0, 0, 7500); line(0, 7500, 13500, 7500)
+    p = c.beginPath(); p.moveTo(X(0), Y(0)); p.lineTo(X(13500), Y(0)); p.lineTo(X(13500), Y(7500)); c.drawPath(p, stroke=1, fill=0)
+    # kerbs: 150 walls each side, 400 bumpers at the ends
+    line(0, 150, 13500, 150); line(0, 7350, 13500, 7350); line(400, 150, 400, 7350); line(13100, 150, 13100, 7350)
+    # thickened edge below the slab, hidden: dashed, plotted as separate dashes
+    for a in [(300, 300, 13200, 300), (300, 7200, 13200, 7200), (300, 300, 300, 7200), (13200, 300, 13200, 7200)]: dashes(*a)
+    # the centre drain: a 510 strip between the kerbs
+    line(6495, 150, 6495, 7350); line(7005, 150, 7005, 7350)
+    # mats: written ON their distribution lines (the line broken where the text is), arrowheads at the ends
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    tw = stringWidth("TOP & BOT", "Helvetica", 125 / S * pt) / pt * S   # drawing mm
+    line(50, 4200, 9100 - 20, 4200); line(9100 + tw + 20, 4200, 13450, 4200); arrow(50, 4200, -1, 0); arrow(13450, 4200, 1, 0)
+    text("N12-200", 9100, 4230); text("TOP & BOT", 9100, 4030)
+    line(11000, 50, 11000, 3100 - 20); line(11000, 3100 + tw + 20, 11000, 7450); arrow(11000, 50, 0, -1); arrow(11000, 7450, 0, 1)
+    text("N12-200", 10970, 3100, rot=90); text("TOP & BOT", 11170, 3100, rot=90)
+    # dimensions: figures over dimension lines
+    line(0, 8200, 13500, 8200); text("13500", 6400, 8260)
+    line(-700, 0, -700, 7500); text("7500", -760, 3500, rot=90)
+    line(0, -700, 6495, -700); text("6495", 3000, -640)
+    text("EXAMPLE PAD REBAR PLAN", 4500, -1800, h=250)
+    c.showPage()
+    # page 2: a sections sheet (the reader should say it is not a plan)
+    c.rect(10 * pt, 10 * pt, W - 20 * pt, Hh - 20 * pt)
+    c.setFont("Helvetica", 6 * pt); c.drawString(150 * pt, 22 * pt, "EXAMPLE PAD SECTIONS AND DETAILS")
+    c.setFont("Helvetica", 4 * pt); c.drawString(302 * pt, 18 * pt, "1:50")
+    c.rect(60 * pt, 150 * pt, 270 * pt, 8 * pt)
+    c.setFont("Helvetica", 2.5 * pt); c.drawString(120 * pt, 165 * pt, "N12-200"); c.drawString(200 * pt, 165 * pt, "N12-300 (TYP.)")
+    c.showPage()
+    c.save()
+
+
 if __name__ == "__main__":
     import os
     here = os.path.dirname(os.path.abspath(__file__))
@@ -206,4 +273,5 @@ if __name__ == "__main__":
     metres(os.path.join(here, "metres.dxf"))
     metres(os.path.join(here, "nounits.dxf"), units=0)
     entities(os.path.join(here, "entities.dxf"))
+    washpad_pdf(os.path.join(here, "washpad.pdf"))
     print("fixtures written")

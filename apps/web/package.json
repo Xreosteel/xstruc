@@ -20,7 +20,8 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "@xstruc/viewer": "workspace:*",
-    "@xstruc/reader": "workspace:*"
+    "@xstruc/reader": "workspace:*",
+    "pdfjs-dist": "6.5.438"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.5",

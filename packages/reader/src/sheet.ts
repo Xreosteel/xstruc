@@ -14,6 +14,8 @@ interface Base {
   linetype: string;
   /** Block names this entity was exploded from, outermost first; empty for model-space entities. */
   blocks: string[];
+  /** The colour as drawn, #rrggbb (PDF); absent for DXF, where `color` is the index. */
+  rgb?: string;
 }
 
 export interface Line extends Base { kind: "line"; a: Pt; b: Pt }
@@ -46,10 +48,12 @@ export type Entity = Line | Pline | Circle | Arc | Text | Dim | Leader | Hatch;
 export interface Layer { name: string; color: number; off: boolean; frozen: boolean; linetype: string }
 
 export interface Sheet {
-  source: "dxf";
+  source: "dxf" | "pdf";
   /** How file units became millimetres. */
   units: { code: number; name: string; factor: number; inferred: boolean };
   version: string;
+  /** A PDF page: its paper size (mm), the drawing scale used and where it came from. */
+  paper?: { page: number; pages: number; size: [number, number]; scale: number; from: string; agree: number; others: number[] };
   layers: Layer[];
   entities: Entity[];
   extents: { min: Pt; max: Pt } | null;

@@ -2,10 +2,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
-import { decodeDxf, readDxf, readPlan, type Sheet, type StepReport } from "@xstruc/reader";
+import { decodeDxf, readDxf, readPdf, readPlan, type PdfJs, type Sheet, type StepReport } from "@xstruc/reader";
 import { addElement, findProject } from "@/lib/local-jobs";
 import { newId, useLocalJobs } from "@/components/useLocalJobs";
 import { DrawingPreview, KIND_COLOUR, KIND_NAME } from "@/components/DrawingPreview";
+
+// pdf.js, loaded the first time a PDF is opened; its worker is copied to /pdfjs/ at build (scripts/copy-samples.mjs)
+let pdfjsLoad: Promise<PdfJs> | null = null;
+const loadPdfjs = () => (pdfjsLoad ??= import("pdfjs-dist/legacy/build/pdf.mjs").then(m => {
+  (m as unknown as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
+  return m as unknown as PdfJs;
+}));
 
 const MARK: Record<StepReport["status"], { sign: string; cls: string }> = { ok: { sign: "✓", cls: "text-ok" }, check: { sign: "!", cls: "text-warn" }, error: { sign: "✕", cls: "text-accent" } };
 
@@ -17,29 +24,38 @@ const MARK: Record<StepReport["status"], { sign: string; cls: string }> = { ok: 
 export function ImportDrawing({ pid }: { pid: string }) {
   const router = useRouter();
   const { data, change } = useLocalJobs();
-  const [file, setFile] = useState<{ name: string; sheet: Sheet } | null>(null);
+  const [file, setFile] = useState<{ name: string; sheet: Sheet; bytes?: Uint8Array } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [values, setValues] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState(false);
+  const [values, setValues] = useState<Record<string, number | string>>({});
   const [name, setName] = useState<string | null>(null);
   const [focus, setFocus] = useState<string[]>([]);
   const input = useRef<HTMLInputElement>(null);
 
   const reading = useMemo(() => (file ? readPlan(file.sheet, { values }) : null), [file, values]);
 
-  async function open(bytes: ArrayBuffer, fileName: string) {
+  async function open(bytes: ArrayBuffer, fileName: string, page = 1) {
     setError(null); setValues({}); setName(null); setFocus([]);
-    if (!/\.dxf$/i.test(fileName)) { setFile(null); setError("Only DXF drawings for now (PDF comes next). In CAD: Save As or Export → DXF, AutoCAD 2018 or older, ASCII."); return; }
-    try { setFile({ name: fileName, sheet: readDxf(decodeDxf(new Uint8Array(bytes))) }); }
-    catch (e) { setFile(null); setError((e as Error).message); }
+    const data = new Uint8Array(bytes);
+    try {
+      if (/\.dxf$/i.test(fileName)) setFile({ name: fileName, sheet: readDxf(decodeDxf(data)) });
+      else if (/\.pdf$/i.test(fileName)) {
+        setBusy(true);
+        // pdf.js may take over the buffer it reads, so it gets a copy and the original is kept for other pages
+        const sheet = await readPdf(await loadPdfjs(), data.slice(), { page });
+        setFile({ name: fileName, sheet, bytes: data });
+      } else { setFile(null); setError("Choose a PDF or DXF drawing."); }
+    } catch (e) { setFile(null); setError("Could not read " + fileName + ": " + (e as Error).message); }
+    finally { setBusy(false); }
   }
   async function pick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; e.target.value = "";
     if (f) await open(await f.arrayBuffer(), f.name);
   }
-  async function sample() {
-    const r = await fetch("/samples/level1-slab-plan.dxf");
+  async function sample(name: string) {
+    const r = await fetch("/samples/" + name);
     if (!r.ok) { setError("The sample drawing is not available."); return; }
-    await open(await r.arrayBuffer(), "level1-slab-plan.dxf");
+    await open(await r.arrayBuffer(), name);
   }
   function create() {
     if (!reading?.input || !file) return;
@@ -59,13 +75,22 @@ export function ImportDrawing({ pid }: { pid: string }) {
       <div>
         <Link href={"/job/" + pid} className="text-sm text-muted">← {project.name}</Link>
         <h1 className="text-2xl font-semibold">Floor from a drawing</h1>
-        <p className="text-sm text-muted">The drawing is read on this device; nothing is uploaded. The reader goes through it the way a scheduler does: grids, slab edge, openings, notes, then each reinforcement callout. It never guesses: anything the drawing does not say is asked for below.</p>
+        <p className="text-sm text-muted">The drawing (a PDF plotted from CAD, or a DXF) is read on this device; nothing is uploaded. The reader goes through it the way a scheduler does: grids, slab edge, openings, notes, then each reinforcement callout. It never guesses: anything the drawing does not say is asked for below. Use the reinforcement plan sheet; sections, layouts and setting-out sheets are named as such.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button className="btn btn-primary" type="button" onClick={() => input.current?.click()}>Choose a DXF drawing</button>
-        <button className="btn" type="button" onClick={sample}>Try the sample drawing</button>
-        <input ref={input} type="file" accept=".dxf,application/dxf,image/vnd.dxf" className="hidden" onChange={pick} data-testid="drawing-file" />
-        {file && <span className="text-sm text-muted">{file.name} · {file.sheet.entities.length.toLocaleString("en-AU")} items · {file.sheet.units.name}</span>}
+        <button className="btn btn-primary" type="button" onClick={() => input.current?.click()}>Choose a drawing (PDF or DXF)</button>
+        <button className="btn" type="button" onClick={() => sample("level1-slab-plan.dxf")}>Try the sample drawing</button>
+        <button className="btn" type="button" onClick={() => sample("example-pad-plan.pdf")}>Try a sample PDF</button>
+        <input ref={input} type="file" accept=".pdf,application/pdf,.dxf,application/dxf,image/vnd.dxf" className="hidden" onChange={pick} data-testid="drawing-file" />
+        {busy && <span className="text-sm text-muted">Reading…</span>}
+        {file && <span className="text-sm text-muted">{file.name} · {file.sheet.entities.length.toLocaleString("en-AU")} items · {file.sheet.units.name}{file.sheet.paper ? " (scale from " + file.sheet.paper.from + ")" : ""}</span>}
+        {file?.sheet.paper && file.sheet.paper.pages > 1 && file.bytes && (
+          <span className="flex items-center gap-1 text-sm" data-testid="pages">
+            <button className="btn" type="button" disabled={file.sheet.paper.page <= 1} onClick={() => open(file.bytes!.slice().buffer, file.name, file.sheet.paper!.page - 1)}>◀</button>
+            Page {file.sheet.paper.page} of {file.sheet.paper.pages}
+            <button className="btn" type="button" disabled={file.sheet.paper.page >= file.sheet.paper.pages} onClick={() => open(file.bytes!.slice().buffer, file.name, file.sheet.paper!.page + 1)}>▶</button>
+          </span>
+        )}
       </div>
       {error && <p className="text-accent" role="alert">{error}</p>}
       {file && reading && (
@@ -84,12 +109,15 @@ export function ImportDrawing({ pid }: { pid: string }) {
                 <div className="font-semibold">Not on the drawing: type these in</div>
                 {reading.missing.map(m => (
                   <label key={m.key} className="grid gap-1">
-                    <span className="text-sm">{m.label} ({m.unit})</span>
+                    <span className="text-sm">{m.label}{m.unit ? " (" + m.unit + ")" : ""}</span>
+                    {m.note && <span className="text-xs text-muted">{m.note}</span>}
                     <span className="flex flex-wrap items-center gap-2">
-                      {m.options?.map(o => <button key={o} type="button" className="btn" onClick={() => setValues(v => ({ ...v, [m.key]: o }))}>{o}</button>)}
-                      <input className="input w-32" inputMode="numeric" name={m.key} placeholder={m.options ? "or type" : ""}
-                        onKeyDown={e => { if (e.key === "Enter") { const n = parseFloat((e.target as HTMLInputElement).value); if (n > 0) setValues(v => ({ ...v, [m.key]: n })); } }}
-                        onBlur={e => { const n = parseFloat(e.target.value); if (n > 0) setValues(v => ({ ...v, [m.key]: n })); }} />
+                      {m.options?.map(o => <button key={String(o)} type="button" className="btn" onClick={() => setValues(v => ({ ...v, [m.key]: o }))}>{typeof o === "string" ? o + " bars" : o}</button>)}
+                      {!m.options?.every(o => typeof o === "string") && (
+                        <input className="input w-32" inputMode="numeric" name={m.key} placeholder={m.options ? "or type" : ""}
+                          onKeyDown={e => { if (e.key === "Enter") { const n = parseFloat((e.target as HTMLInputElement).value); if (n > 0) setValues(v => ({ ...v, [m.key]: n })); } }}
+                          onBlur={e => { const n = parseFloat(e.target.value); if (n > 0) setValues(v => ({ ...v, [m.key]: n })); }} />
+                      )}
                     </span>
                   </label>
                 ))}

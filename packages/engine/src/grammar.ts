@@ -28,7 +28,7 @@ function parseCallout(input: unknown, opts?: CalloutOptions): Callout {
   if ((m = s.match(/^(\d{2,4})\s*(?:MM\s*)?(?:THK|THICK|THICKNESS)\b/))) { out.kind = "thickness"; out.value = +m[1]; return out; }
 
   const ROLES: [RegExp, string][] = [
-    [/\b(?:ADDITIONAL|ADD|EXTRAS?)\b/, "extra"], [/\bTRIM(?:MERS?|MING)?\b/, "trim"], [/\bSTARTERS?\b/, "starter"],
+    [/\b(?:ADDITIONAL|ADD|EXTRAS?)\b/, "extra"], [/\bTRIM(?:M?ERS?|MING)?\b/, "trim"], [/\bSTARTERS?\b/, "starter"],
     [/\b(?:LIGS?|LIGATURES?|TIES|STIRRUPS|FITMENTS)\b/, "lig"], [/\bDIST(?:RIBUTION)?\b/, "distribution"], [/\bEDGE BARS?\b/, "edge"],
     [/\b(?:DIAG(?:ONALS?)?|CORNER BARS?)\b/, "diagonal"], [/\bDOWELS?\b/, "dowel"], [/\b(?:HAIRPINS?|U-?BARS?)\b/, "u-bar"], [/\b(?:Z-?BARS?)\b/, "z-bar"], [/\b(?:L-?BARS?)\b/, "l-bar"]
   ];

@@ -54,7 +54,7 @@ if (!/"thickness": 250/.test(kept)) await fail("the edited thickness should be k
 await page.goto(base + "/");
 await page.waitForSelector("text=Lot 12 Salisbury");
 const list = await page.textContent("main");
-if (!/J-1042/.test(list) || !/[12] floor/.test(list)) await fail("the project list should show the project with its floor: " + list.slice(0, 200));
+if (!/J-1042/.test(list) || !/\d floor/.test(list)) await fail("the project list should show the project with its floor: " + list.slice(0, 200));
 
 // a floor from a drawing: the sample plan is read step by step and built
 await page.goto(projectUrl);
@@ -76,6 +76,31 @@ await page.waitForFunction(() => window.xstrucViewer && window.xstrucViewer.data
 const imported = await page.textContent("[data-testid=run-stats]");
 if (!/1,085/.test(imported) || !/level1-slab-plan\.dxf/.test(await page.textContent("[data-testid=source]"))) await fail("the floor from the drawing should have 1,085 bars and name its drawing: " + imported);
 await page.screenshot({ path: out + "/import-built.png" });
+// a PDF plan in a consultant's style (no grids, callouts on their distribution lines, TOP & BOT): read in the browser
+await page.goto(projectUrl + "/import");
+await page.click("text=Try a sample PDF");
+await page.waitForSelector("[data-testid=reading]", { timeout: 20000 }).catch(() => fail("the sample PDF should be read in the browser"));
+let pdfReading = await page.textContent("[data-testid=reading]");
+for (const want of ["No grid lines", "Slab 13,500 × 7,500", "long narrow strip", "bars N-S (up the sheet), written on its distribution line", "Outer layers (T1 on top, B1 underneath)"]) {
+  if (!pdfReading.includes(want)) await fail("the PDF reading should say \"" + want + "\": " + pdfReading.slice(0, 900));
+}
+if (!/scale from the sheet \(1:50\)/.test(await page.textContent("main"))) await fail("the PDF's scale should come from the sheet");
+await page.click("[data-testid=pages] button:has-text('▶')");
+await page.waitForFunction(() => /looks like sections and details/.test(document.querySelector("[data-testid=reading]")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => fail("page 2 should be named a sections sheet"));
+await page.click("[data-testid=pages] button:has-text('◀')");
+await page.waitForFunction(() => /Page 1 of 2/.test(document.querySelector("[data-testid=pages]")?.textContent ?? ""));
+for (const [k, v] of [["thickness", "300"], ["cover", "50"], ["fc", "32"], ["lap", "500"]]) { await page.fill("input[name=" + k + "]", v); await page.press("input[name=" + k + "]", "Enter"); }
+await page.click("[data-testid=missing] button:has-text('N-S bars')");
+await page.waitForFunction(() => !document.querySelector("[data-testid=missing]"));
+pdfReading = await page.textContent("[data-testid=reading]");
+if (!/Layer A \(B1\): N12-200 N-S/.test(pdfReading) || !/300 bars, 2,005 kg/.test(pdfReading)) await fail("with the values and the outer layers given the pad should build: " + pdfReading.slice(-500));
+await page.screenshot({ path: out + "/import-pdf.png" });
+await page.click("text=Create floor and build 3D");
+await page.waitForURL(/\/job\/[^/]+\/[^/]+$/);
+await page.waitForFunction(() => window.xstrucViewer && window.xstrucViewer.data() && window.xstrucViewer.data().kind === "floor", null, { timeout: 20000 }).catch(() => fail("the pad from the PDF should build"));
+if (!/300/.test(await page.textContent("[data-testid=run-stats]"))) await fail("the pad should have 300 bars");
+await page.screenshot({ path: out + "/import-pdf-built.png" });
+
 // a drawing with problems: the values it lacks are asked for, and its errors stop the build
 await page.goto(projectUrl + "/import");
 await page.setInputFiles("[data-testid=drawing-file]", new URL("../../../packages/reader/test/fixtures/problems.dxf", import.meta.url).pathname);
@@ -101,7 +126,7 @@ const [dl] = await Promise.all([page.waitForEvent("download"), page.click("butto
 const file = out + "/jobs-backup.json";
 await dl.saveAs(file);
 const back = JSON.parse(readFileSync(file, "utf8"));
-if (back.app !== "X Struc" || back.projects.length !== 1 || back.projects[0].elements[0].inputs.thickness !== 250 || back.projects[0].elements.length !== 2) await fail("the backup should hold the project, its edited floor and the floor from the drawing");
+if (back.app !== "X Struc" || back.projects.length !== 1 || back.projects[0].elements[0].inputs.thickness !== 250 || back.projects[0].elements.length !== 3) await fail("the backup should hold the project, its edited floor and the two floors from drawings");
 await page.evaluate(() => localStorage.clear());
 await page.reload();
 await page.waitForSelector("text=No projects on this device yet");
@@ -113,4 +138,4 @@ await page.screenshot({ path: out + "/jobs-restored.png" });
 
 if (errors.length) await fail("console errors: " + errors.join(" | "));
 await browser.close(); server.kill();
-console.log("e2e jobs: OK (no sign-in, project and floor kept on the device, a floor read from a drawing, account screens off, backup and restore)");
+console.log("e2e jobs: OK (no sign-in, project and floor kept on the device, floors read from a DXF and a PDF drawing, account screens off, backup and restore)");

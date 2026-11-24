@@ -43,7 +43,7 @@ export function LocalProject({ id }: { id: string }) {
         ))}
       </div>
       <div className="card flex max-w-xl flex-wrap items-center gap-3">
-        <div className="grow"><h2 className="font-semibold">Floor from a drawing</h2><p className="text-sm text-muted">Read the engineer&apos;s slab plan (DXF) into a floor.</p></div>
+        <div className="grow"><h2 className="font-semibold">Floor from a drawing</h2><p className="text-sm text-muted">Read the engineer&apos;s slab plan (PDF or DXF) into a floor.</p></div>
         <Link className="btn btn-primary" href={"/job/" + id + "/import"}>Import a drawing</Link>
       </div>
       <form onSubmit={create} className="card grid max-w-xl gap-3">

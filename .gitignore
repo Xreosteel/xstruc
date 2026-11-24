@@ -10,3 +10,4 @@ dist/
 next-env.d.ts
 apps/web/e2e-out/
 apps/web/public/samples/
+apps/web/public/pdfjs/

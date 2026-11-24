@@ -11,12 +11,20 @@ test("floor: every bar is drawn, in its layer, in fixing order", () => {
   assert.equal(D.bars.length, drawn.length + ((M as any).wires || []).length);
   const segs = Object.values(D.layers).reduce((n, L) => n + L.segments.length, 0) + D.context.length;
   assert.equal(segs, drawn.reduce((n, b) => n + b.pts.length - 1, 0));
-  assert.deepEqual(D.order, (M as any).ORDER.filter((id: string) => D.layers[id]));
+  assert.deepEqual(D.order, (M as any).ORDER.filter((id: string) => D.layers[id] && (D.layers[id].segments.length || id === "CH")));
+  assert.ok(D.order.includes("BM") && D.order.includes("CH"));
   for (const id of ["A", "B", "C", "D"]) assert.ok(D.layers[id].segments.length > 100, "layer " + id + " has its bars");
   assert.ok(D.context.length > 0, "the starters below are context");
   assert.ok(D.concrete.some(p => p.kind === "slab") && D.concrete.some(p => p.kind === "beam") && D.concrete.some(p => p.kind === "column"));
   const [w, , d] = [0, 1, 2].map(k => D.bounds.max[k] - D.bounds.min[k]);
   assert.ok(w > 14 && w < 20 && d > 9 && d < 16, "bounds are the floor's size in metres");
+});
+
+test("a floor without beams or columns has no steps for them", () => {
+  const M = buildModel({ ...DEFAULT_CFG, features: { ...(DEFAULT_CFG as any).features, beams: false, columns: false, stair: false } } as never);
+  const D = sceneData(M as never);
+  assert.ok(!D.order.includes("BM") && !D.order.includes("ST"), D.order.join(","));
+  assert.ok(D.order.includes("A") && D.order.includes("D"));
 });
 
 test("panel: faces in their order, the window cut out of the concrete", () => {
