@@ -23,6 +23,7 @@ export interface Bar {
   note?: string;
   flags?: string[];
   existing?: boolean;     // context only (e.g. starters below), never scheduled
+  path?: Point3[];        // the centreline as drawn, bends as arcs and hooks included (cages); pts otherwise
   [extra: string]: unknown;
 }
 
@@ -59,7 +60,7 @@ export interface MeshPiece {
 }
 
 export interface Model {
-  kind?: "panel" | "pit"; // absent for a floor
+  kind?: "panel" | "pit" | "cage"; // absent for a floor
   cfg: ElementInput;
   errors: string[];       // the model is not usable while any are present
   warnings: string[];     // flags for the engineer / detailer; the model still builds
@@ -98,4 +99,4 @@ export interface PanelInput {
   [extra: string]: unknown;
 }
 
-export type ElementInput = FloorInput | PanelInput | import("./pit.ts").PitInput;
+export type ElementInput = FloorInput | PanelInput | import("./pit.ts").PitInput | import("./cage.ts").CageInput;

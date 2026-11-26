@@ -19,8 +19,10 @@ export const prismPoints = (p: Prism): number[][] => p.outline.flatMap(q => (p.a
 export interface GridData { name: string; a: V3; b: V3 }
 /** A run's tag: the label at its anchor, and its distribution line when it has one. */
 export interface TagData { layer: string; label: string; callout: string; at: V3; line: [V3, V3] | null }
+/** A cast-in item (a lift anchor, a locator pin): a short cylinder from a to b, drawn but never picked or scheduled. */
+export interface CastInData { item: string; a: V3; b: V3; r: number }
 export interface SceneData {
-  kind: "floor" | "panel" | "pit";
+  kind: "floor" | "panel" | "pit" | "cage";
   grids: GridData[];
   tags: TagData[];
   order: string[];               // fixing order of the layers drawn
@@ -28,6 +30,7 @@ export interface SceneData {
   context: Segment[];            // existing bars (starters below and the like), drawn faint, never picked
   bars: Bar[];                   // every drawn bar or wire, indexed by Segment.bar
   concrete: Prism[];
+  castins: CastInData[];
   bounds: { min: V3; max: V3 };
 }
 
@@ -39,7 +42,7 @@ const inside = (a: Rect, b: Rect) => a.x0 >= b.x0 && a.x1 <= b.x1 && a.y0 >= b.y
 export function concreteOf(M: Model): Prism[] {
   const m = M as Model & Record<string, any>;
   const T: number = m.panel ? m.panel.T : m.T;
-  if (m.kind === "pit") return (m.solids || []).map((s: any) => ({ kind: s.kind, outline: s.outline, holes: s.holes || [], z0: s.z0, z1: s.z1, axis: s.axis }));
+  if (m.kind === "pit" || m.kind === "cage") return (m.solids || []).map((s: any) => ({ kind: s.kind, outline: s.outline, holes: s.holes || [], z0: s.z0, z1: s.z1, axis: s.axis }));
   if (m.kind === "panel") {
     const holes = (m.HOLES || []).filter((h: any) => !h.edge).map((h: Rect) => rect(h));
     return [{ kind: "panel", outline: m.outline || rect({ x0: 0, y0: 0, x1: m.panel.W, y1: m.panel.H }), holes, z0: 0, z1: T }];
@@ -70,11 +73,12 @@ export function sceneData(M: Model): SceneData {
   const min: V3 = [Infinity, Infinity, Infinity], max: V3 = [-Infinity, -Infinity, -Infinity];
   const grow = (p: V3) => { for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], p[k]); max[k] = Math.max(max[k], p[k]); } };
   const add = (b: Bar) => {
-    if (!b.pts || b.pts.length < 2) return;
+    const pts = b.path && b.path.length > 1 ? b.path : b.pts;   // drawn with its bends and hooks where the engine gives them
+    if (!pts || pts.length < 2) return;
     const i = bars.length; bars.push(b);
     const r = Math.max(2, (+b.size || 6) / 2) / 1000;
-    for (let k = 1; k < b.pts.length; k++) {
-      const s: Segment = { a: toScene(b.pts[k - 1]), b: toScene(b.pts[k]), r, bar: i };
+    for (let k = 1; k < pts.length; k++) {
+      const s: Segment = { a: toScene(pts[k - 1]), b: toScene(pts[k]), r, bar: i };
       grow(s.a); grow(s.b);
       if (b.existing) context.push(s);
       else (layers[b.layer] || (layers[b.layer] = { id: b.layer, name: b.layer, color: "#cccccc", segments: [] })).segments.push(s);
@@ -84,6 +88,8 @@ export function sceneData(M: Model): SceneData {
   (m.wires || []).forEach(add);
   const concrete = concreteOf(M);
   for (const p of concrete) for (const q of prismPoints(p)) grow(toScene(q));
+  const castins: CastInData[] = ((m.castinParts || []) as { item: string; a: number[]; b: number[]; r: number }[]).map(c => ({ item: c.item, a: toScene(c.a), b: toScene(c.b), r: c.r / 1000 }));
+  for (const c of castins) { grow(c.a); grow(c.b); }
   for (const id of Object.keys(layers)) if (!order.includes(id) && layers[id].segments.length) order.push(id);
   // grid lines on the slab's top, run 1,000 past the slab and balconies each way, a bubble at each end
   const grids: GridData[] = [];
@@ -103,7 +109,8 @@ export function sceneData(M: Model): SceneData {
   }
   // steps only for layers with something in them (a pad with no beams has no "beam cages" step); bar chairs stay
   const shown = order.filter(id => layers[id] && (layers[id].segments.length || (id === "CH" && ((m as any).chairs || []).length)));
-  return { kind: m.kind === "panel" ? "panel" : m.kind === "pit" ? "pit" : "floor", grids, tags, order: shown, layers, context, bars, concrete, bounds: { min, max } };
+  const kind = m.kind === "panel" || m.kind === "pit" || m.kind === "cage" ? m.kind : "floor";
+  return { kind, grids, tags, order: shown, layers, context, bars, concrete, castins, bounds: { min, max } };
 }
 
 /** Which layers a fixing step shows: everything up to the step, the step's own layer solid and the rest ghosted. */

@@ -36,7 +36,7 @@ export function ModelViewer({ model, height = 520 }: { model: Model; height?: nu
   useEffect(() => { viewer.current?.setTags(tags); }, [tags]);
 
   const n = layers.length;
-  const label = step == null ? "Finished " + (model.kind === "panel" ? "panel" : model.kind === "pit" ? "pit" : "floor") + " · all layers" : "Step " + (step + 1) + " of " + n + " · " + (layers[step]?.name ?? "");
+  const label = step == null ? "Finished " + (model.kind ?? "floor") + " · all layers" : "Step " + (step + 1) + " of " + n + " · " + (layers[step]?.name ?? "");
   const view = (k: ViewKind) => viewer.current?.view(k);
   return (
     <div className="grid gap-2">

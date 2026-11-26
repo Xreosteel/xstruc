@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { DEFAULT_CFG, PANEL_CFG, PIT_CFG } from "@xstruc/engine";
-import { addElement, findProject, KIND_NAME, removeProject, type Kind } from "@/lib/local-jobs";
+import { addElement, findProject, KIND_NAME, removeProject } from "@/lib/local-jobs";
+import { start, STARTS } from "@/lib/examples";
 import { newId, useLocalJobs } from "@/components/useLocalJobs";
 
 /** One project on this device: its floors and panels, a new one, deleting the project. */
@@ -19,8 +19,8 @@ export function LocalProject({ id }: { id: string }) {
   function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const kind = String(f.get("kind")) as Kind, eid = newId();
-    const err = change(d => addElement(d, id, { kind, name: String(f.get("name")), inputs: structuredClone(kind === "panel" ? PANEL_CFG : kind === "pit" ? PIT_CFG : DEFAULT_CFG) }, eid, new Date().toISOString()));
+    const { kind, inputs } = start(String(f.get("kind"))), eid = newId();
+    const err = change(d => addElement(d, id, { kind, name: String(f.get("name")), inputs }, eid, new Date().toISOString()));
     if (err) setNote(err); else router.push("/job/" + id + "/" + eid);
   }
 
@@ -47,12 +47,12 @@ export function LocalProject({ id }: { id: string }) {
         <Link className="btn btn-primary" href={"/job/" + id + "/import"}>Import a drawing</Link>
       </div>
       <form onSubmit={create} className="card grid max-w-xl gap-3">
-        <h2 className="font-semibold">New floor, panel or pit</h2>
+        <h2 className="font-semibold">New floor, panel, pit or cage</h2>
         <label><span className="label">Name</span><input className="input" name="name" required placeholder="Level 1 floor, or P1" /></label>
         <label><span className="label">Kind</span>
-          <select className="input" name="kind" defaultValue="floor"><option value="floor">Floor slab</option><option value="panel">Precast panel</option><option value="pit">Pit (mud trap)</option></select>
+          <select className="input" name="kind" defaultValue="floor">{STARTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select>
         </label>
-        <p className="text-sm text-muted">It starts from the example (the Level 1 floor, panel P1, or the mud trap of the wash pad job); change its inputs on the next screen.</p>
+        <p className="text-sm text-muted">It starts from the example (the Level 1 floor, panel P1, the mud trap of the wash pad job, or sample cage F1, F2 or F3); change its inputs on the next screen.</p>
         <button className="btn btn-primary w-fit" type="submit">Create</button>
       </form>
       <div>

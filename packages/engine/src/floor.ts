@@ -8,12 +8,14 @@ import { matDirectionError, parseCallout } from "./grammar.ts";
 import { EDGES, NIB_MAX, STAIR_DEFAULTS, STAIR_RULES, STEP_MAX_RISE, ZBAR_MAX_DROP, balconyRows, exampleGeometry, parseGrids } from "./geometry.ts";
 import { buildPanel } from "./panel.ts";
 import { buildPit } from "./pit.ts";
+import { buildCage } from "./cage.ts";
 import { MESH, MESH_LAP, layMesh, meshMarks, meshSummary } from "./mesh.ts";
 
 // ---------- model builder ----------
 function buildModel(cfg) {
   if (cfg && cfg.kind === "panel") return buildPanel(cfg);   // a precast panel (#33) has its own builder with the same model shape
   if (cfg && cfg.kind === "pit") return buildPit(cfg);       // a pit (#43h): base, walls, a ramp, internal walls
+  if (cfg && cfg.kind === "cage") return buildCage(cfg);     // a footing cage (#44): cogged bars top and bottom, ligs, ties
   cfg = Object.assign({}, DEFAULT_CFG, cfg || {});
   cfg.features = Object.assign({}, DEFAULT_CFG.features, cfg.features || {});
   const F = cfg.features, errors = [], warnings = [];

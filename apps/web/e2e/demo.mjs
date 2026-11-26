@@ -79,6 +79,28 @@ await page.waitForTimeout(300);
 if (!/Wall verticals/.test(await page.textContent("[data-testid=step-label]"))) await fail("step 4 of the mud trap should be the wall verticals: " + await page.textContent("[data-testid=step-label]"));
 await page.screenshot({ path: out + "/demo-pit-walls.png" });
 
+// the sample footing cages: F1 as on the sample sheet (64 pieces, 81.40 kg), bends and hooks drawn, cast-ins, checks
+await page.click("text=Footing cages");
+await page.waitForFunction(() => window.xstrucViewer.data().kind === "cage");
+await page.waitForTimeout(500);
+const cageData = await page.evaluate(() => { const d = window.xstrucViewer.data(); return { order: d.order, concrete: d.concrete.length, castins: d.castins.length, stats: document.querySelector("[data-testid=demo-stats]").textContent, label: document.querySelector("[data-testid=step-label]").textContent, notes: document.querySelector("[data-testid=demo-notes]")?.textContent || "", table: document.querySelector("[data-testid=castins]")?.textContent || "" }; });
+const cageInk = await painted();
+console.log("cage F1:", JSON.stringify({ ...cageData, notes: cageData.notes.slice(0, 80), table: cageData.table.slice(0, 60), ink: +cageInk.toFixed(3) }));
+if (!/^64 bars4 marks81\.40 kg/.test(cageData.stats) || cageData.order.join(",") !== "B1,B2,L1,T1" || cageData.concrete !== 1 || cageData.castins !== 7 || !/Finished cage/.test(cageData.label) || cageInk < 0.01) await fail("cage F1 should draw (64 bars, 81.40 kg, 4 steps, the block, 7 cast-in pieces)");
+if (!/Bars clash: B2 into B1/.test(cageData.notes) || !/Swift lift anchor/.test(cageData.table)) await fail("cage F1 should list its checks and cast-ins");
+await page.screenshot({ path: out + "/demo-cage-f1.png" });
+for (let i = 0; i < 3; i++) await page.click("[aria-label='Next step']");
+await page.waitForTimeout(300);
+if (!/Closed ligs/.test(await page.textContent("[data-testid=step-label]"))) await fail("step 3 of a cage should be the ligs");
+await page.screenshot({ path: out + "/demo-cage-ligs.png" });
+for (const [k, want] of [["F2", /^22 bars4 marks55\.33 kg/], ["F3", /^20 bars4 marks47\.35 kg/]]) {
+  await page.click("[data-testid=cage-pick] >> text=" + k);
+  await page.waitForTimeout(400);
+  const stats = await page.textContent("[data-testid=demo-stats]");
+  if (!want.test(stats)) await fail("cage " + k + ": " + stats);
+}
+await page.screenshot({ path: out + "/demo-cage-f3.png" });
+
 if (errors.length) await fail("console errors: " + errors.join(" | "));
 await browser.close(); server.kill();
-console.log("e2e demo: OK (floor, panel and mud trap drawn, steps, bar card)");
+console.log("e2e demo: OK (floor, panel, mud trap and footing cages drawn, steps, bar card)");

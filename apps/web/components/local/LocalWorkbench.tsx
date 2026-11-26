@@ -2,7 +2,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_CFG, PANEL_CFG, PIT_CFG, type ElementInput } from "@xstruc/engine";
+import type { ElementInput } from "@xstruc/engine";
+import { exampleFor, NOUN } from "@/lib/examples";
 import { runEngine, type Run } from "@/lib/engine-run";
 import { findElement, findProject, KIND_NAME, removeElement, updateElement } from "@/lib/local-jobs";
 import { useLocalJobs } from "@/components/useLocalJobs";
@@ -51,7 +52,7 @@ export function LocalWorkbench({ pid, eid }: { pid: string; eid: string }) {
 
   if (!data) return <p className="text-muted">Opening…</p>;
   if (!el || !project) return <div className="card">That floor or panel is not on this device. <Link className="underline" href="/">Back to projects</Link></div>;
-  const example = el.kind === "panel" ? PANEL_CFG : el.kind === "pit" ? PIT_CFG : DEFAULT_CFG;
+  const example = exampleFor(el.kind, el.inputs);
   const source = (el.inputs as { source?: { file: string } }).source;
 
   return (
@@ -74,7 +75,7 @@ export function LocalWorkbench({ pid, eid }: { pid: string; eid: string }) {
           </div>
           <div className="pt-2">
             {!sure
-              ? <button className="btn" type="button" onClick={() => setSure(true)}>Delete {el.kind === "panel" ? "panel" : el.kind === "pit" ? "pit" : "floor"}</button>
+              ? <button className="btn" type="button" onClick={() => setSure(true)}>Delete {NOUN[el.kind] ?? "element"}</button>
               : <span className="flex flex-wrap items-center gap-2"><span className="text-accent">Delete {el.name} from this device?</span>
                   <button className="btn" type="button" onClick={() => { change(d => removeElement(d, pid, eid)); router.push("/job/" + pid); }}>Yes, delete</button>
                   <button className="btn" type="button" onClick={() => setSure(false)}>Keep it</button></span>}

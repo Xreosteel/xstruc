@@ -2,6 +2,53 @@
 
 Newest entry first. Each scheduled run appends one entry at the top.
 
+## 2026-11-26 · interactive session · backlog #44: footing cages (Baji's sample cages F1–F3)
+
+**Done:** Baji: "can you add these artefact model into the app please". The models are his sample cage sheet (F1, F2, F3 footing cages, Rev A); the client and drawing numbers stay out of the repo.
+
+- **`cage.ts`** (strict; `buildModel` sends `kind: "cage"` there). Inputs:
+  - the block, cover;
+  - bottom and top bars as callouts ("5N12"), cog length or "standard";
+  - ligs ("N12-150"), hook tails in diameters, the first set's position (default: just clear of the cogs);
+  - ties ("outer": bars 2 and n−1; "middle"; "none"), the middle top bar's position (moved to clear the anchors);
+  - lift anchors and locator pins, other items, and the hold points.
+- **How the cage is built:**
+  - Ligs on a 4d pin. Corner bars sit in the lig bends (pin/2 − bar radius from the bend centre); the other bars sit on the lig.
+  - B1 cogs up at cover from the end. B2 cogs down one B1 diameter in, beside them.
+  - Lig sets evenly spaced at the largest spacing or less. The back hook is stepped one diameter towards the middle; the corner alternates set to set.
+  - Ties beside the lig towards the middle. On the far half they are mirrored, so their tails clear the lig hooks. A tie to a moved top bar leans and is scheduled as bent straight.
+  - Cut lengths from `cutLength`, 135° hooks with the sheet's 10d tails, rounded up to 5. Marks are the sheet's: B1, B2, L1, T1.
+  - Every bar carries `path`, its drawn centreline with arcs and hooks.
+- **Checks:**
+  - Bar-to-bar clashes (drawn centrelines closer than the two radii).
+  - Locator pin clearance to the bars.
+  - Cogs past the cover, bars that do not fit across, a moved bar that hits its neighbours, tie patterns that need more bars.
+  - The sheet's hold points become warnings.
+- **Against the sheet:**
+  - F1: 64 pieces, 81.40 kg. F2: 22 pieces, 55.33 kg. F3: 20 pieces, 47.35 kg.
+  - Every cut length, count and kg is the same; so are the lig positions and the set-out across.
+  - The N10 alternative gives the sheet's L1 2300 and T1 510.
+- **What the checks found on the sample cages (Parked):**
+  - The B2 cogs run into the B1 bends where a top bar is straight above a bottom bar: 4 pairs a cage.
+  - The F1 locator pin at 98 touches the first lig's hook.
+  - The sheet's N10 total (62.0 kg) is 63.94 kg by the same lengths.
+- **Viewer:**
+  - Bars are drawn along `path` when present.
+  - `castins` are drawn plain metallic grey.
+  - The camera now frames the bounds' corners from each view direction, so a small cage fills the view as a floor does.
+- **App:**
+  - Element kind `cage` ("Footing cage (F1/F2/F3)" in the new-element list; `lib/examples.ts` holds the examples and nouns).
+  - The demo's Footing cages with an F1/F2/F3 picker and a Checks and hold points list.
+  - The schedule gives kg to two places and a total for small elements, plus a cast-in table.
+  - Run summaries keep kg to two places under 1,000 kg.
+- **Golden set:** four cage fixtures added with no change to the others; then `ENGINE_VERSION` 1.2.0 and re-pinned (only the canonical hashes changed).
+
+**Check:** `@xstruc/engine: # pass 35` (incl. 5 cage tests, 18 golden) · `@xstruc/viewer: # pass 8` · `Tasks: 10 successful, 10 total` · `e2e demo: OK (floor, panel, mud trap and footing cages drawn, steps, bar card)` · `e2e jobs: OK (…)` (an F2 cage made in a project: 22 bars, 55.33 kg). Looked at F1 (finished, ligs step), F3, and the floor and the mud trap with the new framing.
+
+**Parked:** the cog clash and the other two findings (BACKLOG Parked).
+
+**Next run:** 44b (a cage's placing sheet) or 43g (the wash pad's edges, kerbs, drain); 44a when accounts go on.
+
 ## 2026-11-24 · interactive session (2) · backlog #43h-i: the mud trap (a pit element)
 
 **Done:** Baji: "can you add the mud trap now and create it". The engine had floors and panels only; a pit is a new element.

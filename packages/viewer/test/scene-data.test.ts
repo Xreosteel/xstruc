@@ -2,7 +2,7 @@
 // the right layers, the concrete and bounds frame the element. Pure (no WebGL), so it runs in Node.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildModel, DEFAULT_CFG, PANEL_CFG, PIT_CFG } from "@xstruc/engine";
+import { buildModel, DEFAULT_CFG, PANEL_CFG, PIT_CFG, CAGE_EXAMPLES } from "@xstruc/engine";
 import { sceneData, stepLayers, toScene } from "../src/scene-data.ts";
 
 test("floor: every bar is drawn, in its layer, in fixing order", () => {
@@ -71,4 +71,22 @@ test("pit: base and ramp, thickenings and walls as concrete (sideways prisms for
   assert.ok(Math.abs(D.bounds.max[1] - 2.85) < 0.01 && Math.abs(D.bounds.min[1] + 0.15) < 0.01, JSON.stringify(D.bounds));
   // every bar inside the concrete's bounds
   for (const b of D.bars) for (const p of b.pts) assert.ok(p[0] >= 0 && p[0] <= 5000 && p[1] >= 0 && p[1] <= 9425 && p[2] >= -150 && p[2] <= 2850);
+});
+
+test("cage: bars drawn with their bends and hooks, the block, cast-ins, four steps", () => {
+  const M = buildModel(CAGE_EXAMPLES.F1), D = sceneData(M);
+  assert.equal(D.kind, "cage");
+  assert.deepEqual(D.order, ["B1", "B2", "L1", "T1"]);
+  assert.equal(D.bars.length, 64);
+  // the drawn path (arcs, 135° hooks) has more segments than the scheduling polyline
+  const lig = M.bars.find(b => b.layer === "L1")!;
+  assert.ok((lig.path as number[][]).length > lig.pts.length + 20);
+  assert.equal(D.layers.L1.segments.length, 18 * ((lig.path as number[][]).length - 1));
+  assert.equal(D.concrete.length, 1);
+  assert.equal(D.castins.length, 7);   // 2 anchors (shaft, foot, head) and a locator pin
+  const pin = D.castins[6];
+  assert.ok(pin.b[1] > 0.35, "the pin stands above the top");
+  // bounds: the block (2.65 × 0.9 × 0.35 m) and the pin above it
+  assert.deepEqual(D.bounds.min.map(v => +v.toFixed(3)), [0, 0, -0.9]);
+  assert.ok(D.bounds.max[0] === 2.65 && Math.abs(D.bounds.max[1] - 0.425) < 1e-9);
 });

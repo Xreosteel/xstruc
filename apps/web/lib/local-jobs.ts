@@ -6,9 +6,9 @@ import type { Summary } from "@/lib/engine-run";
 
 export const STORE_KEY = "xstruc.web.jobs.v1";
 
-export type Kind = "floor" | "panel" | "pit";
-export const KINDS: Kind[] = ["floor", "panel", "pit"];
-export const KIND_NAME: Record<Kind, string> = { floor: "Floor slab", panel: "Precast panel", pit: "Pit (mud trap)" };
+export type Kind = "floor" | "panel" | "pit" | "cage";
+export const KINDS: Kind[] = ["floor", "panel", "pit", "cage"];
+export const KIND_NAME: Record<Kind, string> = { floor: "Floor slab", panel: "Precast panel", pit: "Pit (mud trap)", cage: "Footing cage" };
 export interface LocalElement { id: string; kind: Kind; name: string; inputs: ElementInput; updated: string; summary?: Summary }
 export interface LocalProject { id: string; name: string; jobNumber: string; site: string; created: string; elements: LocalElement[] }
 export interface LocalData { version: 1; projects: LocalProject[] }
@@ -52,7 +52,7 @@ const withProject = (d: LocalData, pid: string, f: (p: LocalProject) => LocalPro
 export function addElement(d: LocalData, pid: string, e: { kind: Kind; name: string; inputs: ElementInput }, id: string, now: string): LocalData {
   const name = clean(e.name, 200);
   if (!name) throw new Error("Give the floor or panel a name.");
-  if (!KINDS.includes(e.kind)) throw new Error("Pick floor slab, precast panel or pit.");
+  if (!KINDS.includes(e.kind)) throw new Error("Pick floor slab, precast panel, pit or footing cage.");
   return withProject(d, pid, p => ({ ...p, elements: [...p.elements, { id, kind: e.kind, name, inputs: e.inputs, updated: now }] }));
 }
 

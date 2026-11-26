@@ -21,7 +21,7 @@ export function summarise(model: Model): Summary {
   return {
     bars: model.bars.filter(b => !b.existing).length,
     marks: model.marks.length,
-    kg: Math.round(model.kg),
+    kg: model.kg < 1000 ? Math.round(model.kg * 100) / 100 : Math.round(model.kg),   // a cage of a few dozen kg to two places
     meshSheets: (model.meshPieces ?? []).length,
     errors: model.errors.length,
     warnings: model.warnings.length

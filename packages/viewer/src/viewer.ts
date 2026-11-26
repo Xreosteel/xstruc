@@ -143,6 +143,10 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
         }
       }
     }
+    if (data.castins.length) {   // cast-in steel by others: drawn plain, never picked
+      const mat = new THREE.MeshStandardMaterial({ color: 0xc9d1da, roughness: 0.3, metalness: 0.7 });
+      disposables.push(mat); root.add(segmentsMesh(data.castins.map(c => ({ a: c.a, b: c.b, r: c.r, bar: -1 })), mat));
+    }
     if (data.context.length) {
       const mat = new THREE.MeshStandardMaterial({ color: 0x7d8fa3, transparent: true, opacity: 0.25, depthWrite: false });
       disposables.push(mat); root.add(segmentsMesh(data.context, mat));
@@ -161,10 +165,19 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions = {}): 
     if (!data) return;
     const { min, max } = data.bounds;
     const c = new THREE.Vector3((min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2);
-    const size = Math.max(max[0] - min[0], max[2] - min[2], (max[1] - min[1]) * 2, 1);
-    const dist = size / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * (camera.aspect < 1 ? 1.6 / camera.aspect : 1.15);
-    const dir = kind === "plan" ? new THREE.Vector3(0, 1, 0.0001) : kind === "side" ? new THREE.Vector3(0, 0.12, 1) : new THREE.Vector3(-0.8, 0.9, 1.1);
-    camera.position.copy(c).add(dir.normalize().multiplyScalar(dist));
+    const dir = (kind === "plan" ? new THREE.Vector3(0, 1, 0.0001) : kind === "side" ? new THREE.Vector3(0, 0.12, 1) : new THREE.Vector3(-0.8, 0.9, 1.1)).normalize();
+    // the distance at which every corner of the bounds is in view from this direction (a small cage fills the view as a
+    // floor does): each corner needs depth ≥ its offset across the view ÷ tan(half the field of view)
+    camera.position.copy(c).add(dir); camera.lookAt(c); camera.updateMatrixWorld();
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), p = new THREE.Vector3();
+    let dist = 0.5;
+    for (const x of [min[0], max[0]]) for (const y of [min[1], max[1]]) for (const z of [min[2], max[2]]) {
+      p.set(x, y, z).sub(c);
+      dist = Math.max(dist, p.dot(dir) + Math.max(Math.abs(p.dot(up)) / t, Math.abs(p.dot(right)) / (t * camera.aspect)));
+    }
+    dist *= 1.08;
+    camera.position.copy(c).add(dir.clone().multiplyScalar(dist));
     controls.target.copy(c); camera.near = dist / 200; camera.far = dist * 20; camera.updateProjectionMatrix(); controls.update();
   }
 

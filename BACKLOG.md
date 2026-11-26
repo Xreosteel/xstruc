@@ -89,6 +89,14 @@ The application is built to the **v2 · Lean build** architecture (architecture 
 - [ ] **14. Revision diff.** Keep the previous model in memory; show bars added / removed / changed in red / green and the mass delta per mark.
 - [ ] **15. Determinism snapshot test.** `scripts/snapshot.js` writes the schedule (marks, lengths, qty, kg) to `test/snapshot.json`; the check fails if it changes without `--update`.
 
+## Phase 1a+++ · footing cages (added 2026-11-26 at Baji's request)
+
+Baji, 2026-11-26: "can you add these artefact model into the app please" (his F1–F3 sample cage sheet, Rev A, 25 Nov 2026).
+
+- [x] **44. Footing cages.** `packages/engine/src/cage.ts` (strict): `buildModel({ kind: "cage", … })`: a footing block reinforced as a cage of bottom bars cogged up and top bars cogged down (cog length or the AS 3600 standard cog), closed ligs with 135° hooks and single-leg ties (outer bars, middle bars or none), every size an input. The set-out is the sheet's: corner bars in the lig bends, lig sets just clear of the cogs, and the middle top bar movable to clear the lift anchors. Bars carry their drawn path (bends as arcs, hooks) for the 3D view. Cast-ins (lift anchors, locator pins) are drawn and listed with the accessories. Checks: bars clashing with bars; pin clearance to the bars; cogs past the cover; bars that do not fit. The sheet's hold points travel as warnings. `CAGE_EXAMPLES` F1, F2, F3 reproduce the sheet mark for mark (cut lengths, counts, 81.40 / 55.33 / 47.35 kg). App: Footing cage (F1/F2/F3) as a new element, the demo's Footing cages. Engine 1.2.0.
+  - [ ] **44a. Cages in accounts mode.** The `element_kind` enum has floor and panel only (pits too): a migration adding pit and cage, and the element screens (accounts on) naming them.
+  - [ ] **44b. A cage's placing sheet.** The sample sheet's layout (end section, set-out across and along, bending and cover notes, cast-in table, hold points, title block) printed from the model.
+
 ## Phase 3 · drawing input
 
 Baji, 2026-11-23: "start creating the engine that makes the 3d rendering from the engineering drawings, dont use a claude api, make a proper engine that recognizes patterns and builds" and "use the same process when you receive a markup plan". `packages/reader` reads a plan in a scheduler's order (README there); rules only, no AI service (research/17's suggestion service is dropped).
@@ -157,6 +165,8 @@ Baji, 2026-11-23: "start creating the engine that makes the 3d rendering from th
 - #1–3 (2026-11-04): `buildModel(cfg)` builds everything from grids, thickness, cover, f'c, lap, callouts and feature toggles; `parseCallout(text, {scheme})` is the grammar (62 test cases in `scripts/test-grammar.js`); the inputs panel rebuilds the scene live with inline errors. Extras/trimmers/additional bars from callouts are still example-driven (see #7). `scripts/smoke.js` runs the page in headless Chromium with a local three.js.
 
 ## Parked (needs a human decision first)
+
+- Footing cages (#44, sample cages F1–F3): at the sheet's set-out the top bars sit straight above the bottom bars, so each full-depth top-bar cog (B2, beside the B1 cog) runs down into that bottom bar's bend (4 bars a cage, both ends). Stop the B2 cogs at 170 (F1) / 410 (F2, F3) outside or less, or set the top bars beside the bottom bars across? Also from the sheet: the F1 locator pin at 98 touches the first lig set's hook (50 clear wanted); the sheet gives 62.0 kg for F1 with N10 ligs and ties, the engine 63.94 kg (L1 2300 ×18, T1 510 ×36 as the sheet).
 
 - Pit (#43h, the mud trap): the walls drawing was not supplied, so these are XREO's allowances or the model's reading, each an input: base bars running under the walls to the toes (XREO's schedule stopped them at 4,500); which base bars sit outermost (across, as modelled); wall verticals standing on the bottom mat with a 400 leg inwards (both faces); end-wall horizontals as U-bars lapping 650 into the side walls; the internal wall's horizontals running into the side walls; wall-head U-bars inside the verticals. Ask for the walls drawing (sections D and E) to confirm.
 

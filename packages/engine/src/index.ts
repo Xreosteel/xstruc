@@ -24,11 +24,12 @@ export * from "./sheet-panel.ts";
 export * from "./print.ts";
 export * from "./section.ts";
 export { buildPit, PIT_CFG, PIT_LAYERS, type PitInput, type Solid } from "./pit.ts";
+export { buildCage, CAGE_CFG, CAGE_EXAMPLES, CAGE_LAYERS, type CageInput, type CastIn, type CastInPart } from "./cage.ts";
 export type * from "./types.ts";
 
 // Bump on any change that alters a golden output (semver: major = a schedule can change on the same inputs), with
 // package.json and test/golden/golden.json (UPDATE_GOLDEN=1).
-export const ENGINE_VERSION = "1.1.0";
+export const ENGINE_VERSION = "1.2.0";
 
 // The modules behind these are not strictly typed yet (@ts-nocheck), so their inferred shapes are cast to the
 // declared API once, here; the casts go as each module is converted.
